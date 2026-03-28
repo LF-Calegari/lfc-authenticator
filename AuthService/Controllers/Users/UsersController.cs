@@ -124,12 +124,16 @@ public class UsersController : ControllerBase
     private static IActionResult EmailConflictResult() =>
         new ConflictObjectResult(new { message = "Já existe um usuário com este Email." });
 
+    /// <summary>
+    /// Compara por igualdade na coluna (sem função na coluna) para permitir uso do índice único em Email.
+    /// O valor persistido já é minúsculo (trim + ToLowerInvariant no create/update).
+    /// </summary>
     private static Task<bool> EmailExistsNormalizedAsync(AppDbContext db, string normalizedEmail, Guid? excludeUserId = null)
     {
         var q = db.Users.IgnoreQueryFilters().AsQueryable();
         if (excludeUserId is { } id)
             q = q.Where(u => u.Id != id);
-        return q.AnyAsync(u => u.Email.ToLower() == normalizedEmail);
+        return q.AnyAsync(u => u.Email == normalizedEmail);
     }
 
     [HttpPost]
