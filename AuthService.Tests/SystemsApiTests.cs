@@ -8,9 +8,12 @@ using Xunit;
 
 namespace AuthService.Tests;
 
-public class SystemsApiTests : IClassFixture<WebAppFactory>, IAsyncLifetime
+/// <summary>
+/// Cada teste usa um <see cref="WebAppFactory"/> novo → um banco SQL Server dedicado (criado no ctor, drop no Dispose).
+/// </summary>
+public class SystemsApiTests : IAsyncLifetime
 {
-    private readonly WebAppFactory _factory;
+    private WebAppFactory _factory = null!;
     private HttpClient _client = null!;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -19,25 +22,18 @@ public class SystemsApiTests : IClassFixture<WebAppFactory>, IAsyncLifetime
         PropertyNameCaseInsensitive = true
     };
 
-    public SystemsApiTests(WebAppFactory factory)
-    {
-        _factory = factory;
-    }
-
     public Task InitializeAsync()
     {
+        _factory = new WebAppFactory();
         _client = _factory.CreateClient();
-        return ResetDatabaseAsync();
+        return Task.CompletedTask;
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
-
-    private async Task ResetDatabaseAsync()
+    public Task DisposeAsync()
     {
-        using var scope = _factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        await db.Database.EnsureDeletedAsync();
-        await db.Database.EnsureCreatedAsync();
+        _client.Dispose();
+        _factory.Dispose();
+        return Task.CompletedTask;
     }
 
     [Fact]
@@ -65,6 +61,71 @@ public class SystemsApiTests : IClassFixture<WebAppFactory>, IAsyncLifetime
 
         var response = await _client.PostAsJsonAsync("/systems", new { name = "B", code = "ABC" }, JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_DuplicateCode_NormalizesWhitespace_ReturnsConflict()
+    {
+        await _client.PostAsJsonAsync("/systems", new { name = "A", code = "ABC" }, JsonOptions);
+
+        var response = await _client.PostAsJsonAsync("/systems", new { name = "B", code = "  ABC  " }, JsonOptions);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Update_DuplicateCode_NormalizesWhitespace_ReturnsConflict()
+    {
+        await _client.PostAsJsonAsync("/systems", new { name = "A", code = "CODE_A" }, JsonOptions);
+        var b = await _client.PostAsJsonAsync("/systems", new { name = "B", code = "CODE_B" }, JsonOptions);
+        var dtoB = await b.Content.ReadFromJsonAsync<SystemDto>(JsonOptions);
+        Assert.NotNull(dtoB);
+
+        var put = await _client.PutAsJsonAsync($"/systems/{dtoB.Id}",
+            new { name = "B2", code = "  CODE_A  " }, JsonOptions);
+        Assert.Equal(HttpStatusCode.Conflict, put.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_ConcurrentSameCode_OneCreatedOneConflict()
+    {
+        const string code = "CONCURRENT_X";
+        var bodyA = new { name = "A", code };
+        var bodyB = new { name = "B", code };
+        var t1 = _client.PostAsJsonAsync("/systems", bodyA, JsonOptions);
+        var t2 = _client.PostAsJsonAsync("/systems", bodyB, JsonOptions);
+        await Task.WhenAll(t1, t2);
+
+        var r1 = await t1;
+        var r2 = await t2;
+        var statuses = new[] { r1.StatusCode, r2.StatusCode };
+        Assert.Contains(HttpStatusCode.Created, statuses);
+        Assert.Contains(HttpStatusCode.Conflict, statuses);
+    }
+
+    [Fact]
+    public async Task Create_WhitespaceOnlyName_ReturnsBadRequest()
+    {
+        var response = await _client.PostAsJsonAsync("/systems", new { name = "   ", code = "X1" }, JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_WhitespaceOnlyCode_ReturnsBadRequest()
+    {
+        var response = await _client.PostAsJsonAsync("/systems", new { name = "N1", code = "\t  " }, JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Put_WhitespaceOnlyName_ReturnsBadRequest()
+    {
+        var create = await _client.PostAsJsonAsync("/systems", new { name = "S", code = "W1" }, JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<SystemDto>(JsonOptions);
+        Assert.NotNull(dto);
+
+        var put = await _client.PutAsJsonAsync($"/systems/{dto.Id}",
+            new { name = "   ", code = "W1" }, JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
     }
 
     [Fact]

@@ -2,6 +2,8 @@ using System.ComponentModel.DataAnnotations;
 using AuthService.Data;
 using AuthService.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace AuthService.Controllers.Systems;
@@ -58,27 +60,89 @@ public class SystemsController : ControllerBase
     private static SystemResponse ToResponse(AppSystem s) =>
         new(s.Id, s.Name, s.Code, s.Description, s.CreatedAt, s.UpdatedAt, s.DeletedAt);
 
+    private static void ValidateNormalizedFields(
+        ModelStateDictionary modelState,
+        string name,
+        string code,
+        string? descriptionOrNull)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            modelState.AddModelError(nameof(CreateSystemRequest.Name), "Name é obrigatório e não pode ser apenas espaços.");
+
+        if (string.IsNullOrWhiteSpace(code))
+            modelState.AddModelError(nameof(CreateSystemRequest.Code), "Code é obrigatório e não pode ser apenas espaços.");
+
+        if (name.Length > 80)
+            modelState.AddModelError(nameof(CreateSystemRequest.Name), "Name deve ter no máximo 80 caracteres.");
+
+        if (code.Length > 50)
+            modelState.AddModelError(nameof(CreateSystemRequest.Code), "Code deve ter no máximo 50 caracteres.");
+
+        if (descriptionOrNull is { Length: > 500 })
+            modelState.AddModelError(nameof(CreateSystemRequest.Description), "Description deve ter no máximo 500 caracteres.");
+    }
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
+    {
+        for (Exception? e = ex; e != null; e = e.InnerException)
+        {
+            if (e is SqlException sql)
+                return sql.Number is 2601 or 2627;
+        }
+
+        var text = string.Join(" ", GetExceptionMessages(ex));
+        return text.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("duplicate key", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> GetExceptionMessages(Exception ex)
+    {
+        for (Exception? e = ex; e != null; e = e.InnerException)
+            yield return e.Message;
+    }
+
+    private static IActionResult UniqueConflictResult() =>
+        new ConflictObjectResult(new { message = "Já existe um sistema com este Code." });
+
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateSystemRequest request)
     {
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        if (await _db.Systems.IgnoreQueryFilters().AnyAsync(s => s.Code == request.Code))
-            return Conflict(new { message = "Já existe um sistema com este Code." });
+        var name = request.Name.Trim();
+        var code = request.Code.Trim();
+        var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+
+        ValidateNormalizedFields(ModelState, name, code, description);
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        if (await _db.Systems.IgnoreQueryFilters().AnyAsync(s => s.Code == code))
+            return UniqueConflictResult();
 
         var now = DateTime.UtcNow;
         var entity = new AppSystem
         {
-            Name = request.Name.Trim(),
-            Code = request.Code.Trim(),
-            Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+            Name = name,
+            Code = code,
+            Description = description,
             CreatedAt = now,
             UpdatedAt = now,
             DeletedAt = null
         };
         _db.Systems.Add(entity);
-        await _db.SaveChangesAsync();
+
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            return UniqueConflictResult();
+        }
+
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
     }
 
@@ -114,18 +178,35 @@ public class SystemsController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
+        var name = request.Name.Trim();
+        var code = request.Code.Trim();
+        var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+
+        ValidateNormalizedFields(ModelState, name, code, description);
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
         var entity = await _db.Systems.FirstOrDefaultAsync(s => s.Id == id);
         if (entity is null)
             return NotFound(new { message = "Sistema não encontrado." });
 
-        if (await _db.Systems.IgnoreQueryFilters().AnyAsync(s => s.Id != id && s.Code == request.Code))
-            return Conflict(new { message = "Já existe outro sistema com este Code." });
+        if (await _db.Systems.IgnoreQueryFilters().AnyAsync(s => s.Id != id && s.Code == code))
+            return new ConflictObjectResult(new { message = "Já existe outro sistema com este Code." });
 
-        entity.Name = request.Name.Trim();
-        entity.Code = request.Code.Trim();
-        entity.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+        entity.Name = name;
+        entity.Code = code;
+        entity.Description = description;
         entity.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            return new ConflictObjectResult(new { message = "Já existe outro sistema com este Code." });
+        }
+
         return Ok(ToResponse(entity));
     }
 

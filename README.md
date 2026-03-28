@@ -32,15 +32,30 @@ As permissões disponíveis por padrão são:
 
 ## Desenvolvimento com Docker
 
-1. Copie `.env.example` para `.env` (ou mantenha o `.env` local já criado).
-2. Ajuste `MSSQL_SA_PASSWORD` se necessário (a Microsoft exige senha forte).
-3. Suba os serviços: `docker compose up -d`.
+Arquivo na raiz: **`docker-compose.yml`**.
 
-O SQL Server usa volume nomeado Docker (`mssql_data`) para os dados e escuta em `localhost:1433`. O healthcheck usa `sqlcmd` com `-C` (certificado autoassinado em dev).
+1. **Variáveis de ambiente:** `cp .env.example .env` e edite se precisar. A senha `MSSQL_SA_PASSWORD` deve ser **a mesma** que está em `AuthService/appsettings.Development.json` se você rodar `dotnet run` **fora** do Docker com SQL em `localhost:1433` (o padrão do exemplo é `DevPassword123!`).
+2. **Subir API + SQL:** `docker compose up -d --build`  
+   O serviço `app` só sobe depois do `db` ficar **healthy** (healthcheck com `sqlcmd`).
+3. **Migrations (primeira vez ou após alterar migrations):**
+   ```bash
+   docker compose --profile migrate run --rm migrate
+   ```
+4. **API:** `http://localhost:8080` (mapeamento `8080:5042` → app escuta em `5042` no container).
 
-**Connection string (app no mesmo Compose):** use o host `db` e a mesma senha do `.env`, por exemplo:
+O SQL Server usa o volume `mssql_data` e expõe **`localhost:1433`** no host.
 
-`Server=db,1433;User Id=sa;Password=<sua senha>;TrustServerCertificate=True;`
+**Dentro do Compose**, a connection string é injetada no container `app` via `ConnectionStrings__DefaultConnection` com a senha do `.env` (não depende da senha fixa antiga no JSON).
+
+### Testes de integração via Compose
+
+Com o stack (pelo menos o `db`) no ar:
+
+```bash
+docker compose --profile test run --rm test
+```
+
+O serviço `test` monta a **raiz do repositório** e define `AUTH_SERVICE_TEST_SQL_BASE` apontando para o host `db` na rede interna.
 
 ## Endpoints iniciais
 
@@ -63,27 +78,24 @@ Em desenvolvimento, a documentação OpenAPI fica em `/openapi/v1.json` quando `
 
 ## Testes de integração
 
-Na raiz do repositório (com SDK .NET 10):
+Os testes usam **SQL Server real**. Cada caso cria um banco dedicado (`auth_svc_it_<guid>`), roda **migrations** e faz **DROP DATABASE** ao terminar (seguro para paralelismo).
+
+**Variável obrigatória** (connection string **sem** `Database` / `Initial Catalog`):
 
 ```bash
+export AUTH_SERVICE_TEST_SQL_BASE="Server=127.0.0.1,1433;User Id=sa;Password=<MESMA_DO_.env>;TrustServerCertificate=True"
 dotnet test AuthService.Tests/AuthService.Tests.csproj
 ```
 
-O compose de desenvolvimento monta só `./AuthService` em `/app`, então **não existe** `AuthService.Tests` dentro do container. Para testes com Docker, monte a **raiz do repositório**:
+**Alternativa:** `docker compose --profile test run --rm test` (veja *Desenvolvimento com Docker*).
+
+Sem `AUTH_SERVICE_TEST_SQL_BASE`, a suite falha ao criar o `WebAppFactory` (esperado).
+
+**Migrações com o `app` já rodando** (volume só com `AuthService`):
 
 ```bash
-docker run --rm -v "$PWD:/workspace" -w /workspace mcr.microsoft.com/dotnet/sdk:10.0 \
-  dotnet test AuthService.Tests/AuthService.Tests.csproj
+docker compose exec app sh -c "dotnet restore && dotnet tool restore && dotnet ef database update"
 ```
-
-Migrações com o serviço `app` já em execução:
-
-```bash
-docker compose exec app dotnet restore
-docker compose exec app dotnet ef database update
-```
-
-O `restore` evita erros de pacote quando o `obj/` está desatualizado em relação ao `.csproj`.
 
 ## Próximos passos
 

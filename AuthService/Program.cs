@@ -4,13 +4,9 @@ using Microsoft.EntityFrameworkCore;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-// Em "Testing", o DbContext é registrado só no projeto de testes (InMemory), para não misturar
-// providers com SQL Server e para o projeto web não depender de EFCore.InMemory em produção/ef.
-if (!builder.Environment.IsEnvironment("Testing"))
-{
-    builder.Services.AddDbContext<AppDbContext>(options =>
-        options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
-}
+// Em "Testing", a connection string vem do WebApplicationFactory (banco dedicado por execução de teste).
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddControllers();
 
