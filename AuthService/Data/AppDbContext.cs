@@ -7,6 +7,7 @@ namespace AuthService.Data;
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     public DbSet<User> Users => Set<User>();
+    public DbSet<AppSystem> Systems => Set<AppSystem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

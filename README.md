@@ -32,31 +32,77 @@ As permissões disponíveis por padrão são:
 
 ## Desenvolvimento com Docker
 
-1. Copie `.env.example` para `.env` (ou mantenha o `.env` local já criado).
-2. Ajuste `MSSQL_SA_PASSWORD` se necessário (a Microsoft exige senha forte).
-3. Suba os serviços: `docker compose up -d`.
+Arquivo na raiz: **`docker-compose.yml`**.
 
-O SQL Server usa volume nomeado Docker (`mssql_data`) para os dados e escuta em `localhost:1433`. O healthcheck usa `sqlcmd` com `-C` (certificado autoassinado em dev).
+1. **Variáveis de ambiente:** `cp .env.example .env` e edite se precisar. A senha `MSSQL_SA_PASSWORD` deve ser **a mesma** que está em `AuthService/appsettings.Development.json` se você rodar `dotnet run` **fora** do Docker com SQL em `localhost:1433` (o padrão do exemplo é `DevPassword123!`).
+2. **Subir API + SQL:** `docker compose up -d --build`  
+   O serviço `app` só sobe depois do `db` ficar **healthy** (healthcheck com `sqlcmd`).
+3. **Migrations (primeira vez ou após alterar migrations):**
+   ```bash
+   docker compose --profile migrate run --rm migrate
+   ```
+4. **API:** `http://localhost:8080` (mapeamento `8080:5042` → app escuta em `5042` no container).
 
-**Connection string (app no mesmo Compose):** use o host `db` e a mesma senha do `.env`, por exemplo:
+O SQL Server usa o volume `mssql_data` e expõe **`localhost:1433`** no host.
 
-`Server=db,1433;User Id=sa;Password=<sua senha>;TrustServerCertificate=True;`
+**Dentro do Compose**, a connection string é injetada no container `app` via `ConnectionStrings__DefaultConnection` com a senha do `.env` (não depende da senha fixa antiga no JSON).
+
+### Testes de integração via Compose
+
+Com o stack (pelo menos o `db`) no ar:
+
+```bash
+docker compose --profile test run --rm test
+```
+
+O serviço `test` monta a **raiz do repositório** e define `AUTH_SERVICE_TEST_SQL_BASE` apontando para o host `db` na rede interna.
 
 ## Endpoints iniciais
 
-Nesta fase inicial, o serviço expõe apenas o endpoint de saúde:
+- `GET /health` — saúde da aplicação.
 
-- `GET /health`
+### Cadastro de sistemas (`/systems`)
 
-Resposta esperada: status da aplicação ativo/saudável.
+Rotas REST (JSON). Registros com *soft delete* (`deletedAt` preenchido) retornam **404** em todas as operações exceto `PATCH .../restore`.
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/systems` | Cria sistema (`name`, `code`, `description` opcional). |
+| `GET` | `/systems` | Lista apenas sistemas ativos (não deletados). |
+| `GET` | `/systems/{id}` | Detalhe por id (ativo). |
+| `PUT` | `/systems/{id}` | Atualização completa. |
+| `DELETE` | `/systems/{id}` | *Soft delete*. |
+| `PATCH` | `/systems/{id}/restore` | Restaura registro deletado. |
+
+Em desenvolvimento, a documentação OpenAPI fica em `/openapi/v1.json` quando `Development`.
+
+## Testes de integração
+
+Os testes usam **SQL Server real**. Cada caso cria um banco dedicado (`auth_svc_it_<guid>`), roda **migrations** e faz **DROP DATABASE** ao terminar (seguro para paralelismo).
+
+**Variável obrigatória** (connection string **sem** `Database` / `Initial Catalog`):
+
+```bash
+export AUTH_SERVICE_TEST_SQL_BASE="Server=127.0.0.1,1433;User Id=sa;Password=<MESMA_DO_.env>;TrustServerCertificate=True"
+dotnet test AuthService.Tests/AuthService.Tests.csproj
+```
+
+**Alternativa:** `docker compose --profile test run --rm test` (veja *Desenvolvimento com Docker*).
+
+Sem `AUTH_SERVICE_TEST_SQL_BASE`, a suite falha ao criar o `WebAppFactory` (esperado).
+
+**Migrações com o `app` já rodando** (volume só com `AuthService`):
+
+```bash
+docker compose exec app sh -c "dotnet restore && dotnet tool restore && dotnet ef database update"
+```
 
 ## Próximos passos
 
-1. Definir entidades e relacionamento no banco de dados.
-2. Implementar CRUD de Sistema, Recurso e Rotas.
-3. Implementar gestão de permissões por recurso/rota.
-4. Adicionar autenticação e política de autorização.
-5. Criar testes automatizados e documentação da API.
+1. Implementar CRUD de Recurso e Rotas.
+2. Implementar gestão de permissões por recurso/rota.
+3. Adicionar autenticação e política de autorização.
+4. Expandir documentação OpenAPI e cenários de teste.
 
 
 ## Comandos Docker

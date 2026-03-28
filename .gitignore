@@ -633,6 +633,9 @@ FodyWeavers.xsd
 
 # End of https://www.toptal.com/developers/gitignore/api/linux,windows,macos,git,dotnetcore,aspnetcore,visualstudiocode,visualstudio
 
-.env*
+.env
+.env.local
+!.env.example
 .vscode
 .devcontainer
+.credentials/*
