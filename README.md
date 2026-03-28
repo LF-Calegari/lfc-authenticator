@@ -1,142 +1,209 @@
 # AuthService
 
-Serviço de autenticação e autorização responsável por controlar permissões de acesso no ecossistema do projeto.
+Serviço de **autenticação e autorização** do ecossistema: centraliza cadastros e regras que definem o que cada usuário ou integração pode fazer em cada parte do sistema.
 
 ## Objetivo
 
-O **AuthService** centraliza a gestão de permissões e define quais ações cada perfil/usuário pode executar em cada recurso do sistema.
+O AuthService concentra a gestão de permissões e padroniza como perfis, usuários ou integrações se relacionam com recursos e rotas da API.
 
-## Escopo funcional
+## Domínio (visão do produto)
 
-O serviço terá os seguintes cadastros principais:
+### Cadastros previstos
 
-1. **Cadastro de Sistema**
-2. **Cadastro de Recurso**
-3. **Cadastro de Rotas**
-4. **Cadastro de Permissões**
+1. **Sistema**
+2. **Recurso** (agrupamento lógico dentro de um sistema)
+3. **Rota** (endpoints ou caminhos associados a recursos)
+4. **Permissão** (liga ações a recursos/rotas)
 
-As permissões disponíveis por padrão são:
+### Ações padrão
 
-- `create`
-- `read`
-- `update`
-- `delete`
-- `restore`
+`create`, `read`, `update`, `delete`, `restore`
 
-## Modelo de autorização (visão inicial)
+### Modelo de autorização (alvo)
 
-- Um **Sistema** possui vários **Recursos**.
+- Um **Sistema** agrupa vários **Recursos**.
 - Um **Recurso** possui uma ou mais **Rotas**.
-- Uma **Permissão** define quais ações (`create`, `read`, `update`, `delete`, `restore`) podem ser realizadas em um recurso/rota.
-- Perfis, usuários ou integrações externas poderão ser associados a permissões (definição detalhada nas próximas versões).
+- Uma **Permissão** indica quais ações são permitidas sobre recurso/rota.
+- Perfis, usuários ou integrações externas serão associados a permissões (detalhes nas próximas versões).
+
+### Implementado hoje
+
+- CRUD com *soft delete* e restore para **`/systems`**, **`/users`** e **`/routes`**.
+- **`/routes`** está vinculada a **sistema ativo** (`systemId`); leituras e restore respeitam o sistema pai não deletado.
+- Testes de integração com SQL Server real (criação e descarte de banco por execução).
 
 ## Desenvolvimento com Docker
 
-Arquivo na raiz: **`docker-compose.yml`**.
+O arquivo **`docker-compose.yml`** fica na **raiz** do repositório.
 
-1. **Variáveis de ambiente:** `cp .env.example .env` e edite se precisar. A senha `MSSQL_SA_PASSWORD` deve ser **a mesma** que está em `AuthService/appsettings.Development.json` se você rodar `dotnet run` **fora** do Docker com SQL em `localhost:1433` (o padrão do exemplo é `DevPassword123!`).
+1. **Ambiente:** `cp .env.example .env` e ajuste se precisar. A senha `MSSQL_SA_PASSWORD` deve ser a **mesma** usada em `AuthService/appsettings.Development.json` se você rodar `dotnet run` **no host** apontando para `localhost:1433` (o exemplo padrão usa `DevPassword123!`).
 2. **Subir API + SQL:** `docker compose up -d --build`  
-   O serviço `app` só sobe depois do `db` ficar **healthy** (healthcheck com `sqlcmd`).
-3. **Migrations (primeira vez ou após alterar migrations):**
+   O serviço `app` aguarda o `db` ficar **healthy** (healthcheck com `sqlcmd` e certificado confiável em dev).
+3. **Primeira carga ou após alterar migrations:**
    ```bash
    docker compose --profile migrate run --rm migrate
    ```
-4. **API:** `http://localhost:8080` (mapeamento `8080:5042` → app escuta em `5042` no container).
+4. **API:** [http://localhost:8080](http://localhost:8080) (mapeamento `8080:5042`; a app escuta na porta `5042` dentro do container).
 
-O SQL Server usa o volume `mssql_data` e expõe **`localhost:1433`** no host.
+O SQL Server usa o volume **`mssql_data`** e expõe **`localhost:1433`** no host. No Compose, a connection string do `app` vem de `ConnectionStrings__DefaultConnection` com a senha do `.env` (não depende de senha fixa só no JSON).
 
-**Dentro do Compose**, a connection string é injetada no container `app` via `ConnectionStrings__DefaultConnection` com a senha do `.env` (não depende da senha fixa antiga no JSON).
+**Exemplo de string na rede interna do Compose** (host `db`):
 
-### Testes de integração via Compose
+`Server=db,1433;User Id=sa;Password=<sua senha>;TrustServerCertificate=True;`
 
-Com o stack (pelo menos o `db`) no ar:
+### Testes via Compose
+
+Com o stack (no mínimo o `db`) no ar:
 
 ```bash
 docker compose --profile test run --rm test
 ```
 
-O serviço `test` monta a **raiz do repositório** e define `AUTH_SERVICE_TEST_SQL_BASE` apontando para o host `db` na rede interna.
+O serviço `test` monta a raiz do repositório e define `AUTH_SERVICE_TEST_SQL_BASE` apontando para o host `db`.
 
-## Endpoints iniciais
+### Aplicar migrations com o `app` já em execução
 
-- `GET /health` — saúde da aplicação.
+Útil quando o volume monta só `AuthService`:
 
-### Cadastro de sistemas (`/systems`)
+```bash
+docker compose exec app sh -c "dotnet restore && dotnet tool restore && dotnet ef database update"
+```
 
-Rotas REST (JSON). Registros com *soft delete* (`deletedAt` preenchido) retornam **404** em todas as operações exceto `PATCH .../restore`.
+## API REST
+
+### Saúde
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `POST` | `/systems` | Cria sistema (`name`, `code`, `description` opcional). |
-| `GET` | `/systems` | Lista apenas sistemas ativos (não deletados). |
-| `GET` | `/systems/{id}` | Detalhe por id (ativo). |
+| `GET` | `/health` | Verificação de saúde da aplicação. |
+
+### Sistemas (`/systems`)
+
+Registros com *soft delete* (`deletedAt` preenchido) respondem **404** em leitura, atualização e exclusão; a exceção é **`PATCH .../restore`**.
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/systems` | Cria (`name`, `code`, `description` opcional). |
+| `GET` | `/systems` | Lista apenas ativos. |
+| `GET` | `/systems/{id}` | Detalhe (ativo). |
 | `PUT` | `/systems/{id}` | Atualização completa. |
 | `DELETE` | `/systems/{id}` | *Soft delete*. |
 | `PATCH` | `/systems/{id}/restore` | Restaura registro deletado. |
 
-### Cadastro de usuários (`/users`)
+### Usuários (`/users`)
 
-Mesmo padrão de **soft delete** e **404** para registros deletados que `/systems` (única exceção: `PATCH /users/{id}/restore`). Email é único (comparação normalizada em minúsculas). Corpo JSON: `name`, `email`, `password`, `identity`, `active` (opcional no POST, default `true`).
+Mesmo padrão de *soft delete* e **404** para deletados que `/systems` (exceto `PATCH /users/{id}/restore`). Email único (normalizado em minúsculas). Corpo: `name`, `email`, `password`, `identity`, `active` (opcional no POST; padrão `true`).
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `POST` | `/users` | Cria usuário. |
-| `GET` | `/users` | Lista apenas usuários ativos (`deletedAt` nulo). |
+| `GET` | `/users` | Lista ativos. |
 | `GET` | `/users/{id}` | Detalhe (ativo). |
 | `PUT` | `/users/{id}` | Atualização completa. |
 | `DELETE` | `/users/{id}` | *Soft delete*. |
 | `PATCH` | `/users/{id}/restore` | Restaura registro deletado. |
 
-### Cadastro de routes (`/routes`)
+### Routes (`/routes`)
 
-Vinculadas a um **sistema** existente e ativo (`systemId`). Mesmo padrão de soft delete e **404** para deletados que `/systems`. `Code` é único globalmente. Corpo: `systemId`, `name`, `code`, `description` (opcional). Em **leitura** (`GET`), só entram routes cujo sistema pai ainda está ativo; se o sistema for *soft-deleted*, a route deixa de aparecer até o sistema ser restaurado. **Restore** da route exige sistema ativo.
+Vinculadas a **sistema existente e ativo** (`systemId`). *Soft delete* e **404** como em `/systems`. `Code` é **único globalmente**. Corpo: `systemId`, `name`, `code`, `description` (opcional).
+
+Nos **`GET`**, só aparecem routes cujo **sistema pai** ainda está ativo; se o sistema for *soft-deleted*, a route some da API até o sistema ser restaurado. **`PATCH .../restore`** da route exige sistema ativo.
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `POST` | `/routes` | Cria route (`systemId` deve ser sistema ativo). |
+| `POST` | `/routes` | Cria (`systemId` obrigatório e ativo). |
 | `GET` | `/routes` | Lista routes ativas com sistema pai ativo. |
-| `GET` | `/routes/{id}` | Detalhe (route ativa e sistema pai ativo). |
+| `GET` | `/routes/{id}` | Detalhe (route ativa + sistema pai ativo). |
 | `PUT` | `/routes/{id}` | Atualização completa. |
 | `DELETE` | `/routes/{id}` | *Soft delete*. |
-| `PATCH` | `/routes/{id}/restore` | Restaura route deletada (sistema vinculado deve estar ativo). |
+| `PATCH` | `/routes/{id}/restore` | Restaura route deletada (sistema ativo). |
 
-Em desenvolvimento, a documentação OpenAPI fica em `/openapi/v1.json` quando `Development`.
+Em ambiente **Development**, a especificação OpenAPI fica em **`/openapi/v1.json`**.
 
 ## Testes de integração
 
-Os testes usam **SQL Server real**. Cada caso cria um banco dedicado (`auth_svc_it_<guid>`), roda **migrations** e faz **DROP DATABASE** ao terminar (seguro para paralelismo). Há suites para **`/systems`**, **`/users`** e **`/routes`** (incluindo soft delete, unicidade e FK de `systemId`).
+A suite usa **SQL Server real**. Cada execução cria um banco dedicado (`auth_svc_it_<guid>`), aplica **migrations** e faz **DROP DATABASE** ao terminar (adequado para rodar testes em paralelo). Há cobertura para **`/systems`**, **`/users`** e **`/routes`**.
 
-**Variável obrigatória** (connection string **sem** `Database` / `Initial Catalog`):
+Defina a connection string **sem** `Database` / `Initial Catalog`:
 
 ```bash
 export AUTH_SERVICE_TEST_SQL_BASE="Server=127.0.0.1,1433;User Id=sa;Password=<MESMA_DO_.env>;TrustServerCertificate=True"
 dotnet test AuthService.Tests/AuthService.Tests.csproj
 ```
 
-**Alternativa:** `docker compose --profile test run --rm test` (veja *Desenvolvimento com Docker*).
+**Alternativa:** `docker compose --profile test run --rm test` (veja acima).
 
-Sem `AUTH_SERVICE_TEST_SQL_BASE`, a suite falha ao criar o `WebAppFactory` (esperado).
+Sem `AUTH_SERVICE_TEST_SQL_BASE`, a criação do `WebAppFactory` falha — comportamento esperado.
 
-**Migrações com o `app` já rodando** (volume só com `AuthService`):
+## Roadmap
 
-```bash
-docker compose exec app sh -c "dotnet restore && dotnet tool restore && dotnet ef database update"
-```
+1. Entidade **Recurso** e relação com **Rotas** conforme o modelo alvo (hoje `Routes` liga-se diretamente ao sistema).
+2. Gestão de **permissões** por recurso/rota.
+3. **Autenticação** (tokens/sessão) e **políticas de autorização** na API.
+4. Evolução da documentação OpenAPI e mais cenários de teste.
 
-## Próximos passos
+## Apêndice: SDK .NET em container
 
-1. Implementar CRUD de Recurso e Rotas.
-2. Implementar gestão de permissões por recurso/rota.
-3. Adicionar autenticação e política de autorização.
-4. Expandir documentação OpenAPI e cenários de teste.
+Comandos úteis ao criar outro projeto ou adicionar pacotes sem instalar o SDK no host (imagem `mcr.microsoft.com/dotnet/sdk:10.0`).
 
+### Novo projeto Web API
 
-## Comandos Docker
-1. Criar um novo projeto
 ```bash
 docker run --rm -it \
   -v "$PWD:/src" \
   -w /src \
   mcr.microsoft.com/dotnet/sdk:10.0 \
   dotnet new webapi --use-controllers -n MeuProjeto
+```
+
+### Pacotes Entity Framework (exemplos)
+
+**SQL Server** (o que este repositório usa):
+
+```bash
+docker run --rm -it \
+  -v "$PWD:/src" \
+  -w /src \
+  mcr.microsoft.com/dotnet/sdk:10.0 \
+  dotnet add package Microsoft.EntityFrameworkCore.SqlServer
+```
+
+**PostgreSQL**
+
+```bash
+docker run --rm -it \
+  -v "$PWD:/src" \
+  -w /src \
+  mcr.microsoft.com/dotnet/sdk:10.0 \
+  dotnet add package Npgsql.EntityFrameworkCore.PostgreSQL
+```
+
+**SQLite**
+
+```bash
+docker run --rm -it \
+  -v "$PWD:/src" \
+  -w /src \
+  mcr.microsoft.com/dotnet/sdk:10.0 \
+  dotnet add package Microsoft.EntityFrameworkCore.Sqlite
+```
+
+**Design-time (migrations)**
+
+```bash
+docker run --rm -it \
+  -v "$PWD:/src" \
+  -w /src \
+  mcr.microsoft.com/dotnet/sdk:10.0 \
+  dotnet add package Microsoft.EntityFrameworkCore.Design
+```
+
+**CLI `dotnet-ef`** (global na sessão do container)
+
+```bash
+docker run --rm -it \
+  -v "$PWD:/src" \
+  -w /src \
+  mcr.microsoft.com/dotnet/sdk:10.0 \
+  dotnet tool install --global dotnet-ef
 ```
