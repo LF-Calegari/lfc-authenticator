@@ -126,6 +126,10 @@ public class RoutesController : ControllerBase
     private async Task<bool> SystemExistsAndActiveAsync(Guid systemId) =>
         systemId != Guid.Empty && await _db.Systems.AnyAsync(s => s.Id == systemId);
 
+    /// <summary>Routes ativas cujo sistema pai ainda está ativo (leitura alinhada a POST/PUT).</summary>
+    private IQueryable<AppRoute> ActiveRoutesWithActiveSystem() =>
+        _db.Routes.Where(r => _db.Systems.Any(s => s.Id == r.SystemId));
+
     private IActionResult InvalidSystemIdResult()
     {
         ModelState.AddModelError(nameof(CreateRouteRequest.SystemId), "SystemId inválido ou sistema inativo.");
@@ -184,7 +188,7 @@ public class RoutesController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
-        var list = await _db.Routes
+        var list = await ActiveRoutesWithActiveSystem()
             .OrderBy(r => r.CreatedAt)
             .Select(r => new RouteResponse(
                 r.Id,
@@ -202,7 +206,7 @@ public class RoutesController : ControllerBase
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(Guid id)
     {
-        var entity = await _db.Routes.FirstOrDefaultAsync(r => r.Id == id);
+        var entity = await ActiveRoutesWithActiveSystem().FirstOrDefaultAsync(r => r.Id == id);
         if (entity is null)
             return NotFound(new { message = "Route não encontrada." });
         return Ok(ToResponse(entity));
@@ -214,6 +218,10 @@ public class RoutesController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
+        var entity = await _db.Routes.FirstOrDefaultAsync(r => r.Id == id);
+        if (entity is null)
+            return NotFound(new { message = "Route não encontrada." });
+
         if (!await SystemExistsAndActiveAsync(request.SystemId))
             return InvalidSystemIdResult();
 
@@ -224,10 +232,6 @@ public class RoutesController : ControllerBase
         ValidateNormalizedFields(ModelState, name, code, description);
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
-
-        var entity = await _db.Routes.FirstOrDefaultAsync(r => r.Id == id);
-        if (entity is null)
-            return NotFound(new { message = "Route não encontrada." });
 
         if (await _db.Routes.IgnoreQueryFilters().AnyAsync(r => r.Id != id && r.Code == code))
             return new ConflictObjectResult(new { message = "Já existe outra route com este Code." });
@@ -276,6 +280,14 @@ public class RoutesController : ControllerBase
 
         if (entity is null)
             return NotFound(new { message = "Route não encontrada ou não está deletada." });
+
+        if (!await SystemExistsAndActiveAsync(entity.SystemId))
+        {
+            return BadRequest(new
+            {
+                message = "Não é possível restaurar a route: o sistema vinculado está inativo ou foi removido."
+            });
+        }
 
         entity.DeletedAt = null;
         entity.UpdatedAt = DateTime.UtcNow;

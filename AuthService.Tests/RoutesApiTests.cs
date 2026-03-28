@@ -184,6 +184,15 @@ public class RoutesApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Update_NonExistentId_WithInvalidSystemId_Returns404()
+    {
+        var missingId = Guid.NewGuid();
+        var put = await _client.PutAsJsonAsync($"/routes/{missingId}",
+            RouteUpdateBody(Guid.NewGuid(), "S", "RT_NO404"), JsonOptions);
+        Assert.Equal(HttpStatusCode.NotFound, put.StatusCode);
+    }
+
+    [Fact]
     public async Task Delete_SoftDelete_ThenDeleteAgain_Returns404()
     {
         var sysId = await CreateSystemAsync("RT_SYS_D1");
@@ -239,6 +248,42 @@ public class RoutesApiTests : IAsyncLifetime
         var response = await _client.PostAsJsonAsync("/routes",
             RouteCreateBody(sysId, "R", "RT_DELSYS"), JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_AndGetById_ExcludeRoutesWhenSystemSoftDeleted()
+    {
+        var sysId = await CreateSystemAsync("RT_SYS_ORPH");
+        var create = await _client.PostAsJsonAsync("/routes",
+            RouteCreateBody(sysId, "R", "RT_ORPH"), JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<RouteDto>(JsonOptions);
+        Assert.NotNull(dto);
+
+        await _client.DeleteAsync($"/systems/{sysId}");
+
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/routes/{dto.Id}")).StatusCode);
+
+        var listResp = await _client.GetAsync("/routes");
+        listResp.EnsureSuccessStatusCode();
+        var list = await listResp.Content.ReadFromJsonAsync<List<RouteDto>>(JsonOptions);
+        Assert.NotNull(list);
+        Assert.DoesNotContain(list, r => r.Id == dto.Id);
+    }
+
+    [Fact]
+    public async Task Restore_WhenSystemSoftDeleted_ReturnsBadRequest()
+    {
+        var sysId = await CreateSystemAsync("RT_SYS_RSYS");
+        var create = await _client.PostAsJsonAsync("/routes",
+            RouteCreateBody(sysId, "S", "RT_RSYS"), JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<RouteDto>(JsonOptions);
+        Assert.NotNull(dto);
+
+        await _client.DeleteAsync($"/routes/{dto.Id}");
+        await _client.DeleteAsync($"/systems/{sysId}");
+
+        var patch = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Patch, $"/routes/{dto.Id}/restore"));
+        Assert.Equal(HttpStatusCode.BadRequest, patch.StatusCode);
     }
 
     private sealed record SystemRefDto(Guid Id);
