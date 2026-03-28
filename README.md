@@ -87,11 +87,24 @@ Mesmo padrão de **soft delete** e **404** para registros deletados que `/system
 | `DELETE` | `/users/{id}` | *Soft delete*. |
 | `PATCH` | `/users/{id}/restore` | Restaura registro deletado. |
 
+### Cadastro de routes (`/routes`)
+
+Vinculadas a um **sistema** existente e ativo (`systemId`). Mesmo padrão de soft delete e **404** para deletados que `/systems`. `Code` é único globalmente. Corpo: `systemId`, `name`, `code`, `description` (opcional). Em **leitura** (`GET`), só entram routes cujo sistema pai ainda está ativo; se o sistema for *soft-deleted*, a route deixa de aparecer até o sistema ser restaurado. **Restore** da route exige sistema ativo.
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/routes` | Cria route (`systemId` deve ser sistema ativo). |
+| `GET` | `/routes` | Lista routes ativas com sistema pai ativo. |
+| `GET` | `/routes/{id}` | Detalhe (route ativa e sistema pai ativo). |
+| `PUT` | `/routes/{id}` | Atualização completa. |
+| `DELETE` | `/routes/{id}` | *Soft delete*. |
+| `PATCH` | `/routes/{id}/restore` | Restaura route deletada (sistema vinculado deve estar ativo). |
+
 Em desenvolvimento, a documentação OpenAPI fica em `/openapi/v1.json` quando `Development`.
 
 ## Testes de integração
 
-Os testes usam **SQL Server real**. Cada caso cria um banco dedicado (`auth_svc_it_<guid>`), roda **migrations** e faz **DROP DATABASE** ao terminar (seguro para paralelismo). Há suites para **`/systems`** e **`/users`** com o mesmo estilo de cenários (incluindo soft delete e conflito de unicidade).
+Os testes usam **SQL Server real**. Cada caso cria um banco dedicado (`auth_svc_it_<guid>`), roda **migrations** e faz **DROP DATABASE** ao terminar (seguro para paralelismo). Há suites para **`/systems`**, **`/users`** e **`/routes`** (incluindo soft delete, unicidade e FK de `systemId`).
 
 **Variável obrigatória** (connection string **sem** `Database` / `Initial Catalog`):
 

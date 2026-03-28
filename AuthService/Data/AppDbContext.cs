@@ -8,10 +8,18 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 {
     public DbSet<User> Users => Set<User>();
     public DbSet<AppSystem> Systems => Set<AppSystem>();
+    public DbSet<AppRoute> Routes => Set<AppRoute>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<AppRoute>()
+            .HasOne<AppSystem>()
+            .WithMany()
+            .HasForeignKey(r => r.SystemId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
             if (typeof(ISoftDelete).IsAssignableFrom(entityType.ClrType))
