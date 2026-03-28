@@ -1,0 +1,40 @@
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using Microsoft.EntityFrameworkCore;
+
+namespace AuthService.Models;
+
+[Index(nameof(Email), IsUnique = true, Name = "UX_Users_Email")]
+[Index(nameof(DeletedAt), Name = "IX_Users_DeletedAt")]
+[Table("Users")]
+public class User : ISoftDelete
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    [Required]
+    [StringLength(80)]
+    public string Name { get; set; } = string.Empty;
+
+    [Required]
+    [StringLength(320)]
+    [EmailAddress]
+    public string Email { get; set; } = string.Empty;
+
+    [Required]
+    [StringLength(60)]
+    public string Password { get; set; } = string.Empty;
+
+    public int Identity { get; set; }
+
+    [Required]
+    public bool Active { get; set; } = true;
+
+    [Required]
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    [Required]
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    public DateTime? DeletedAt { get; set; }
+}
