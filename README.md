@@ -44,19 +44,53 @@ O SQL Server usa volume nomeado Docker (`mssql_data`) para os dados e escuta em 
 
 ## Endpoints iniciais
 
-Nesta fase inicial, o serviço expõe apenas o endpoint de saúde:
+- `GET /health` — saúde da aplicação.
 
-- `GET /health`
+### Cadastro de sistemas (`/systems`)
 
-Resposta esperada: status da aplicação ativo/saudável.
+Rotas REST (JSON). Registros com *soft delete* (`deletedAt` preenchido) retornam **404** em todas as operações exceto `PATCH .../restore`.
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/systems` | Cria sistema (`name`, `code`, `description` opcional). |
+| `GET` | `/systems` | Lista apenas sistemas ativos (não deletados). |
+| `GET` | `/systems/{id}` | Detalhe por id (ativo). |
+| `PUT` | `/systems/{id}` | Atualização completa. |
+| `DELETE` | `/systems/{id}` | *Soft delete*. |
+| `PATCH` | `/systems/{id}/restore` | Restaura registro deletado. |
+
+Em desenvolvimento, a documentação OpenAPI fica em `/openapi/v1.json` quando `Development`.
+
+## Testes de integração
+
+Na raiz do repositório (com SDK .NET 10):
+
+```bash
+dotnet test AuthService.Tests/AuthService.Tests.csproj
+```
+
+O compose de desenvolvimento monta só `./AuthService` em `/app`, então **não existe** `AuthService.Tests` dentro do container. Para testes com Docker, monte a **raiz do repositório**:
+
+```bash
+docker run --rm -v "$PWD:/workspace" -w /workspace mcr.microsoft.com/dotnet/sdk:10.0 \
+  dotnet test AuthService.Tests/AuthService.Tests.csproj
+```
+
+Migrações com o serviço `app` já em execução:
+
+```bash
+docker compose exec app dotnet restore
+docker compose exec app dotnet ef database update
+```
+
+O `restore` evita erros de pacote quando o `obj/` está desatualizado em relação ao `.csproj`.
 
 ## Próximos passos
 
-1. Definir entidades e relacionamento no banco de dados.
-2. Implementar CRUD de Sistema, Recurso e Rotas.
-3. Implementar gestão de permissões por recurso/rota.
-4. Adicionar autenticação e política de autorização.
-5. Criar testes automatizados e documentação da API.
+1. Implementar CRUD de Recurso e Rotas.
+2. Implementar gestão de permissões por recurso/rota.
+3. Adicionar autenticação e política de autorização.
+4. Expandir documentação OpenAPI e cenários de teste.
 
 
 ## Comandos Docker

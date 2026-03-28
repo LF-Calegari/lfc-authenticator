@@ -636,3 +636,4 @@ FodyWeavers.xsd
 .env*
 .vscode
 .devcontainer
+.credentials/*
