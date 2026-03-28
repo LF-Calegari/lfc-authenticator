@@ -74,11 +74,24 @@ Rotas REST (JSON). Registros com *soft delete* (`deletedAt` preenchido) retornam
 | `DELETE` | `/systems/{id}` | *Soft delete*. |
 | `PATCH` | `/systems/{id}/restore` | Restaura registro deletado. |
 
+### Cadastro de usuários (`/users`)
+
+Mesmo padrão de **soft delete** e **404** para registros deletados que `/systems` (única exceção: `PATCH /users/{id}/restore`). Email é único (comparação normalizada em minúsculas). Corpo JSON: `name`, `email`, `password`, `identity`, `active` (opcional no POST, default `true`).
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/users` | Cria usuário. |
+| `GET` | `/users` | Lista apenas usuários ativos (`deletedAt` nulo). |
+| `GET` | `/users/{id}` | Detalhe (ativo). |
+| `PUT` | `/users/{id}` | Atualização completa. |
+| `DELETE` | `/users/{id}` | *Soft delete*. |
+| `PATCH` | `/users/{id}/restore` | Restaura registro deletado. |
+
 Em desenvolvimento, a documentação OpenAPI fica em `/openapi/v1.json` quando `Development`.
 
 ## Testes de integração
 
-Os testes usam **SQL Server real**. Cada caso cria um banco dedicado (`auth_svc_it_<guid>`), roda **migrations** e faz **DROP DATABASE** ao terminar (seguro para paralelismo).
+Os testes usam **SQL Server real**. Cada caso cria um banco dedicado (`auth_svc_it_<guid>`), roda **migrations** e faz **DROP DATABASE** ao terminar (seguro para paralelismo). Há suites para **`/systems`** e **`/users`** com o mesmo estilo de cenários (incluindo soft delete e conflito de unicidade).
 
 **Variável obrigatória** (connection string **sem** `Database` / `Initial Catalog`):
 
