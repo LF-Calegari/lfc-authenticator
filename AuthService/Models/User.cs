@@ -30,6 +30,12 @@ public class User : ISoftDelete
     [Required]
     public bool Active { get; set; } = true;
 
+    /// <summary>
+    /// Incrementado no logout para invalidar JWTs emitidos anteriormente (claim <c>tv</c>).
+    /// </summary>
+    [Required]
+    public int TokenVersion { get; set; }
+
     [Required]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

@@ -1,4 +1,6 @@
+using AuthService.Auth;
 using AuthService.Data;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -7,6 +9,18 @@ var builder = WebApplication.CreateBuilder(args);
 // Em "Testing", a connection string vem do WebApplicationFactory (banco dedicado por execução de teste).
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
+builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
+builder.Services.AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = BearerAuthenticationDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = BearerAuthenticationDefaults.AuthenticationScheme;
+    })
+    .AddScheme<AuthenticationSchemeOptions, JwtBearerAuthenticationHandler>(
+        BearerAuthenticationDefaults.AuthenticationScheme,
+        _ => { });
+builder.Services.AddAuthorization();
 
 builder.Services.AddControllers();
 
@@ -26,6 +40,7 @@ if (!app.Environment.IsEnvironment("Testing"))
     app.UseHttpsRedirection();
 }
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
