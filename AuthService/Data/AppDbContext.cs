@@ -10,6 +10,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AppSystem> Systems => Set<AppSystem>();
     public DbSet<AppRoute> Routes => Set<AppRoute>();
     public DbSet<AppPermissionType> PermissionTypes => Set<AppPermissionType>();
+    public DbSet<AppRole> Roles => Set<AppRole>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

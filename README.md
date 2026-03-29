@@ -28,7 +28,7 @@ O AuthService concentra a gestão de permissões e padroniza como perfis, usuár
 
 ### Implementado hoje
 
-- CRUD com *soft delete* e restore para **`/systems`**, **`/users`**, **`/routes`** e **`/permission-types`**.
+- CRUD com *soft delete* e restore para **`/systems`**, **`/users`**, **`/routes`**, **`/permission-types`** e **`/roles`**.
 - **`/routes`** está vinculada a **sistema ativo** (`systemId`); leituras e restore respeitam o sistema pai não deletado.
 - Testes de integração com SQL Server real (criação e descarte de banco por execução).
 
@@ -131,11 +131,24 @@ Mesmo padrão de *soft delete* e **404** para deletados que **`/systems`**. `Cod
 | `DELETE` | `/permission-types/{id}` | *Soft delete*. |
 | `PATCH` | `/permission-types/{id}/restore` | Restaura registro deletado. |
 
+### Roles (`/roles`)
+
+Mesmo padrão de *soft delete* e **404** para deletados que **`/systems`**. `Code` é **único globalmente**. Corpo: `name`, `code` (obrigatórios).
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/roles` | Cria registro. |
+| `GET` | `/roles` | Lista apenas ativos. |
+| `GET` | `/roles/{id}` | Detalhe (ativo). |
+| `PUT` | `/roles/{id}` | Atualização completa. |
+| `DELETE` | `/roles/{id}` | *Soft delete*. |
+| `PATCH` | `/roles/{id}/restore` | Restaura registro deletado. |
+
 Em ambiente **Development**, a especificação OpenAPI fica em **`/openapi/v1.json`**.
 
 ## Testes de integração
 
-A suite usa **SQL Server real**. Cada execução cria um banco dedicado (`auth_svc_it_<guid>`), aplica **migrations** e faz **DROP DATABASE** ao terminar (adequado para rodar testes em paralelo). Há cobertura para **`/systems`**, **`/users`**, **`/routes`** e **`/permission-types`**.
+A suite usa **SQL Server real**. Cada execução cria um banco dedicado (`auth_svc_it_<guid>`), aplica **migrations** e faz **DROP DATABASE** ao terminar (adequado para rodar testes em paralelo). Há cobertura para **`/systems`**, **`/users`**, **`/routes`**, **`/permission-types`** e **`/roles`**.
 
 Defina a connection string **sem** `Database` / `Initial Catalog`:
 
