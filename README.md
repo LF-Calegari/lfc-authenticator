@@ -1,228 +1,492 @@
-# AuthService
+# Auth Service (lfc-authenticator)
 
-Serviço de **autenticação e autorização** do ecossistema: centraliza cadastros e regras que definem o que cada usuário ou integração pode fazer em cada parte do sistema.
+API REST em **ASP.NET Core** para **autenticação JWT**, **autorização baseada em permissões** persistidas em **SQL Server** e **cadastros** correlatos (sistemas, rotas, tipos de permissão, permissões, papéis e vínculos). O serviço centraliza o catálogo oficial de permissões e padroniza o que cada usuário pode fazer nos demais sistemas do ecossistema.
 
-## Objetivo
+---
 
-O AuthService concentra a gestão de permissões e padroniza como perfis, usuários ou integrações se relacionam com recursos e rotas da API.
+## Índice
 
-## Domínio (visão do produto)
+- [Visão geral](#visão-geral)
+- [Requisitos](#requisitos)
+- [Início rápido](#início-rápido)
+- [Configuração e variáveis de ambiente](#configuração-e-variáveis-de-ambiente)
+- [Fluxo de inicialização](#fluxo-de-inicialização-da-aplicação)
+- [Arquitetura em alto nível](#arquitetura-em-alto-nível)
+- [Autenticação e autorização](#autenticação-e-autorização)
+- [Versionamento da API (`/v1`)](#versionamento-da-api-v1)
+- [Documentação OpenAPI (Swagger)](#documentação-openapi-swagger)
+- [Referência de rotas](#referência-de-rotas)
+- [Exemplos de uso](#exemplos-de-uso)
+- [Convenções de erro e códigos HTTP](#convenções-de-erro-e-códigos-http)
+- [Docker Compose](#docker-compose)
+- [Migrations (EF Core)](#migrations-ef-core)
+- [Testes automatizados](#testes-automatizados)
+- [Troubleshooting](#troubleshooting)
+- [Boas práticas e segurança](#boas-práticas-e-segurança)
+- [Contribuindo e próximos passos](#contribuindo-e-próximos-passos)
+- [Apêndice: SDK .NET em container](#apêndice-sdk-net-em-container)
 
-### Cadastros previstos
+---
 
-1. **Sistema**
-2. **Recurso** (agrupamento lógico dentro de um sistema)
-3. **Rota** (endpoints ou caminhos associados a recursos)
-4. **Permissão** (liga ações a recursos/rotas)
+## Visão geral
 
-### Ações padrão
+### Contexto e objetivo
 
-`create`, `read`, `update`, `delete`, `restore`
+O Auth Service expõe endpoints para:
 
-### Modelo de autorização (alvo)
+- Emitir e validar **tokens JWT** vinculados a usuários.
+- Resolver **autorização** comparando permissões efetivas do usuário (diretas e via papéis) com políticas declaradas nos controllers.
+- Manter cadastros com **exclusão lógica (*soft delete*)** e rotas de **restauração** onde aplicável.
 
-- Um **Sistema** agrupa vários **Recursos**.
-- Um **Recurso** possui uma ou mais **Rotas**.
-- Uma **Permissão** indica quais ações são permitidas sobre recurso/rota.
-- Perfis, usuários ou integrações externas serão associados a permissões (detalhes nas próximas versões).
+### Domínio (produto) — modelo alvo
 
-### Implementado hoje
+Cadastros conceituais:
 
-- **Autenticação JWT** (`POST /auth/login`, `GET /auth/verify-token`, `GET /auth/logout`) e **autorização** por permissão oficial (políticas `perm:Recurso.Ação` resolvidas no banco).
-- **`GET /health`** sem autenticação; demais rotas exigem **Bearer**, salvo `POST /auth/login`.
-- Catálogo oficial de sistemas/tipos de permissão/linhas de permissão é criado de forma **idempotente** nos testes (após migrations) e na subida em **Development/Production** (fora do ambiente `Testing`).
-- CRUD com *soft delete* e **`POST .../restore`** para **`/systems`**, **`/systems/routes`**, **`/users`** (inclui **`PUT /users/{id}/password`**), **`/permissions/types`**, **`/tokens/types`**, **`/roles`**, **`/permissions`**, além de **`/users-roles`**, **`/users-permissions`** e **`/roles-permissions`** (estes últimos exigem apenas usuário autenticado).
-- **`/systems/routes`** segue o mesmo vínculo a **sistema ativo** (`systemId`) que as routes já tinham.
-- Testes de integração com SQL Server real (banco dedicado por execução).
+1. **Sistema** — agrupa recursos lógicos.
+2. **Recurso** — agrupamento dentro de um sistema (evolução futura).
+3. **Rota** — endpoints ou caminhos (hoje modeladas como `systems/routes` ligadas ao sistema).
+4. **Permissão** — ações sobre recursos/rotas.
 
-## Desenvolvimento com Docker
+Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 
-O arquivo **`docker-compose.yml`** fica na **raiz** do repositório.
+### O que está implementado hoje
 
-1. **Ambiente:** `cp .env.example .env` e ajuste se precisar. A senha `MSSQL_SA_PASSWORD` deve ser a **mesma** usada em `AuthService/appsettings.Development.json` se você rodar `dotnet run` **no host** apontando para `localhost:1433` (o exemplo padrão usa `DevPassword123!`).
-2. **Subir API + SQL:** `docker compose up -d --build`  
-   O serviço `app` aguarda o `db` ficar **healthy** (healthcheck com `sqlcmd` e certificado confiável em dev).
-3. **Primeira carga ou após alterar migrations:**
-   ```bash
-   docker compose --profile migrate run --rm migrate
-   ```
-4. **API:** [http://localhost:8080](http://localhost:8080) (mapeamento `8080:5042`; a app escuta na porta `5042` dentro do container).
+- JWT com validação de **versão de sessão** (`tokenVersion` no banco + *claim* `tv` no token); **logout** invalida tokens anteriores.
+- Políticas `Authorize` no formato `perm:<Recurso>.<Ação>` (ex.: `perm:Systems.Read`), resolvidas para **GUIDs** de permissão no banco.
+- **Catálogo oficial** de sistemas, tipos de permissão e linhas de permissão criado de forma **idempotente** na subida em **Development** e **Production** (não roda no host em ambiente **Testing**; nos testes, o *factory* aplica o mesmo seed após as migrations).
+- CRUD com *soft delete* e `POST`/`PATCH` de restauração nos recursos documentados na [referência de rotas](#referência-de-rotas).
 
-O SQL Server usa o volume **`mssql_data`** e expõe **`localhost:1433`** no host. No Compose, a connection string do `app` vem de `ConnectionStrings__DefaultConnection` com a senha do `.env` (não depende de senha fixa só no JSON).
+---
 
-**Exemplo de string na rede interna do Compose** (host `db`):
+## Requisitos
 
-`Server=db,1433;User Id=sa;Password=<sua senha>;TrustServerCertificate=True;`
+| Item | Versão / notas |
+|------|----------------|
+| SDK .NET | **10.x** (alvo `net10.0`) |
+| Banco | **Microsoft SQL Server** (local, Docker ou remoto) |
+| Docker (opcional) | Docker Engine + Compose v2 |
+| Ferramenta EF (migrations) | `dotnet-ef` (global ou via `dotnet tool restore` no projeto) |
 
-### Testes via Compose
+---
 
-Com o stack (no mínimo o `db`) no ar:
+## Início rápido
+
+### Opção A — Docker Compose (recomendado para ambiente integrado)
+
+1. Na **raiz** do repositório: `cp .env.example .env` e ajuste `MSSQL_SA_PASSWORD` (deve atender à política da Microsoft: maiúsculas, minúsculas, números e símbolos).
+2. Subir API + SQL: `docker compose up -d --build`
+3. Aplicar migrations (primeira vez ou após alteração do modelo):  
+   `docker compose --profile migrate run --rm migrate`
+4. API no host: **http://localhost:8080** (mapeamento `8080:5042`; dentro do container a app escuta na porta **5042**).
+
+### Opção B — `dotnet run` no host
+
+1. SQL Server acessível (ex.: `localhost:1433` se usar o container só do `db`).
+2. Ajuste `ConnectionStrings:DefaultConnection` em `AuthService/appsettings.Development.json` ou sobrescreva via variável de ambiente (veja tabela abaixo). A senha deve ser a **mesma** configurada no SQL (ex.: a do `.env` se o banco for o do Compose).
+3. Aplicar migrations no banco alvo (veja [Migrations](#migrations-ef-core)).
+4. Na pasta `AuthService`: `dotnet run`  
+   URLs padrão do perfil HTTP: **http://localhost:5052** (veja `Properties/launchSettings.json`).
+
+Todas as rotas da API REST ficam sob o prefixo **`/v1`** (ex.: `GET http://localhost:5052/v1/health`).
+
+---
+
+## Configuração e variáveis de ambiente
+
+| Origem | Descrição |
+|--------|-----------|
+| `ConnectionStrings:DefaultConnection` | Connection string do SQL Server **com** banco (ex.: `Database=AuthServiceDb`). No Compose: `ConnectionStrings__DefaultConnection`. |
+| `ASPNETCORE_ENVIRONMENT` | `Development`, `Production` ou `Testing`. Em **Testing**, não há redirecionamento HTTPS e o seed do catálogo no `Program` é omitido (testes fazem seed no *factory*). |
+| `Auth:Jwt:Secret` | Segredo HMAC do JWT; **mínimo 32 caracteres**. Em produção, use segredo forte e armazenamento seguro — **não** commite valores reais. |
+| `Auth:Jwt:ExpirationMinutes` | Validade do access token em minutos. |
+| `AUTH_SERVICE_TEST_SQL_BASE` | Obrigatória para **testes de integração**: connection string **sem** `Database` / `Initial Catalog`. |
+
+Exemplo de override no shell (Linux):
 
 ```bash
-docker compose --profile test run --rm test
+export ConnectionStrings__DefaultConnection="Server=127.0.0.1,1433;Database=AuthServiceDb;User Id=sa;Password=SuaSenha;TrustServerCertificate=True"
+export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 ```
 
-O serviço `test` monta a raiz do repositório e define `AUTH_SERVICE_TEST_SQL_BASE` apontando para o host `db`.
+---
 
-### Aplicar migrations com o `app` já em execução
+## Fluxo de inicialização da aplicação
 
-Útil quando o volume monta só `AuthService`:
+1. **`WebApplication.CreateBuilder`** — registra `AppDbContext` (SQL Server), opções JWT, serviços de autenticação/autorização customizados, controllers e Swagger.
+2. **Pipeline HTTP** — em ambientes diferentes de **Testing**, `UseHttpsRedirection`. **Swagger** e **Swagger UI** são registrados **antes** de autenticação/autorização, ficando **anônimos**.
+3. **`UseAuthentication`** / **`UseAuthorization`** — JWT *handler* valida cabeçalho `Authorization: Bearer …`, *claims* e coerência com o usuário no banco (`TokenVersion`, ativo).
+4. **`MapGroup("/v1").MapControllers()`** — todas as rotas de API ficam versionadas em `/v1`.
+5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante sistemas, tipos e permissões oficiais no banco.
+
+---
+
+## Arquitetura em alto nível
+
+```
+AuthService/
+├── Controllers/          # Endpoints REST por agregado (Auth, Systems, Users, …)
+├── Auth/                 # JWT, handler Bearer, políticas perm:*, permissões efetivas
+├── Data/                 # AppDbContext, migrations, seeders (catálogo oficial, bootstrap de testes)
+├── Models/               # Entidades EF Core
+├── OpenApi/              # Filtros Swagger (prefixo /v1 nos paths do documento)
+└── Program.cs            # Composição, pipeline, mapa de rotas
+```
+
+- **Camada de API:** controllers ASP.NET Core, validação via *DataAnnotations* e `ModelState`.
+- **Camada de aplicação/infra:** `Auth` + `Data` concentram regras de token, resolução de políticas e persistência.
+- **Autorização:** `FallbackPolicy` exige usuário autenticado (JWT), exceto onde há `[AllowAnonymous]`.
+
+---
+
+## Autenticação e autorização
+
+### JWT (Bearer)
+
+- **Login:** `POST /v1/auth/login` com `email` e `password` → resposta com `token` e `expiresAtUtc`.
+- **Cabeçalho:** `Authorization: Bearer <jwt>`.
+- O token inclui identificação do usuário (`sub`) e versão de sessão (`tv`). Alterações em `TokenVersion` (ex.: **logout**) invalidam tokens antigos.
+
+### Políticas `perm:<Chave>`
+
+- No código, constantes como `PermissionPolicies.SystemsRead` correspondem à política **`perm:Systems.Read`**.
+- O *handler* de autorização resolve a chave (`Systems` + `Read`) para um **GUID** de permissão no banco (via sistema e tipo de permissão do catálogo) e verifica se esse id está no conjunto **efetivo** do usuário.
+- **Permissões efetivas** = permissões ligadas diretamente ao usuário **ou** alcançadas por **papéis** (`UserRoles` → `RolePermissions`).
+
+### Endpoints somente autenticados (sem política `perm:`)
+
+Os controllers **`/v1/users-roles`**, **`/v1/users-permissions`** e **`/v1/roles-permissions`** exigem **apenas** usuário autenticado (JWT válido), sem checagem de permissão nomeada adicional.
+
+### Anonimato permitido
+
+- `GET /v1/health`
+- `POST /v1/auth/login`
+- Documentação Swagger (`/docs`, JSON em `/swagger/v1/swagger.json`)
+
+---
+
+## Versionamento da API (`/v1`)
+
+Todas as rotas listadas na referência abaixo são relativas ao prefixo **`/v1`**. Exemplo completo: `https://localhost:7218/v1/systems`.
+
+---
+
+## Documentação OpenAPI (Swagger)
+
+| Recurso | Caminho |
+|---------|---------|
+| Swagger UI | **`/docs`** |
+| OpenAPI JSON | **`/swagger/v1/swagger.json`** (paths já prefixados com `/v1` via filtro de documento) |
+
+A UI está configurada para não exigir autenticação; para testar endpoints protegidos, use **Authorize** na Swagger UI e informe `Bearer <token>`.
+
+---
+
+## Referência de rotas
+
+Legenda:
+
+- **Auth:** `Não` = anônimo; `Sim` = JWT obrigatório.
+- **Permissão:** política `perm:…` exigida; `—` = somente autenticação.
+
+### Saúde
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `GET` | `/v1/health` | Não | — |
+
+### Autenticação — `/v1/auth`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/v1/auth/login` | Não | — |
+| `GET` | `/v1/auth/verify-token` | Sim | — |
+| `GET` | `/v1/auth/logout` | Sim | — |
+
+### Sistemas — `/v1/systems`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/v1/systems` | Sim | `perm:Systems.Create` |
+| `GET` | `/v1/systems` | Sim | `perm:Systems.Read` |
+| `GET` | `/v1/systems/{id}` | Sim | `perm:Systems.Read` |
+| `PUT` | `/v1/systems/{id}` | Sim | `perm:Systems.Update` |
+| `DELETE` | `/v1/systems/{id}` | Sim | `perm:Systems.Delete` |
+| `POST` | `/v1/systems/{id}/restore` | Sim | `perm:Systems.Restore` |
+
+Corpo típico de criação/atualização: `name`, `code`, `description` (opcional). Registros *soft-deleted* retornam **404** em leitura/alteração/exclusão até restaurados.
+
+### Rotas de sistema — `/v1/systems/routes`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/v1/systems/routes` | Sim | `perm:SystemsRoutes.Create` |
+| `GET` | `/v1/systems/routes` | Sim | `perm:SystemsRoutes.Read` |
+| `GET` | `/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Read` |
+| `PUT` | `/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Update` |
+| `DELETE` | `/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Delete` |
+| `POST` | `/v1/systems/routes/{id}/restore` | Sim | `perm:SystemsRoutes.Restore` |
+
+`systemId` obrigatório; `code` único globalmente. Listagens consideram sistema pai ativo.
+
+### Usuários — `/v1/users`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/v1/users` | Sim | `perm:Users.Create` |
+| `GET` | `/v1/users` | Sim | `perm:Users.Read` |
+| `GET` | `/v1/users/{id}` | Sim | `perm:Users.Read` |
+| `PUT` | `/v1/users/{id}` | Sim | `perm:Users.Update` |
+| `PUT` | `/v1/users/{id}/password` | Sim | `perm:Users.Update` |
+| `DELETE` | `/v1/users/{id}` | Sim | `perm:Users.Delete` |
+| `POST` | `/v1/users/{id}/restore` | Sim | `perm:Users.Restore` |
+
+**POST:** `name`, `email`, `password`, `identity`, `active` (opcional, padrão `true`). **PUT** usuário: `name`, `email`, `identity`, `active` (sem senha). Email normalizado (ex.: minúsculas).
+
+### Tipos de token — `/v1/tokens/types`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/v1/tokens/types` | Sim | `perm:SystemTokensTypes.Create` |
+| `GET` | `/v1/tokens/types` | Sim | `perm:SystemTokensTypes.Read` |
+| `GET` | `/v1/tokens/types/{id}` | Sim | `perm:SystemTokensTypes.Read` |
+| `PUT` | `/v1/tokens/types/{id}` | Sim | `perm:SystemTokensTypes.Update` |
+| `DELETE` | `/v1/tokens/types/{id}` | Sim | `perm:SystemTokensTypes.Delete` |
+| `POST` | `/v1/tokens/types/{id}/restore` | Sim | `perm:SystemTokensTypes.Restore` |
+
+### Tipos de permissão — `/v1/permissions/types`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/v1/permissions/types` | Sim | `perm:PermissionsTypes.Create` |
+| `GET` | `/v1/permissions/types` | Sim | `perm:PermissionsTypes.Read` |
+| `GET` | `/v1/permissions/types/{id}` | Sim | `perm:PermissionsTypes.Read` |
+| `PUT` | `/v1/permissions/types/{id}` | Sim | `perm:PermissionsTypes.Update` |
+| `DELETE` | `/v1/permissions/types/{id}` | Sim | `perm:PermissionsTypes.Delete` |
+| `POST` | `/v1/permissions/types/{id}/restore` | Sim | `perm:PermissionsTypes.Restore` |
+
+`code` único globalmente.
+
+### Papéis (roles) — `/v1/roles`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/v1/roles` | Sim | `perm:Roles.Create` |
+| `GET` | `/v1/roles` | Sim | `perm:Roles.Read` |
+| `GET` | `/v1/roles/{id}` | Sim | `perm:Roles.Read` |
+| `PUT` | `/v1/roles/{id}` | Sim | `perm:Roles.Update` |
+| `DELETE` | `/v1/roles/{id}` | Sim | `perm:Roles.Delete` |
+| `POST` | `/v1/roles/{id}/restore` | Sim | `perm:Roles.Restore` |
+
+### Permissões — `/v1/permissions`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/v1/permissions` | Sim | `perm:Permissions.Create` |
+| `GET` | `/v1/permissions` | Sim | `perm:Permissions.Read` |
+| `GET` | `/v1/permissions/{id}` | Sim | `perm:Permissions.Read` |
+| `PUT` | `/v1/permissions/{id}` | Sim | `perm:Permissions.Update` |
+| `DELETE` | `/v1/permissions/{id}` | Sim | `perm:Permissions.Delete` |
+| `POST` | `/v1/permissions/{id}/restore` | Sim | `perm:Permissions.Restore` |
+
+Corpo: `systemId`, `permissionTypeId`, `description` (opcional). Restauração exige referências ativas coerentes com as regras do controller.
+
+### Usuário ↔ papel — `/v1/users-roles`
+
+`{id}` é **`int`** (identity). Par `(userId, roleId)` único (inclui registros deletados logicamente, conforme regras do banco).
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/v1/users-roles` | Sim | — |
+| `GET` | `/v1/users-roles` | Sim | — |
+| `GET` | `/v1/users-roles/{id}` | Sim | — |
+| `PUT` | `/v1/users-roles/{id}` | Sim | — |
+| `DELETE` | `/v1/users-roles/{id}` | Sim | — |
+| `PATCH` | `/v1/users-roles/{id}/restore` | Sim | — |
+
+### Usuário ↔ permissão — `/v1/users-permissions`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/v1/users-permissions` | Sim | — |
+| `GET` | `/v1/users-permissions` | Sim | — |
+| `GET` | `/v1/users-permissions/{id}` | Sim | — |
+| `PUT` | `/v1/users-permissions/{id}` | Sim | — |
+| `DELETE` | `/v1/users-permissions/{id}` | Sim | — |
+| `PATCH` | `/v1/users-permissions/{id}/restore` | Sim | — |
+
+### Papel ↔ permissão — `/v1/roles-permissions`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/v1/roles-permissions` | Sim | — |
+| `GET` | `/v1/roles-permissions` | Sim | — |
+| `GET` | `/v1/roles-permissions/{id}` | Sim | — |
+| `PUT` | `/v1/roles-permissions/{id}` | Sim | — |
+| `DELETE` | `/v1/roles-permissions/{id}` | Sim | — |
+| `PATCH` | `/v1/roles-permissions/{id}/restore` | Sim | — |
+
+---
+
+## Exemplos de uso
+
+Substitua a base pela URL da sua instância (`http://localhost:5052`, `http://localhost:8080`, etc.).
+
+**Login**
+
+```bash
+curl -s -X POST "http://localhost:5052/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"usuario@exemplo.com","password":"suaSenha"}'
+```
+
+Resposta esperada (200): JSON com `token` e `expiresAtUtc`.
+
+**Chamada autenticada (ex.: listar sistemas)**
+
+```bash
+curl -s "http://localhost:5052/v1/systems" \
+  -H "Authorization: Bearer SEU_JWT_AQUI"
+```
+
+**Verificar token e permissões efetivas (ids)**
+
+```bash
+curl -s "http://localhost:5052/v1/auth/verify-token" \
+  -H "Authorization: Bearer SEU_JWT_AQUI"
+```
+
+Resposta (200): objeto `user` + lista `permissionIds` (GUIDs das permissões efetivas).
+
+**Health check**
+
+```bash
+curl -s "http://localhost:5052/v1/health"
+```
+
+---
+
+## Convenções de erro e códigos HTTP
+
+| Código | Uso típico |
+|--------|------------|
+| **200 OK** | Leitura ou escrita com corpo de sucesso. |
+| **201 Created** | Criação bem-sucedida (ex.: `POST` com `CreatedAtAction`). |
+| **204 No Content** | Exclusão lógica bem-sucedida (`DELETE`). |
+| **400 Bad Request** | Validação de entrada (`ModelState` / `ValidationProblem`), regras de negócio ou estado inválido; corpo frequentemente JSON (`message` ou detalhes de campo). |
+| **401 Unauthorized** | Credenciais inválidas no login; token ausente, inválido, expirado, revogado ou usuário inativo. |
+| **403 Forbidden** | JWT válido mas **sem** permissão para a política `perm:…` exigida. |
+| **404 Not Found** | Recurso inexistente ou *soft-deleted* em operações que exigem entidade ativa. |
+| **409 Conflict** | Violação de unicidade (email, `code`, par já vinculado, etc.). |
+
+Mensagens de autenticação e de regra de negócio costumam vir como JSON com propriedade `message`; erros de validação seguem o padrão de **problem details** do ASP.NET Core quando aplicável.
+
+---
+
+## Docker Compose
+
+O arquivo **`docker-compose.yml`** está na **raiz** do repositório.
+
+| Serviço | Função |
+|---------|--------|
+| `db` | SQL Server 2022; porta **1433** no host; volume `mssql_data`. |
+| `app` | API com `dotnet watch`, volume `./AuthService:/app`, porta **8080→5042**. |
+| `migrate` (profile `migrate`) | `dotnet ef database update` contra o `db`. |
+| `test` (profile `test`) | Executa `dotnet test` com `AUTH_SERVICE_TEST_SQL_BASE` apontando para `db`. |
+
+**Subir stack:** `docker compose up -d --build`  
+**Migrations:** `docker compose --profile migrate run --rm migrate`  
+**Testes de integração:** `docker compose --profile test run --rm test`
+
+Com o `app` em execução, migrations manuais no container:
 
 ```bash
 docker compose exec app sh -c "dotnet restore && dotnet tool restore && dotnet ef database update"
 ```
 
-## API REST
+String típica **na rede do Compose** (servidor `db`):
 
-Todas as rotas abaixo (exceto **`GET /health`** e **`POST /auth/login`**) exigem cabeçalho **`Authorization: Bearer <jwt>`** e a **permissão oficial** indicada entre parênteses (ex.: `Systems.Read`).
+`Server=db,1433;Database=AuthServiceDb;User Id=sa;Password=<sua senha>;TrustServerCertificate=True`
 
-### Saúde
+---
 
-| Método | Rota | Autenticação | Descrição |
-|--------|------|--------------|-----------|
-| `GET` | `/health` | Não | Verificação de saúde da aplicação. |
+## Migrations (EF Core)
 
-### Autenticação (`/auth`)
+Na pasta do projeto web (ou raiz com caminhos ajustados):
 
-| Método | Rota | Autenticação | Descrição |
-|--------|------|--------------|-----------|
-| `POST` | `/auth/login` | Não | Login com `email` e `password`; retorna JWT. |
-| `GET` | `/auth/verify-token` | Sim | Valida JWT e retorna usuário e ids de permissões efetivas. |
-| `GET` | `/auth/logout` | Sim | Invalida sessões anteriores (incrementa `tokenVersion`). |
+```bash
+dotnet ef database update \
+  --project AuthService/AuthService.csproj \
+  --startup-project AuthService/AuthService.csproj
+```
 
-### Sistemas (`/systems`) — (`Systems.*`)
+Para **adicionar** migration (apenas quando houver mudança de modelo):
 
-Registros com *soft delete* respondem **404** em leitura, atualização e exclusão; exceção: **`POST .../restore`**.
+```bash
+dotnet ef migrations add NomeDescritivoDaMigration \
+  --project AuthService/AuthService.csproj \
+  --startup-project AuthService/AuthService.csproj \
+  --output-dir Data/Migrations
+```
 
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/systems` | Cria (`name`, `code`, `description` opcional). |
-| `GET` | `/systems` | Lista apenas ativos. |
-| `GET` | `/systems/{id}` | Detalhe (ativo). |
-| `PUT` | `/systems/{id}` | Atualização completa. |
-| `DELETE` | `/systems/{id}` | *Soft delete*. |
-| `POST` | `/systems/{id}/restore` | Restaura registro deletado. |
+---
 
-### Usuários (`/users`) — (`Users.*`)
+## Testes automatizados
 
-Mesmo padrão de *soft delete* e **404** que `/systems`. Email único (normalizado). **POST** usa `name`, `email`, `password`, `identity`, `active` (opcional; padrão `true`). **PUT** `/users/{id}` usa `name`, `email`, `identity`, `active` (sem senha). **PUT** `/users/{id}/password` usa apenas `password`.
-
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/users` | Cria usuário. |
-| `GET` | `/users` | Lista ativos. |
-| `GET` | `/users/{id}` | Detalhe (ativo). |
-| `PUT` | `/users/{id}` | Atualização de dados (sem senha). |
-| `PUT` | `/users/{id}/password` | Atualiza somente a senha. |
-| `DELETE` | `/users/{id}` | *Soft delete*. |
-| `POST` | `/users/{id}/restore` | Restaura registro deletado. |
-
-### Routes (`/systems/routes`) — (`SystemsRoutes.*`)
-
-Vinculadas a **sistema existente e ativo** (`systemId`). `Code` **único globalmente**. Corpo: `systemId`, `name`, `code`, `description` (opcional). Nos **`GET`**, só entram routes com sistema pai ativo. **`POST .../restore`** exige sistema ativo.
-
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/systems/routes` | Cria. |
-| `GET` | `/systems/routes` | Lista routes ativas com sistema pai ativo. |
-| `GET` | `/systems/routes/{id}` | Detalhe. |
-| `PUT` | `/systems/routes/{id}` | Atualização completa. |
-| `DELETE` | `/systems/routes/{id}` | *Soft delete*. |
-| `POST` | `/systems/routes/{id}/restore` | Restaura route deletada. |
-
-### Token types (`/tokens/types`) — (`SystemTokensTypes.*`)
-
-Mesmo padrão de *soft delete* que **`/systems`**. Corpo: `name`, `code`, `description` (opcional).
-
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/tokens/types` | Cria registro. |
-| `GET` | `/tokens/types` | Lista ativos. |
-| `GET` | `/tokens/types/{id}` | Detalhe. |
-| `PUT` | `/tokens/types/{id}` | Atualização completa. |
-| `DELETE` | `/tokens/types/{id}` | *Soft delete*. |
-| `POST` | `/tokens/types/{id}/restore` | Restaura registro deletado. |
-
-### Permission types (`/permissions/types`) — (`PermissionsTypes.*`)
-
-Mesmo padrão de *soft delete* que **`/systems`**. `Code` **único globalmente**. Corpo: `name`, `code`, `description` (opcional).
-
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/permissions/types` | Cria registro. |
-| `GET` | `/permissions/types` | Lista ativos. |
-| `GET` | `/permissions/types/{id}` | Detalhe. |
-| `PUT` | `/permissions/types/{id}` | Atualização completa. |
-| `DELETE` | `/permissions/types/{id}` | *Soft delete*. |
-| `POST` | `/permissions/types/{id}/restore` | Restaura registro deletado. |
-
-### Roles (`/roles`) — (`Roles.*`)
-
-Mesmo padrão de *soft delete* que **`/systems`**. Corpo: `name`, `code`.
-
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/roles` | Cria registro. |
-| `GET` | `/roles` | Lista ativos. |
-| `GET` | `/roles/{id}` | Detalhe. |
-| `PUT` | `/roles/{id}` | Atualização completa. |
-| `DELETE` | `/roles/{id}` | *Soft delete*. |
-| `POST` | `/roles/{id}/restore` | Restaura registro deletado. |
-
-### Permissions (`/permissions`) — (`Permissions.*`)
-
-Vinculadas a **sistema** e **tipo de permissão** ativos. Corpo: `systemId`, `permissionTypeId`, `description` (opcional). **`POST .../restore`** exige referências ativas.
-
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/permissions` | Cria. |
-| `GET` | `/permissions` | Lista permissões ativas (filtros de pai ativo). |
-| `GET` | `/permissions/{id}` | Detalhe. |
-| `PUT` | `/permissions/{id}` | Atualização completa. |
-| `DELETE` | `/permissions/{id}` | *Soft delete*. |
-| `POST` | `/permissions/{id}/restore` | Restaura permissão deletada. |
-
-### Users–roles (`/users-roles`)
-
-Vínculo **usuário ↔ papel** (`userId`, `roleId`). Par **único** globalmente (inclui registros *soft-deleted*). Chaves estrangeiras para **`Users`** e **`Roles`** com exclusão/atualização **restritas**. `Id` numérico com **identity** no SQL Server. *Soft delete* e **404** para deletados (exceto `PATCH .../restore`).
-
-Nos **`GET`**, só aparecem vínculos cujo **usuário** e **papel** ainda estão ativos. **`PATCH .../restore`** exige ambos ativos.
-
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/users-roles` | Cria vínculo (`userId`, `roleId` obrigatórios e ativos). |
-| `GET` | `/users-roles` | Lista vínculos ativos com usuário e papel ativos. |
-| `GET` | `/users-roles/{id}` | Detalhe (`id` inteiro). |
-| `PUT` | `/users-roles/{id}` | Atualização completa do par. |
-| `DELETE` | `/users-roles/{id}` | *Soft delete*. |
-| `PATCH` | `/users-roles/{id}/restore` | Restaura vínculo deletado (referências ativas). |
-
-Em ambiente **Development**, a especificação OpenAPI fica em **`/openapi/v1.json`**.
-
-## Testes de integração
-
-A suite usa **SQL Server real**. Cada execução cria um banco dedicado (`auth_svc_it_<guid>`), aplica **migrations**, garante o **catálogo oficial de permissões** e o usuário bootstrap de integração, e faz **DROP DATABASE** ao terminar. Há cobertura para autenticação, **`/systems`**, **`/users`**, **`/systems/routes`**, **`/permissions/types`**, **`/tokens/types`**, **`/roles`**, **`/permissions`**, **`/users-roles`**, vínculos de permissões e papéis.
-
-Defina a connection string **sem** `Database` / `Initial Catalog`:
+- Projeto: **`AuthService.Tests`**
+- Utilizam **SQL Server real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa seeders de catálogo e usuário bootstrap, e remove o banco ao final.
+- **Obrigatório** definir `AUTH_SERVICE_TEST_SQL_BASE` **sem** catálogo inicial:
 
 ```bash
 export AUTH_SERVICE_TEST_SQL_BASE="Server=127.0.0.1,1433;User Id=sa;Password=<MESMA_DO_.env>;TrustServerCertificate=True"
 dotnet test AuthService.Tests/AuthService.Tests.csproj
 ```
 
-**Alternativa:** `docker compose --profile test run --rm test` (veja acima).
+Sem essa variável, o `WebApplicationFactory` falha na construção — comportamento esperado.
 
-Sem `AUTH_SERVICE_TEST_SQL_BASE`, a criação do `WebAppFactory` falha — comportamento esperado.
+---
 
-## Roadmap
+## Troubleshooting
 
-1. Entidade **Recurso** e relação com **Rotas** conforme o modelo alvo (hoje `Routes` liga-se diretamente ao sistema).
-2. Refinamento de **permissões** por recurso/rota e matriz de perfis.
-3. Evolução da documentação OpenAPI e mais cenários de teste (incluindo 403 por permissão ausente).
+| Sintoma | Verificação sugerida |
+|---------|----------------------|
+| Falha ao conectar ao SQL | Senha/porta/host; `TrustServerCertificate=True` em dev; firewall. |
+| `dotnet ef` não encontrado | `dotnet tool install --global dotnet-ef` ou `dotnet tool restore` no projeto. |
+| 401 em todas as rotas protegidas | Cabeçalho `Authorization: Bearer`; relógio do cliente; token expirado ou após **logout**. |
+| 403 em recurso específico | Usuário não possui GUID da permissão correspondente à política `perm:…` (vincular via papéis ou `users-permissions`). |
+| 404 em entidade “que existe” | Pode estar *soft-deleted*; usar rota de **restore** quando aplicável. |
+| Docker `app` não sobe | Aguardar healthcheck do `db`; conferir `MSSQL_SA_PASSWORD` no `.env`. |
+| Caminho 404 na API | Prefixo **`/v1`** obrigatório em todos os controllers mapeados. |
+
+---
+
+## Boas práticas e segurança
+
+- **Nunca** commitar segredos reais; use variáveis de ambiente ou cofres em produção.
+- Troque `Auth:Jwt:Secret` em qualquer ambiente exposto; o repositório contém valores apenas para desenvolvimento.
+- **HTTPS** em produção; em desenvolvimento local o perfil pode usar só HTTP.
+- Após alterar permissões ou papéis, clientes podem chamar **`/v1/auth/verify-token`** para obter a lista atualizada de `permissionIds`.
+- Mantenha o **README** alinhado às rotas ao introduzir novos controllers ou políticas.
+
+---
+
+## Contribuindo e próximos passos
+
+1. Crie branch no padrão do time (ex.: `feature/<issue>/<descricao>`).
+2. Alterações de modelo exigem **migration** gerada com `dotnet ef migrations add`.
+3. Adicione ou atualize **testes de integração** para novos endpoints ou regras.
+4. Atualize esta documentação (rotas, variáveis, troubleshooting) no mesmo PR quando o contrato público mudar.
+
+**Roadmap alinhado ao domínio**
+
+1. Entidade **Recurso** e relação explícita com rotas (hoje rotas ligam-se ao sistema).
+2. Refinar matriz de permissões por recurso/rota e perfis.
+3. Ampliar cobertura de testes (incluindo cenários explícitos de **403** por ausência de permissão).
+
+---
 
 ## Apêndice: SDK .NET em container
 
-Comandos úteis ao criar outro projeto ou adicionar pacotes sem instalar o SDK no host (imagem `mcr.microsoft.com/dotnet/sdk:10.0`).
+Comandos úteis com a imagem `mcr.microsoft.com/dotnet/sdk:10.0` sem instalar o SDK no host.
 
 ### Novo projeto Web API
 
@@ -236,7 +500,7 @@ docker run --rm -it \
 
 ### Pacotes Entity Framework (exemplos)
 
-**SQL Server** (o que este repositório usa):
+**SQL Server** (este repositório):
 
 ```bash
 docker run --rm -it \
@@ -276,7 +540,7 @@ docker run --rm -it \
   dotnet add package Microsoft.EntityFrameworkCore.Design
 ```
 
-**CLI `dotnet-ef`** (global na sessão do container)
+**CLI `dotnet-ef` (global na sessão do container)**
 
 ```bash
 docker run --rm -it \
