@@ -14,6 +14,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AppPermission> Permissions => Set<AppPermission>();
     public DbSet<AppUserRole> UserRoles => Set<AppUserRole>();
     public DbSet<AppUserPermission> UserPermissions => Set<AppUserPermission>();
+    public DbSet<AppRolePermission> RolePermissions => Set<AppRolePermission>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -56,6 +57,19 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasOne<User>()
                 .WithMany()
                 .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne<AppPermission>()
+                .WithMany()
+                .HasForeignKey(e => e.PermissionId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<AppRolePermission>(entity =>
+        {
+            entity.HasOne<AppRole>()
+                .WithMany()
+                .HasForeignKey(e => e.RoleId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne<AppPermission>()
