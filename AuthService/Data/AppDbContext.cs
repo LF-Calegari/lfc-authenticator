@@ -11,6 +11,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AppRoute> Routes => Set<AppRoute>();
     public DbSet<AppPermissionType> PermissionTypes => Set<AppPermissionType>();
     public DbSet<AppRole> Roles => Set<AppRole>();
+    public DbSet<AppPermission> Permissions => Set<AppPermission>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -21,6 +22,19 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .WithMany()
             .HasForeignKey(r => r.SystemId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<AppPermission>(entity =>
+        {
+            entity.HasOne<AppSystem>()
+                .WithMany()
+                .HasForeignKey(p => p.SystemId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne<AppPermissionType>()
+                .WithMany()
+                .HasForeignKey(p => p.PermissionTypeId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
 
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
