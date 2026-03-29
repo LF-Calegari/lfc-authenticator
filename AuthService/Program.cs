@@ -85,6 +85,7 @@ if (!app.Environment.IsEnvironment("Testing"))
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.MigrateAsync();
         await OfficialCatalogSeeder.EnsureCatalogAsync(db);
+        await DefaultSystemUserSeeder.EnsureDefaultUserAsync(db);
     }
 }
 

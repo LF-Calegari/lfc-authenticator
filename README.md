@@ -116,7 +116,7 @@ export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 2. **Pipeline HTTP** — em ambientes diferentes de **Testing**, `UseHttpsRedirection`. **Swagger** e **Swagger UI** são registrados **antes** de autenticação/autorização, ficando **anônimos**.
 3. **`UseAuthentication`** / **`UseAuthorization`** — JWT *handler* valida cabeçalho `Authorization: Bearer …`, *claims* e coerência com o usuário no banco (`TokenVersion`, ativo).
 4. **`MapGroup("/v1").MapControllers()`** — todas as rotas de API ficam versionadas em `/v1`.
-5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante sistemas, tipos e permissões oficiais no banco.
+5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante sistemas, tipos e permissões oficiais no banco; em seguida `DefaultSystemUserSeeder.EnsureDefaultUserAsync` garante o usuário padrão do sistema (e-mail `root@email.com.br`, senha inicial na constante `DefaultSystemUserSeeder.Password`) com vínculos às permissões do catálogo, de forma idempotente. **Em produção, troque a senha imediatamente após o primeiro acesso.**
 
 ---
 
@@ -126,7 +126,7 @@ export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 AuthService/
 ├── Controllers/          # Endpoints REST por agregado (Auth, Systems, Users, …)
 ├── Auth/                 # JWT, handler Bearer, políticas perm:*, permissões efetivas
-├── Data/                 # AppDbContext, migrations, seeders (catálogo oficial, bootstrap de testes)
+├── Data/                 # AppDbContext, migrations, seeders (catálogo oficial, usuário padrão, bootstrap de testes)
 ├── Models/               # Entidades EF Core
 ├── OpenApi/              # Filtros Swagger (prefixo /v1 nos paths do documento)
 └── Program.cs            # Composição, pipeline, mapa de rotas
