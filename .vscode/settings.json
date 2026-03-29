@@ -1,0 +1,23 @@
+{
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.expand": false,
+    "explorer.fileNesting.patterns": {
+        "*.csproj": "appsettings*.json,.editorconfig,global.json",
+        "appsettings.json": "appsettings.Development.json,appsettings.*.json",
+        "docker-compose.yml": "docker-compose.*.yml,Dockerfile,.dockerignore",
+        "Program.cs": "*.http"
+    },
+    "files.exclude": {
+        "**/bin": true,
+        "**/obj": true,
+        "**/.vs": true
+    },
+    "editor.formatOnSave": true,
+    "[csharp]": {
+        "editor.defaultFormatter": "ms-dotnettools.csharp",
+        "editor.formatOnSave": true
+    },
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit"
+    }
+}
