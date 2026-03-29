@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using AuthService.Data;
+using AuthService.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -259,6 +260,101 @@ public class UsersApiTests : IAsyncLifetime
         Assert.Contains(list, u => u.Id == dto.Id);
     }
 
+    [Fact]
+    public async Task GetById_ReturnsRolesAndPermissions_WhenLinkedInDatabase()
+    {
+        var create = await _client.PostAsJsonAsync("/v1/users",
+            UserCreateBody("Com vínculos", "user.links@example.com"), TestApiClient.JsonOptions);
+        create.EnsureSuccessStatusCode();
+        var created = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        var roleResp = await _client.PostAsJsonAsync("/v1/roles",
+            new { name = "Papel teste vínculo", code = $"ut-user-detail-{Guid.NewGuid():N}" },
+            TestApiClient.JsonOptions);
+        roleResp.EnsureSuccessStatusCode();
+        var roleDto = await roleResp.Content.ReadFromJsonAsync<IdOnlyDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(roleDto);
+        var roleId = roleDto.Id;
+
+        Guid permissionId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            permissionId = await db.Permissions.Select(p => p.Id).FirstAsync();
+            var utc = DateTime.UtcNow;
+            db.UserRoles.Add(new AppUserRole
+            {
+                UserId = created.Id,
+                RoleId = roleId,
+                CreatedAt = utc,
+                UpdatedAt = utc,
+                DeletedAt = null
+            });
+            db.UserPermissions.Add(new AppUserPermission
+            {
+                UserId = created.Id,
+                PermissionId = permissionId,
+                CreatedAt = utc,
+                UpdatedAt = utc,
+                DeletedAt = null
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var getResp = await _client.GetAsync($"/v1/users/{created.Id}");
+        getResp.EnsureSuccessStatusCode();
+        var detail = await getResp.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(detail);
+        Assert.Single(detail.Roles);
+        Assert.Equal(roleId, detail.Roles[0].RoleId);
+        Assert.Equal(created.Id, detail.Roles[0].UserId);
+        Assert.Single(detail.Permissions);
+        Assert.Equal(permissionId, detail.Permissions[0].PermissionId);
+        Assert.Equal(created.Id, detail.Permissions[0].UserId);
+    }
+
+    [Fact]
+    public async Task GetById_BootstrapUser_ReturnsNonEmptyPermissions_FromSeeder()
+    {
+        Guid bootstrapId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            bootstrapId = await db.Users
+                .Where(u => u.Email == IntegrationBootstrapSeeder.Email)
+                .Select(u => u.Id)
+                .SingleAsync();
+        }
+
+        var getResp = await _client.GetAsync($"/v1/users/{bootstrapId}");
+        getResp.EnsureSuccessStatusCode();
+        var detail = await getResp.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(detail);
+        Assert.NotEmpty(detail.Permissions);
+        Assert.Empty(detail.Roles);
+    }
+
+    [Fact]
+    public async Task GetAll_ReturnsEmptyRolesAndPermissions_OnEachUser()
+    {
+        await _client.PostAsJsonAsync("/v1/users", UserCreateBody("Lista", "list.empty@example.com"), TestApiClient.JsonOptions);
+        var listResp = await _client.GetAsync("/v1/users");
+        listResp.EnsureSuccessStatusCode();
+        var list = await listResp.Content.ReadFromJsonAsync<List<UserDetailDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(list);
+        var row = list.First(u => u.Email == "list.empty@example.com");
+        Assert.Empty(row.Roles);
+        Assert.Empty(row.Permissions);
+    }
+
+    [Fact]
+    public async Task GetById_UnknownUser_ReturnsNotFound()
+    {
+        var response = await _client.GetAsync($"/v1/users/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private sealed record UserDto(
         Guid Id,
         string Name,
@@ -268,4 +364,34 @@ public class UsersApiTests : IAsyncLifetime
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt);
+
+    private sealed record UserDetailDto(
+        Guid Id,
+        string Name,
+        string Email,
+        int Identity,
+        bool Active,
+        DateTime CreatedAt,
+        DateTime UpdatedAt,
+        DateTime? DeletedAt,
+        List<UserRoleLinkDto> Roles,
+        List<UserPermissionLinkDto> Permissions);
+
+    private sealed record UserRoleLinkDto(
+        int Id,
+        Guid UserId,
+        Guid RoleId,
+        DateTime CreatedAt,
+        DateTime UpdatedAt,
+        DateTime? DeletedAt);
+
+    private sealed record UserPermissionLinkDto(
+        Guid Id,
+        Guid UserId,
+        Guid PermissionId,
+        DateTime CreatedAt,
+        DateTime UpdatedAt,
+        DateTime? DeletedAt);
+
+    private sealed record IdOnlyDto(Guid Id);
 }

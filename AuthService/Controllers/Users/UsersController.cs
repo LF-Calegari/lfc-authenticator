@@ -68,6 +68,22 @@ public class UsersController : ControllerBase
         public string Password { get; set; } = string.Empty;
     }
 
+    public record UserRoleLinkResponse(
+        int Id,
+        Guid UserId,
+        Guid RoleId,
+        DateTime CreatedAt,
+        DateTime UpdatedAt,
+        DateTime? DeletedAt);
+
+    public record UserPermissionLinkResponse(
+        Guid Id,
+        Guid UserId,
+        Guid PermissionId,
+        DateTime CreatedAt,
+        DateTime UpdatedAt,
+        DateTime? DeletedAt);
+
     public record UserResponse(
         Guid Id,
         string Name,
@@ -76,11 +92,25 @@ public class UsersController : ControllerBase
         bool Active,
         DateTime CreatedAt,
         DateTime UpdatedAt,
-        DateTime? DeletedAt
-    );
+        DateTime? DeletedAt,
+        IReadOnlyList<UserRoleLinkResponse> Roles,
+        IReadOnlyList<UserPermissionLinkResponse> Permissions);
 
-    private static UserResponse ToResponse(UserEntity u) =>
-        new(u.Id, u.Name, u.Email, u.Identity, u.Active, u.CreatedAt, u.UpdatedAt, u.DeletedAt);
+    private static UserResponse ToResponse(
+        UserEntity u,
+        IReadOnlyList<UserRoleLinkResponse>? roles = null,
+        IReadOnlyList<UserPermissionLinkResponse>? permissions = null) =>
+        new(
+            u.Id,
+            u.Name,
+            u.Email,
+            u.Identity,
+            u.Active,
+            u.CreatedAt,
+            u.UpdatedAt,
+            u.DeletedAt,
+            roles ?? Array.Empty<UserRoleLinkResponse>(),
+            permissions ?? Array.Empty<UserPermissionLinkResponse>());
 
     private static void ValidateNormalizedUserFields(
         ModelStateDictionary modelState,
@@ -207,17 +237,8 @@ public class UsersController : ControllerBase
     {
         var users = await _db.Users
             .OrderBy(u => u.CreatedAt)
-            .Select(u => new UserResponse(
-                u.Id,
-                u.Name,
-                u.Email,
-                u.Identity,
-                u.Active,
-                u.CreatedAt,
-                u.UpdatedAt,
-                u.DeletedAt))
             .ToListAsync();
-        return Ok(users);
+        return Ok(users.Select(u => ToResponse(u)).ToList());
     }
 
     [HttpGet("{id:guid}")]
@@ -227,7 +248,35 @@ public class UsersController : ControllerBase
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
         if (user is null)
             return NotFound(new { message = "Usuário não encontrado." });
-        return Ok(ToResponse(user));
+
+        var roles = await _db.UserRoles
+            .AsNoTracking()
+            .Where(ur => ur.UserId == id)
+            .OrderBy(ur => ur.Id)
+            .Select(ur => new UserRoleLinkResponse(
+                ur.Id,
+                ur.UserId,
+                ur.RoleId,
+                ur.CreatedAt,
+                ur.UpdatedAt,
+                ur.DeletedAt))
+            .ToListAsync();
+
+        var permissions = await _db.UserPermissions
+            .AsNoTracking()
+            .Where(up => up.UserId == id)
+            .OrderBy(up => up.CreatedAt)
+            .ThenBy(up => up.Id)
+            .Select(up => new UserPermissionLinkResponse(
+                up.Id,
+                up.UserId,
+                up.PermissionId,
+                up.CreatedAt,
+                up.UpdatedAt,
+                up.DeletedAt))
+            .ToListAsync();
+
+        return Ok(ToResponse(user, roles, permissions));
     }
 
     [HttpPut("{id:guid}")]
