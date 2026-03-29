@@ -55,11 +55,11 @@ public class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task Login_ValidCredentials_ReturnsToken()
     {
-        await _admin.PostAsJsonAsync("/users",
+        await _admin.PostAsJsonAsync("/v1/users",
             new { name = "Auth User", email = "auth.user@example.com", password = "SenhaSegura1!", identity = 1, active = true },
             TestApiClient.JsonOptions);
 
-        var response = await _anon.PostAsJsonAsync("/auth/login",
+        var response = await _anon.PostAsJsonAsync("/v1/auth/login",
             LoginBody("auth.user@example.com", "SenhaSegura1!"), TestApiClient.JsonOptions);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -72,11 +72,11 @@ public class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task Login_NormalizesEmailCase()
     {
-        await _admin.PostAsJsonAsync("/users",
+        await _admin.PostAsJsonAsync("/v1/users",
             new { name = "Case User", email = "case.auth@example.com", password = "SenhaSegura1!", identity = 1, active = true },
             TestApiClient.JsonOptions);
 
-        var response = await _anon.PostAsJsonAsync("/auth/login",
+        var response = await _anon.PostAsJsonAsync("/v1/auth/login",
             LoginBody("  CASE.AUTH@EXAMPLE.COM  ", "SenhaSegura1!"), TestApiClient.JsonOptions);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -85,11 +85,11 @@ public class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task Login_WrongPassword_ReturnsUnauthorized()
     {
-        await _admin.PostAsJsonAsync("/users",
+        await _admin.PostAsJsonAsync("/v1/users",
             new { name = "U2", email = "u2@example.com", password = "SenhaSegura1!", identity = 1, active = true },
             TestApiClient.JsonOptions);
 
-        var response = await _anon.PostAsJsonAsync("/auth/login",
+        var response = await _anon.PostAsJsonAsync("/v1/auth/login",
             LoginBody("u2@example.com", "outraSenha"), TestApiClient.JsonOptions);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -98,11 +98,11 @@ public class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task Login_InactiveUser_ReturnsUnauthorized()
     {
-        await _admin.PostAsJsonAsync("/users",
+        await _admin.PostAsJsonAsync("/v1/users",
             new { name = "Inativo", email = "inativo@example.com", password = "SenhaSegura1!", identity = 1, active = false },
             TestApiClient.JsonOptions);
 
-        var response = await _anon.PostAsJsonAsync("/auth/login",
+        var response = await _anon.PostAsJsonAsync("/v1/auth/login",
             LoginBody("inativo@example.com", "SenhaSegura1!"), TestApiClient.JsonOptions);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -111,30 +111,30 @@ public class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task Login_InvalidPayload_ReturnsBadRequest()
     {
-        var response = await _anon.PostAsJsonAsync("/auth/login", new { email = "", password = "" }, TestApiClient.JsonOptions);
+        var response = await _anon.PostAsJsonAsync("/v1/auth/login", new { email = "", password = "" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
     public async Task VerifyToken_WithoutHeader_ReturnsUnauthorized()
     {
-        var response = await _anon.GetAsync("/auth/verify-token");
+        var response = await _anon.GetAsync("/v1/auth/verify-token");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
     public async Task VerifyToken_ValidToken_ReturnsUserAndPermissions()
     {
-        await _admin.PostAsJsonAsync("/users",
+        await _admin.PostAsJsonAsync("/v1/users",
             new { name = "V User", email = "v.user@example.com", password = "SenhaSegura1!", identity = 1, active = true },
             TestApiClient.JsonOptions);
 
-        var login = await _anon.PostAsJsonAsync("/auth/login",
+        var login = await _anon.PostAsJsonAsync("/v1/auth/login",
             LoginBody("v.user@example.com", "SenhaSegura1!"), TestApiClient.JsonOptions);
         var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
         Assert.NotNull(loginDto);
 
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/auth/verify-token");
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
         var response = await _anon.SendAsync(req);
 
@@ -148,24 +148,24 @@ public class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task Logout_ThenVerifyToken_ReturnsUnauthorized()
     {
-        await _admin.PostAsJsonAsync("/users",
+        await _admin.PostAsJsonAsync("/v1/users",
             new { name = "L User", email = "l.user@example.com", password = "SenhaSegura1!", identity = 1, active = true },
             TestApiClient.JsonOptions);
 
-        var login = await _anon.PostAsJsonAsync("/auth/login",
+        var login = await _anon.PostAsJsonAsync("/v1/auth/login",
             LoginBody("l.user@example.com", "SenhaSegura1!"), TestApiClient.JsonOptions);
         var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
         Assert.NotNull(loginDto);
         var token = loginDto.Token;
 
-        using (var logoutReq = new HttpRequestMessage(HttpMethod.Get, "/auth/logout"))
+        using (var logoutReq = new HttpRequestMessage(HttpMethod.Get, "/v1/auth/logout"))
         {
             logoutReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             var logoutRes = await _anon.SendAsync(logoutReq);
             Assert.Equal(HttpStatusCode.OK, logoutRes.StatusCode);
         }
 
-        using (var verifyReq = new HttpRequestMessage(HttpMethod.Get, "/auth/verify-token"))
+        using (var verifyReq = new HttpRequestMessage(HttpMethod.Get, "/v1/auth/verify-token"))
         {
             verifyReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             var verifyRes = await _anon.SendAsync(verifyReq);
@@ -183,7 +183,7 @@ public class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task VerifyToken_InvalidBearerToken_ReturnsUnauthorized()
     {
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/auth/verify-token");
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "token-invalido");
         var response = await _anon.SendAsync(req);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -193,24 +193,24 @@ public class AuthApiTests : IAsyncLifetime
     public async Task Users_WithoutToken_ReturnsUnauthorized()
     {
         using var anon = _factory.CreateClient();
-        var response = await anon.GetAsync("/users");
+        var response = await anon.GetAsync("/v1/users");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
     public async Task Users_WithValidTokenButWithoutUsersRead_ReturnsForbidden()
     {
-        await _admin.PostAsJsonAsync("/users",
+        await _admin.PostAsJsonAsync("/v1/users",
             new { name = "Sem Users.Read", email = "sem.users.read@example.com", password = "SenhaSegura1!", identity = 1, active = true },
             TestApiClient.JsonOptions);
 
-        var login = await _anon.PostAsJsonAsync("/auth/login",
+        var login = await _anon.PostAsJsonAsync("/v1/auth/login",
             LoginBody("sem.users.read@example.com", "SenhaSegura1!"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
         Assert.NotNull(loginDto);
 
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/users");
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/v1/users");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
         var response = await _anon.SendAsync(req);
 

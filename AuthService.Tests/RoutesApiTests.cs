@@ -27,7 +27,7 @@ public class RoutesApiTests : IAsyncLifetime
 
     private async Task<Guid> CreateSystemAsync(string code, string name = "Sistema")
     {
-        var r = await _client.PostAsJsonAsync("/systems", new { name, code, description = (string?)null }, TestApiClient.JsonOptions);
+        var r = await _client.PostAsJsonAsync("/v1/systems", new { name, code, description = (string?)null }, TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
         var dto = await r.Content.ReadFromJsonAsync<SystemRefDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
@@ -45,7 +45,7 @@ public class RoutesApiTests : IAsyncLifetime
     {
         var sysId = await CreateSystemAsync("RT_SYS_1");
 
-        var response = await _client.PostAsJsonAsync("/systems/routes",
+        var response = await _client.PostAsJsonAsync("/v1/systems/routes",
             RouteCreateBody(sysId, "Rota A", "ROUTE_A", "Opcional"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
@@ -62,7 +62,7 @@ public class RoutesApiTests : IAsyncLifetime
     [Fact]
     public async Task Create_WithInvalidSystemId_ReturnsBadRequest()
     {
-        var response = await _client.PostAsJsonAsync("/systems/routes",
+        var response = await _client.PostAsJsonAsync("/v1/systems/routes",
             RouteCreateBody(Guid.NewGuid(), "X", "CODE_X"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -71,9 +71,9 @@ public class RoutesApiTests : IAsyncLifetime
     public async Task Create_DuplicateCode_ReturnsConflict()
     {
         var sysId = await CreateSystemAsync("RT_SYS_DUP");
-        await _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "A", "DUP_CODE"), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "A", "DUP_CODE"), TestApiClient.JsonOptions);
 
-        var response = await _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "B", "DUP_CODE"), TestApiClient.JsonOptions);
+        var response = await _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "B", "DUP_CODE"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
 
@@ -81,9 +81,9 @@ public class RoutesApiTests : IAsyncLifetime
     public async Task Create_DuplicateCode_NormalizesWhitespace_ReturnsConflict()
     {
         var sysId = await CreateSystemAsync("RT_SYS_WS");
-        await _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "A", "ABC_RT"), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "A", "ABC_RT"), TestApiClient.JsonOptions);
 
-        var response = await _client.PostAsJsonAsync("/systems/routes",
+        var response = await _client.PostAsJsonAsync("/v1/systems/routes",
             RouteCreateBody(sysId, "B", "  ABC_RT  "), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
@@ -93,8 +93,8 @@ public class RoutesApiTests : IAsyncLifetime
     {
         var sysId = await CreateSystemAsync("RT_SYS_CONC");
         const string code = "CONC_RT";
-        var t1 = _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "A", code), TestApiClient.JsonOptions);
-        var t2 = _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "B", code), TestApiClient.JsonOptions);
+        var t1 = _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "A", code), TestApiClient.JsonOptions);
+        var t2 = _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "B", code), TestApiClient.JsonOptions);
         await Task.WhenAll(t1, t2);
         var statuses = new[] { (await t1).StatusCode, (await t2).StatusCode };
         Assert.Contains(HttpStatusCode.Created, statuses);
@@ -105,7 +105,7 @@ public class RoutesApiTests : IAsyncLifetime
     public async Task Create_WhitespaceOnlyName_ReturnsBadRequest()
     {
         var sysId = await CreateSystemAsync("RT_SYS_WN");
-        var response = await _client.PostAsJsonAsync("/systems/routes",
+        var response = await _client.PostAsJsonAsync("/v1/systems/routes",
             RouteCreateBody(sysId, "   ", "C1"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -114,14 +114,14 @@ public class RoutesApiTests : IAsyncLifetime
     public async Task GetAll_ReturnsOnlyActiveRoutes()
     {
         var sysId = await CreateSystemAsync("RT_SYS_GA");
-        await _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "Ativa", "RT_ATIVA"), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "Ativa", "RT_ATIVA"), TestApiClient.JsonOptions);
 
-        var other = await _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "Outra", "RT_OUTRA"), TestApiClient.JsonOptions);
+        var other = await _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "Outra", "RT_OUTRA"), TestApiClient.JsonOptions);
         var otherDto = await other.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
         Assert.NotNull(otherDto);
-        await _client.DeleteAsync($"/systems/routes/{otherDto.Id}");
+        await _client.DeleteAsync($"/v1/systems/routes/{otherDto.Id}");
 
-        var listResp = await _client.GetAsync("/systems/routes");
+        var listResp = await _client.GetAsync("/v1/systems/routes");
         listResp.EnsureSuccessStatusCode();
         var list = await listResp.Content.ReadFromJsonAsync<List<RouteDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
@@ -134,30 +134,30 @@ public class RoutesApiTests : IAsyncLifetime
     public async Task GetById_Active_ReturnsOk_Deleted_Returns404()
     {
         var sysId = await CreateSystemAsync("RT_SYS_G1");
-        var create = await _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "S", "RT_G1"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "S", "RT_G1"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync($"/systems/routes/{dto.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync($"/v1/systems/routes/{dto.Id}")).StatusCode);
 
-        await _client.DeleteAsync($"/systems/routes/{dto.Id}");
-        Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/systems/routes/{dto.Id}")).StatusCode);
+        await _client.DeleteAsync($"/v1/systems/routes/{dto.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/v1/systems/routes/{dto.Id}")).StatusCode);
     }
 
     [Fact]
     public async Task Update_Active_ReturnsOk_Deleted_Returns404()
     {
         var sysId = await CreateSystemAsync("RT_SYS_U1");
-        var create = await _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "S", "RT_U1"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "S", "RT_U1"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        var putOk = await _client.PutAsJsonAsync($"/systems/routes/{dto.Id}",
+        var putOk = await _client.PutAsJsonAsync($"/v1/systems/routes/{dto.Id}",
             RouteUpdateBody(sysId, "S2", "RT_U1", null), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.OK, putOk.StatusCode);
 
-        await _client.DeleteAsync($"/systems/routes/{dto.Id}");
-        var put404 = await _client.PutAsJsonAsync($"/systems/routes/{dto.Id}",
+        await _client.DeleteAsync($"/v1/systems/routes/{dto.Id}");
+        var put404 = await _client.PutAsJsonAsync($"/v1/systems/routes/{dto.Id}",
             RouteUpdateBody(sysId, "S3", "RT_U1"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.NotFound, put404.StatusCode);
     }
@@ -166,11 +166,11 @@ public class RoutesApiTests : IAsyncLifetime
     public async Task Update_WithInvalidSystemId_ReturnsBadRequest()
     {
         var sysId = await CreateSystemAsync("RT_SYS_UINV");
-        var create = await _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "S", "RT_INV"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "S", "RT_INV"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        var put = await _client.PutAsJsonAsync($"/systems/routes/{dto.Id}",
+        var put = await _client.PutAsJsonAsync($"/v1/systems/routes/{dto.Id}",
             RouteUpdateBody(Guid.NewGuid(), "S", "RT_INV"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
     }
@@ -179,7 +179,7 @@ public class RoutesApiTests : IAsyncLifetime
     public async Task Update_NonExistentId_WithInvalidSystemId_Returns404()
     {
         var missingId = Guid.NewGuid();
-        var put = await _client.PutAsJsonAsync($"/systems/routes/{missingId}",
+        var put = await _client.PutAsJsonAsync($"/v1/systems/routes/{missingId}",
             RouteUpdateBody(Guid.NewGuid(), "S", "RT_NO404"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.NotFound, put.StatusCode);
     }
@@ -188,11 +188,11 @@ public class RoutesApiTests : IAsyncLifetime
     public async Task Delete_SoftDelete_ThenDeleteAgain_Returns404()
     {
         var sysId = await CreateSystemAsync("RT_SYS_D1");
-        var create = await _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "S", "RT_D1"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "S", "RT_D1"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/systems/routes/{dto.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/v1/systems/routes/{dto.Id}")).StatusCode);
 
         using (var scope = _factory.Services.CreateScope())
         {
@@ -201,30 +201,30 @@ public class RoutesApiTests : IAsyncLifetime
             Assert.NotNull(row.DeletedAt);
         }
 
-        Assert.Equal(HttpStatusCode.NotFound, (await _client.DeleteAsync($"/systems/routes/{dto.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.DeleteAsync($"/v1/systems/routes/{dto.Id}")).StatusCode);
     }
 
     [Fact]
     public async Task Restore_Deleted_ThenAppearsInGetAll_AndGetByIdWorks()
     {
         var sysId = await CreateSystemAsync("RT_SYS_R1");
-        var create = await _client.PostAsJsonAsync("/systems/routes", RouteCreateBody(sysId, "S", "RT_R1"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/v1/systems/routes", RouteCreateBody(sysId, "S", "RT_R1"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        await _client.DeleteAsync($"/systems/routes/{dto.Id}");
-        Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/systems/routes/{dto.Id}")).StatusCode);
+        await _client.DeleteAsync($"/v1/systems/routes/{dto.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/v1/systems/routes/{dto.Id}")).StatusCode);
 
-        var restore = await _client.PostAsync($"/systems/routes/{dto.Id}/restore", null);
+        var restore = await _client.PostAsync($"/v1/systems/routes/{dto.Id}/restore", null);
         Assert.Equal(HttpStatusCode.OK, restore.StatusCode);
 
-        var getOk = await _client.GetAsync($"/systems/routes/{dto.Id}");
+        var getOk = await _client.GetAsync($"/v1/systems/routes/{dto.Id}");
         Assert.Equal(HttpStatusCode.OK, getOk.StatusCode);
         var restored = await getOk.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
         Assert.NotNull(restored);
         Assert.Null(restored.DeletedAt);
 
-        var listResp = await _client.GetAsync("/systems/routes");
+        var listResp = await _client.GetAsync("/v1/systems/routes");
         listResp.EnsureSuccessStatusCode();
         var list = await listResp.Content.ReadFromJsonAsync<List<RouteDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
@@ -235,9 +235,9 @@ public class RoutesApiTests : IAsyncLifetime
     public async Task Create_WithDeletedSystem_ReturnsBadRequest()
     {
         var sysId = await CreateSystemAsync("RT_SYS_DELSYS");
-        await _client.DeleteAsync($"/systems/{sysId}");
+        await _client.DeleteAsync($"/v1/systems/{sysId}");
 
-        var response = await _client.PostAsJsonAsync("/systems/routes",
+        var response = await _client.PostAsJsonAsync("/v1/systems/routes",
             RouteCreateBody(sysId, "R", "RT_DELSYS"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -246,16 +246,16 @@ public class RoutesApiTests : IAsyncLifetime
     public async Task GetAll_AndGetById_ExcludeRoutesWhenSystemSoftDeleted()
     {
         var sysId = await CreateSystemAsync("RT_SYS_ORPH");
-        var create = await _client.PostAsJsonAsync("/systems/routes",
+        var create = await _client.PostAsJsonAsync("/v1/systems/routes",
             RouteCreateBody(sysId, "R", "RT_ORPH"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        await _client.DeleteAsync($"/systems/{sysId}");
+        await _client.DeleteAsync($"/v1/systems/{sysId}");
 
-        Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/systems/routes/{dto.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/v1/systems/routes/{dto.Id}")).StatusCode);
 
-        var listResp = await _client.GetAsync("/systems/routes");
+        var listResp = await _client.GetAsync("/v1/systems/routes");
         listResp.EnsureSuccessStatusCode();
         var list = await listResp.Content.ReadFromJsonAsync<List<RouteDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
@@ -266,15 +266,15 @@ public class RoutesApiTests : IAsyncLifetime
     public async Task Restore_WhenSystemSoftDeleted_ReturnsBadRequest()
     {
         var sysId = await CreateSystemAsync("RT_SYS_RSYS");
-        var create = await _client.PostAsJsonAsync("/systems/routes",
+        var create = await _client.PostAsJsonAsync("/v1/systems/routes",
             RouteCreateBody(sysId, "S", "RT_RSYS"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        await _client.DeleteAsync($"/systems/routes/{dto.Id}");
-        await _client.DeleteAsync($"/systems/{sysId}");
+        await _client.DeleteAsync($"/v1/systems/routes/{dto.Id}");
+        await _client.DeleteAsync($"/v1/systems/{sysId}");
 
-        var restore = await _client.PostAsync($"/systems/routes/{dto.Id}/restore", null);
+        var restore = await _client.PostAsync($"/v1/systems/routes/{dto.Id}/restore", null);
         Assert.Equal(HttpStatusCode.BadRequest, restore.StatusCode);
     }
 
