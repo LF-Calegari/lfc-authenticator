@@ -37,10 +37,10 @@ public class UserPermissionsApiTests : IAsyncLifetime
         int identity = 1, bool active = true) =>
         new { name, email, password, identity, active };
 
-    private async Task<Guid> CreateUserAsync(string emailLocal)
+    private async Task<Guid> CreateUserAsync(string emailLocal, bool active = true)
     {
         var email = $"{emailLocal}@up.test";
-        var r = await _client.PostAsJsonAsync("/users", UserCreateBody("U", email), JsonOptions);
+        var r = await _client.PostAsJsonAsync("/users", UserCreateBody("U", email, active: active), JsonOptions);
         r.EnsureSuccessStatusCode();
         var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(JsonOptions);
         Assert.NotNull(dto);
@@ -136,6 +136,22 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var response = await _client.PostAsJsonAsync("/users-permissions",
             UserPermissionBody(userId, Guid.NewGuid()), JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_InactiveUser_ReturnsBadRequest_WithInactiveMessage()
+    {
+        var userId = await CreateUserAsync("up_inactive", active: false);
+        var sysId = await CreateSystemAsync("SYS_UP_INACT");
+        var typeId = await CreatePermissionTypeAsync("PT_UP_INACT");
+        var permissionId = await CreatePermissionAsync(sysId, typeId);
+
+        var response = await _client.PostAsJsonAsync("/users-permissions",
+            UserPermissionBody(userId, permissionId), JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var json = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Usuário inativo", json, StringComparison.Ordinal);
     }
 
     [Fact]

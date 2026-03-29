@@ -82,8 +82,31 @@ public class UsersPermissionsController : ControllerBase
             yield return e.Message;
     }
 
-    private async Task<bool> UserExistsAndActiveAsync(Guid userId) =>
-        userId != Guid.Empty && await _db.Users.AnyAsync(u => u.Id == userId);
+    private enum UserRefStatus
+    {
+        Ok,
+        NotFoundOrRemoved,
+        Inactive
+    }
+
+    private async Task<UserRefStatus> GetUserRefStatusAsync(Guid userId)
+    {
+        if (userId == Guid.Empty)
+            return UserRefStatus.NotFoundOrRemoved;
+
+        var row = await _db.Users.IgnoreQueryFilters()
+            .Where(u => u.Id == userId)
+            .Select(u => new { u.DeletedAt, u.Active })
+            .FirstOrDefaultAsync();
+
+        if (row is null)
+            return UserRefStatus.NotFoundOrRemoved;
+        if (row.DeletedAt != null)
+            return UserRefStatus.NotFoundOrRemoved;
+        if (!row.Active)
+            return UserRefStatus.Inactive;
+        return UserRefStatus.Ok;
+    }
 
     private async Task<bool> PermissionExistsAndActiveAsync(Guid permissionId) =>
         permissionId != Guid.Empty && await _db.Permissions.AnyAsync(p => p.Id == permissionId);
@@ -91,18 +114,45 @@ public class UsersPermissionsController : ControllerBase
     /// <summary>Vínculos ativos cujo usuário e permissão ainda estão ativos.</summary>
     private IQueryable<AppUserPermission> ActiveUserPermissionsWithActiveParents() =>
         _db.UserPermissions.Where(up =>
-            _db.Users.Any(u => u.Id == up.UserId)
+            _db.Users.Any(u => u.Id == up.UserId && u.Active)
             && _db.Permissions.Any(p => p.Id == up.PermissionId));
 
-    private IActionResult InvalidReferencesResult(bool userOk, bool permissionOk)
+    private IActionResult InvalidReferencesResult(
+        string userIdKey,
+        string permissionIdKey,
+        UserRefStatus userStatus,
+        bool permissionOk)
     {
-        if (!userOk)
-            ModelState.AddModelError(nameof(CreateUserPermissionRequest.UserId), "UserId inválido ou usuário inativo.");
+        if (userStatus != UserRefStatus.Ok)
+        {
+            var message = userStatus == UserRefStatus.Inactive
+                ? "Usuário inativo."
+                : "UserId inválido ou usuário não encontrado.";
+            ModelState.AddModelError(userIdKey, message);
+        }
+
         if (!permissionOk)
-            ModelState.AddModelError(nameof(CreateUserPermissionRequest.PermissionId),
+        {
+            ModelState.AddModelError(permissionIdKey,
                 "PermissionId inválido ou permissão inativa.");
+        }
+
         return ValidationProblem(ModelState);
     }
+
+    private IActionResult InvalidReferencesResultForCreate(UserRefStatus userStatus, bool permissionOk) =>
+        InvalidReferencesResult(
+            nameof(CreateUserPermissionRequest.UserId),
+            nameof(CreateUserPermissionRequest.PermissionId),
+            userStatus,
+            permissionOk);
+
+    private IActionResult InvalidReferencesResultForUpdate(UserRefStatus userStatus, bool permissionOk) =>
+        InvalidReferencesResult(
+            nameof(UpdateUserPermissionRequest.UserId),
+            nameof(UpdateUserPermissionRequest.PermissionId),
+            userStatus,
+            permissionOk);
 
     private static IActionResult UniquePairConflictResult() =>
         new ConflictObjectResult(new { message = "Já existe vínculo entre este usuário e esta permissão." });
@@ -113,14 +163,14 @@ public class UsersPermissionsController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        var userOk = await UserExistsAndActiveAsync(request.UserId);
+        var userStatus = await GetUserRefStatusAsync(request.UserId);
         var permissionOk = await PermissionExistsAndActiveAsync(request.PermissionId);
-        if (!userOk || !permissionOk)
+        if (userStatus != UserRefStatus.Ok || !permissionOk)
         {
             _logger.LogWarning(
-                "Criação de users-permissions rejeitada: UserId {UserId} ok={UserOk}, PermissionId {PermissionId} ok={PermOk}.",
-                request.UserId, userOk, request.PermissionId, permissionOk);
-            return InvalidReferencesResult(userOk, permissionOk);
+                "Criação de users-permissions rejeitada: UserId {UserId} status={UserStatus}, PermissionId {PermissionId} ok={PermOk}.",
+                request.UserId, userStatus, request.PermissionId, permissionOk);
+            return InvalidReferencesResultForCreate(userStatus, permissionOk);
         }
 
         if (await _db.UserPermissions.IgnoreQueryFilters()
@@ -156,9 +206,9 @@ public class UsersPermissionsController : ControllerBase
         catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
         {
             _logger.LogWarning(ex, "Violação de FK ao criar vínculo usuário-permissão.");
-            var u = await UserExistsAndActiveAsync(request.UserId);
+            var u = await GetUserRefStatusAsync(request.UserId);
             var p = await PermissionExistsAndActiveAsync(request.PermissionId);
-            return InvalidReferencesResult(u, p);
+            return InvalidReferencesResultForCreate(u, p);
         }
         catch (Exception ex)
         {
@@ -205,14 +255,14 @@ public class UsersPermissionsController : ControllerBase
         if (entity is null)
             return NotFound(new { message = "Vínculo usuário-permissão não encontrado." });
 
-        var userOk = await UserExistsAndActiveAsync(request.UserId);
+        var userStatus = await GetUserRefStatusAsync(request.UserId);
         var permissionOk = await PermissionExistsAndActiveAsync(request.PermissionId);
-        if (!userOk || !permissionOk)
+        if (userStatus != UserRefStatus.Ok || !permissionOk)
         {
             _logger.LogWarning(
-                "Atualização de vínculo {UserPermissionId} rejeitada: User ok={UserOk}, Permission ok={PermOk}.",
-                id, userOk, permissionOk);
-            return InvalidReferencesResult(userOk, permissionOk);
+                "Atualização de vínculo {UserPermissionId} rejeitada: User status={UserStatus}, Permission ok={PermOk}.",
+                id, userStatus, permissionOk);
+            return InvalidReferencesResultForUpdate(userStatus, permissionOk);
         }
 
         if (await _db.UserPermissions.IgnoreQueryFilters()
@@ -239,9 +289,9 @@ public class UsersPermissionsController : ControllerBase
         catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
         {
             _logger.LogWarning(ex, "Violação de FK ao atualizar vínculo {UserPermissionId}.", id);
-            var u = await UserExistsAndActiveAsync(request.UserId);
+            var u = await GetUserRefStatusAsync(request.UserId);
             var p = await PermissionExistsAndActiveAsync(request.PermissionId);
-            return InvalidReferencesResult(u, p);
+            return InvalidReferencesResultForUpdate(u, p);
         }
         catch (Exception ex)
         {
@@ -286,7 +336,8 @@ public class UsersPermissionsController : ControllerBase
         if (entity is null)
             return NotFound(new { message = "Vínculo usuário-permissão não encontrado ou não está deletado." });
 
-        if (!await UserExistsAndActiveAsync(entity.UserId) || !await PermissionExistsAndActiveAsync(entity.PermissionId))
+        if (await GetUserRefStatusAsync(entity.UserId) != UserRefStatus.Ok
+            || !await PermissionExistsAndActiveAsync(entity.PermissionId))
         {
             return BadRequest(new
             {
