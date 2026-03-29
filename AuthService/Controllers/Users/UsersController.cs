@@ -1,5 +1,7 @@
 using System.ComponentModel.DataAnnotations;
+using AuthService.Auth;
 using AuthService.Data;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Data.SqlClient;
@@ -51,15 +53,18 @@ public class UsersController : ControllerBase
         [EmailAddress(ErrorMessage = "Email inválido.")]
         public string Email { get; set; } = string.Empty;
 
-        [Required(ErrorMessage = "Password é obrigatório.")]
-        [MaxLength(60, ErrorMessage = "Password deve ter no máximo 60 caracteres.")]
-        public string Password { get; set; } = string.Empty;
-
         [Required]
         public int Identity { get; set; }
 
         [Required]
         public bool Active { get; set; }
+    }
+
+    public class UpdatePasswordRequest
+    {
+        [Required(ErrorMessage = "Password é obrigatório.")]
+        [MaxLength(60, ErrorMessage = "Password deve ter no máximo 60 caracteres.")]
+        public string Password { get; set; } = string.Empty;
     }
 
     public record UserResponse(
@@ -101,6 +106,21 @@ public class UsersController : ControllerBase
             modelState.AddModelError(nameof(CreateUserRequest.Password), "Password deve ter no máximo 60 caracteres.");
     }
 
+    private static void ValidateNormalizedUserUpdateFields(ModelStateDictionary modelState, string name, string email)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            modelState.AddModelError(nameof(UpdateUserRequest.Name), "Name é obrigatório e não pode ser apenas espaços.");
+
+        if (string.IsNullOrWhiteSpace(email))
+            modelState.AddModelError(nameof(UpdateUserRequest.Email), "Email é obrigatório e não pode ser apenas espaços.");
+
+        if (name.Length > 80)
+            modelState.AddModelError(nameof(UpdateUserRequest.Name), "Name deve ter no máximo 80 caracteres.");
+
+        if (email.Length > 320)
+            modelState.AddModelError(nameof(UpdateUserRequest.Email), "Email deve ter no máximo 320 caracteres.");
+    }
+
     private static bool IsUniqueConstraintViolation(DbUpdateException ex)
     {
         for (Exception? e = ex; e != null; e = e.InnerException)
@@ -137,6 +157,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = PermissionPolicies.UsersCreate)]
     public async Task<IActionResult> Create([FromBody] CreateUserRequest request)
     {
         if (!ModelState.IsValid)
@@ -180,6 +201,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = PermissionPolicies.UsersRead)]
     public async Task<IActionResult> GetAll()
     {
         var users = await _db.Users
@@ -198,6 +220,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.UsersRead)]
     public async Task<IActionResult> GetById(Guid id)
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
@@ -207,6 +230,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.UsersUpdate)]
     public async Task<IActionResult> UpdateById(Guid id, [FromBody] UpdateUserRequest request)
     {
         if (!ModelState.IsValid)
@@ -214,9 +238,8 @@ public class UsersController : ControllerBase
 
         var name = request.Name.Trim();
         var email = request.Email.Trim().ToLowerInvariant();
-        var password = request.Password.Trim();
 
-        ValidateNormalizedUserFields(ModelState, name, email, password);
+        ValidateNormalizedUserUpdateFields(ModelState, name, email);
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
@@ -229,7 +252,6 @@ public class UsersController : ControllerBase
 
         user.Name = name;
         user.Email = email;
-        user.Password = password;
         user.Identity = request.Identity;
         user.Active = request.Active;
         user.UpdatedAt = DateTime.UtcNow;
@@ -246,7 +268,39 @@ public class UsersController : ControllerBase
         return Ok(ToResponse(user));
     }
 
+    [HttpPut("{id:guid}/password")]
+    [Authorize(Policy = PermissionPolicies.UsersUpdate)]
+    public async Task<IActionResult> UpdatePassword(Guid id, [FromBody] UpdatePasswordRequest request)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        var password = request.Password.Trim();
+        if (string.IsNullOrWhiteSpace(password))
+        {
+            ModelState.AddModelError(nameof(UpdatePasswordRequest.Password),
+                "Password é obrigatório e não pode ser apenas espaços.");
+            return ValidationProblem(ModelState);
+        }
+
+        if (password.Length > 60)
+        {
+            ModelState.AddModelError(nameof(UpdatePasswordRequest.Password), "Password deve ter no máximo 60 caracteres.");
+            return ValidationProblem(ModelState);
+        }
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
+        if (user is null)
+            return NotFound(new { message = "Usuário não encontrado." });
+
+        user.Password = password;
+        user.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return Ok(ToResponse(user));
+    }
+
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.UsersDelete)]
     public async Task<IActionResult> DeleteById(Guid id)
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
@@ -259,7 +313,8 @@ public class UsersController : ControllerBase
         return NoContent();
     }
 
-    [HttpPatch("{id:guid}/restore")]
+    [HttpPost("{id:guid}/restore")]
+    [Authorize(Policy = PermissionPolicies.UsersRestore)]
     public async Task<IActionResult> RestoreById(Guid id)
     {
         var user = await _db.Users

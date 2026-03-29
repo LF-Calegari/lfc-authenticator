@@ -1,6 +1,8 @@
 using System.ComponentModel.DataAnnotations;
+using AuthService.Auth;
 using AuthService.Data;
 using AuthService.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Data.SqlClient;
@@ -97,6 +99,7 @@ public class PermissionsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = PermissionPolicies.PermissionsCreate)]
     public async Task<IActionResult> Create([FromBody] CreatePermissionRequest request)
     {
         if (!ModelState.IsValid)
@@ -151,6 +154,7 @@ public class PermissionsController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = PermissionPolicies.PermissionsRead)]
     public async Task<IActionResult> GetAll()
     {
         var list = await ActivePermissionsWithActiveParents()
@@ -168,6 +172,7 @@ public class PermissionsController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.PermissionsRead)]
     public async Task<IActionResult> GetById(Guid id)
     {
         var entity = await ActivePermissionsWithActiveParents().FirstOrDefaultAsync(p => p.Id == id);
@@ -177,6 +182,7 @@ public class PermissionsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.PermissionsUpdate)]
     public async Task<IActionResult> UpdateById(Guid id, [FromBody] UpdatePermissionRequest request)
     {
         if (!ModelState.IsValid)
@@ -228,6 +234,7 @@ public class PermissionsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.PermissionsDelete)]
     public async Task<IActionResult> DeleteById(Guid id)
     {
         var entity = await _db.Permissions.FirstOrDefaultAsync(p => p.Id == id);
@@ -250,7 +257,8 @@ public class PermissionsController : ControllerBase
         return NoContent();
     }
 
-    [HttpPatch("{id:guid}/restore")]
+    [HttpPost("{id:guid}/restore")]
+    [Authorize(Policy = PermissionPolicies.PermissionsRestore)]
     public async Task<IActionResult> RestoreById(Guid id)
     {
         var entity = await _db.Permissions

@@ -1,6 +1,8 @@
 using System.ComponentModel.DataAnnotations;
+using AuthService.Auth;
 using AuthService.Data;
 using AuthService.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Data.SqlClient;
@@ -106,6 +108,7 @@ public class SystemsController : ControllerBase
         new ConflictObjectResult(new { message = "Já existe um sistema com este Code." });
 
     [HttpPost]
+    [Authorize(Policy = PermissionPolicies.SystemsCreate)]
     public async Task<IActionResult> Create([FromBody] CreateSystemRequest request)
     {
         if (!ModelState.IsValid)
@@ -147,6 +150,7 @@ public class SystemsController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = PermissionPolicies.SystemsRead)]
     public async Task<IActionResult> GetAll()
     {
         var list = await _db.Systems
@@ -164,6 +168,7 @@ public class SystemsController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.SystemsRead)]
     public async Task<IActionResult> GetById(Guid id)
     {
         var entity = await _db.Systems.FirstOrDefaultAsync(s => s.Id == id);
@@ -173,6 +178,7 @@ public class SystemsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.SystemsUpdate)]
     public async Task<IActionResult> UpdateById(Guid id, [FromBody] UpdateSystemRequest request)
     {
         if (!ModelState.IsValid)
@@ -211,6 +217,7 @@ public class SystemsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.SystemsDelete)]
     public async Task<IActionResult> DeleteById(Guid id)
     {
         var entity = await _db.Systems.FirstOrDefaultAsync(s => s.Id == id);
@@ -223,7 +230,8 @@ public class SystemsController : ControllerBase
         return NoContent();
     }
 
-    [HttpPatch("{id:guid}/restore")]
+    [HttpPost("{id:guid}/restore")]
+    [Authorize(Policy = PermissionPolicies.SystemsRestore)]
     public async Task<IActionResult> RestoreById(Guid id)
     {
         var entity = await _db.Systems

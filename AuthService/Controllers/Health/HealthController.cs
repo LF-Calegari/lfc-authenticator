@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AuthService.Controllers.Health;
@@ -7,6 +8,7 @@ namespace AuthService.Controllers.Health;
 public class HealthController : ControllerBase
 {
     [HttpGet]
+    [AllowAnonymous]
     public ActionResult<object> Get()
     {
         return Ok(new

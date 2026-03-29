@@ -60,6 +60,8 @@ public class WebAppFactory : WebApplicationFactory<Program>
         using var scope = host.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         db.Database.Migrate();
+        OfficialCatalogSeeder.EnsureCatalogAsync(db).GetAwaiter().GetResult();
+        IntegrationBootstrapSeeder.EnsureBootstrapUserAsync(db).GetAwaiter().GetResult();
         return host;
     }
 

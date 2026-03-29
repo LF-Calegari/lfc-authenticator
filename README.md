@@ -28,9 +28,12 @@ O AuthService concentra a gestão de permissões e padroniza como perfis, usuár
 
 ### Implementado hoje
 
-- CRUD com *soft delete* e restore para **`/systems`**, **`/users`**, **`/routes`**, **`/permission-types`**, **`/roles`**, **`/permissions`** e **`/users-roles`**.
-- **`/routes`** está vinculada a **sistema ativo** (`systemId`); leituras e restore respeitam o sistema pai não deletado.
-- Testes de integração com SQL Server real (criação e descarte de banco por execução).
+- **Autenticação JWT** (`POST /auth/login`, `GET /auth/verify-token`, `GET /auth/logout`) e **autorização** por permissão oficial (políticas `perm:Recurso.Ação` resolvidas no banco).
+- **`GET /health`** sem autenticação; demais rotas exigem **Bearer**, salvo `POST /auth/login`.
+- Catálogo oficial de sistemas/tipos de permissão/linhas de permissão é criado de forma **idempotente** nos testes (após migrations) e na subida em **Development/Production** (fora do ambiente `Testing`).
+- CRUD com *soft delete* e **`POST .../restore`** para **`/systems`**, **`/systems/routes`**, **`/users`** (inclui **`PUT /users/{id}/password`**), **`/permissions/types`**, **`/tokens/types`**, **`/roles`**, **`/permissions`**, além de **`/users-roles`**, **`/users-permissions`** e **`/roles-permissions`** (estes últimos exigem apenas usuário autenticado).
+- **`/systems/routes`** segue o mesmo vínculo a **sistema ativo** (`systemId`) que as routes já tinham.
+- Testes de integração com SQL Server real (banco dedicado por execução).
 
 ## Desenvolvimento com Docker
 
@@ -71,15 +74,25 @@ docker compose exec app sh -c "dotnet restore && dotnet tool restore && dotnet e
 
 ## API REST
 
+Todas as rotas abaixo (exceto **`GET /health`** e **`POST /auth/login`**) exigem cabeçalho **`Authorization: Bearer <jwt>`** e a **permissão oficial** indicada entre parênteses (ex.: `Systems.Read`).
+
 ### Saúde
 
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `GET` | `/health` | Verificação de saúde da aplicação. |
+| Método | Rota | Autenticação | Descrição |
+|--------|------|--------------|-----------|
+| `GET` | `/health` | Não | Verificação de saúde da aplicação. |
 
-### Sistemas (`/systems`)
+### Autenticação (`/auth`)
 
-Registros com *soft delete* (`deletedAt` preenchido) respondem **404** em leitura, atualização e exclusão; a exceção é **`PATCH .../restore`**.
+| Método | Rota | Autenticação | Descrição |
+|--------|------|--------------|-----------|
+| `POST` | `/auth/login` | Não | Login com `email` e `password`; retorna JWT. |
+| `GET` | `/auth/verify-token` | Sim | Valida JWT e retorna usuário e ids de permissões efetivas. |
+| `GET` | `/auth/logout` | Sim | Invalida sessões anteriores (incrementa `tokenVersion`). |
+
+### Sistemas (`/systems`) — (`Systems.*`)
+
+Registros com *soft delete* respondem **404** em leitura, atualização e exclusão; exceção: **`POST .../restore`**.
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
@@ -88,76 +101,86 @@ Registros com *soft delete* (`deletedAt` preenchido) respondem **404** em leitur
 | `GET` | `/systems/{id}` | Detalhe (ativo). |
 | `PUT` | `/systems/{id}` | Atualização completa. |
 | `DELETE` | `/systems/{id}` | *Soft delete*. |
-| `PATCH` | `/systems/{id}/restore` | Restaura registro deletado. |
+| `POST` | `/systems/{id}/restore` | Restaura registro deletado. |
 
-### Usuários (`/users`)
+### Usuários (`/users`) — (`Users.*`)
 
-Mesmo padrão de *soft delete* e **404** para deletados que `/systems` (exceto `PATCH /users/{id}/restore`). Email único (normalizado em minúsculas). Corpo: `name`, `email`, `password`, `identity`, `active` (opcional no POST; padrão `true`).
+Mesmo padrão de *soft delete* e **404** que `/systems`. Email único (normalizado). **POST** usa `name`, `email`, `password`, `identity`, `active` (opcional; padrão `true`). **PUT** `/users/{id}` usa `name`, `email`, `identity`, `active` (sem senha). **PUT** `/users/{id}/password` usa apenas `password`.
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `POST` | `/users` | Cria usuário. |
 | `GET` | `/users` | Lista ativos. |
 | `GET` | `/users/{id}` | Detalhe (ativo). |
-| `PUT` | `/users/{id}` | Atualização completa. |
+| `PUT` | `/users/{id}` | Atualização de dados (sem senha). |
+| `PUT` | `/users/{id}/password` | Atualiza somente a senha. |
 | `DELETE` | `/users/{id}` | *Soft delete*. |
-| `PATCH` | `/users/{id}/restore` | Restaura registro deletado. |
+| `POST` | `/users/{id}/restore` | Restaura registro deletado. |
 
-### Routes (`/routes`)
+### Routes (`/systems/routes`) — (`SystemsRoutes.*`)
 
-Vinculadas a **sistema existente e ativo** (`systemId`). *Soft delete* e **404** como em `/systems`. `Code` é **único globalmente**. Corpo: `systemId`, `name`, `code`, `description` (opcional).
-
-Nos **`GET`**, só aparecem routes cujo **sistema pai** ainda está ativo; se o sistema for *soft-deleted*, a route some da API até o sistema ser restaurado. **`PATCH .../restore`** da route exige sistema ativo.
+Vinculadas a **sistema existente e ativo** (`systemId`). `Code` **único globalmente**. Corpo: `systemId`, `name`, `code`, `description` (opcional). Nos **`GET`**, só entram routes com sistema pai ativo. **`POST .../restore`** exige sistema ativo.
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `POST` | `/routes` | Cria (`systemId` obrigatório e ativo). |
-| `GET` | `/routes` | Lista routes ativas com sistema pai ativo. |
-| `GET` | `/routes/{id}` | Detalhe (route ativa + sistema pai ativo). |
-| `PUT` | `/routes/{id}` | Atualização completa. |
-| `DELETE` | `/routes/{id}` | *Soft delete*. |
-| `PATCH` | `/routes/{id}/restore` | Restaura route deletada (sistema ativo). |
+| `POST` | `/systems/routes` | Cria. |
+| `GET` | `/systems/routes` | Lista routes ativas com sistema pai ativo. |
+| `GET` | `/systems/routes/{id}` | Detalhe. |
+| `PUT` | `/systems/routes/{id}` | Atualização completa. |
+| `DELETE` | `/systems/routes/{id}` | *Soft delete*. |
+| `POST` | `/systems/routes/{id}/restore` | Restaura route deletada. |
 
-### Permission types (`/permission-types`)
+### Token types (`/tokens/types`) — (`SystemTokensTypes.*`)
 
-Mesmo padrão de *soft delete* e **404** para deletados que **`/systems`**. `Code` é **único globalmente**. Corpo: `name`, `code`, `description` (opcional).
+Mesmo padrão de *soft delete* que **`/systems`**. Corpo: `name`, `code`, `description` (opcional).
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `POST` | `/permission-types` | Cria registro. |
-| `GET` | `/permission-types` | Lista apenas ativos. |
-| `GET` | `/permission-types/{id}` | Detalhe (ativo). |
-| `PUT` | `/permission-types/{id}` | Atualização completa. |
-| `DELETE` | `/permission-types/{id}` | *Soft delete*. |
-| `PATCH` | `/permission-types/{id}/restore` | Restaura registro deletado. |
+| `POST` | `/tokens/types` | Cria registro. |
+| `GET` | `/tokens/types` | Lista ativos. |
+| `GET` | `/tokens/types/{id}` | Detalhe. |
+| `PUT` | `/tokens/types/{id}` | Atualização completa. |
+| `DELETE` | `/tokens/types/{id}` | *Soft delete*. |
+| `POST` | `/tokens/types/{id}/restore` | Restaura registro deletado. |
 
-### Roles (`/roles`)
+### Permission types (`/permissions/types`) — (`PermissionsTypes.*`)
 
-Mesmo padrão de *soft delete* e **404** para deletados que **`/systems`**. `Code` é **único globalmente**. Corpo: `name`, `code` (obrigatórios).
+Mesmo padrão de *soft delete* que **`/systems`**. `Code` **único globalmente**. Corpo: `name`, `code`, `description` (opcional).
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/permissions/types` | Cria registro. |
+| `GET` | `/permissions/types` | Lista ativos. |
+| `GET` | `/permissions/types/{id}` | Detalhe. |
+| `PUT` | `/permissions/types/{id}` | Atualização completa. |
+| `DELETE` | `/permissions/types/{id}` | *Soft delete*. |
+| `POST` | `/permissions/types/{id}/restore` | Restaura registro deletado. |
+
+### Roles (`/roles`) — (`Roles.*`)
+
+Mesmo padrão de *soft delete* que **`/systems`**. Corpo: `name`, `code`.
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `POST` | `/roles` | Cria registro. |
-| `GET` | `/roles` | Lista apenas ativos. |
-| `GET` | `/roles/{id}` | Detalhe (ativo). |
+| `GET` | `/roles` | Lista ativos. |
+| `GET` | `/roles/{id}` | Detalhe. |
 | `PUT` | `/roles/{id}` | Atualização completa. |
 | `DELETE` | `/roles/{id}` | *Soft delete*. |
-| `PATCH` | `/roles/{id}/restore` | Restaura registro deletado. |
+| `POST` | `/roles/{id}/restore` | Restaura registro deletado. |
 
-### Permissions (`/permissions`)
+### Permissions (`/permissions`) — (`Permissions.*`)
 
-Vinculadas a **sistema** e **tipo de permissão** existentes e ativos (`systemId`, `permissionTypeId`). *Soft delete* e **404** como em `/systems`. Corpo: `systemId`, `permissionTypeId`, `description` (opcional, máx. 500 caracteres).
-
-Nos **`GET`**, só aparecem permissões cujo **sistema** e **tipo de permissão** ainda estão ativos. **`PATCH .../restore`** exige ambos ativos.
+Vinculadas a **sistema** e **tipo de permissão** ativos. Corpo: `systemId`, `permissionTypeId`, `description` (opcional). **`POST .../restore`** exige referências ativas.
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `POST` | `/permissions` | Cria (`systemId` e `permissionTypeId` obrigatórios e ativos). |
-| `GET` | `/permissions` | Lista permissões ativas com sistema e tipo ativos. |
-| `GET` | `/permissions/{id}` | Detalhe (permissão ativa + referências ativas). |
+| `POST` | `/permissions` | Cria. |
+| `GET` | `/permissions` | Lista permissões ativas (filtros de pai ativo). |
+| `GET` | `/permissions/{id}` | Detalhe. |
 | `PUT` | `/permissions/{id}` | Atualização completa. |
 | `DELETE` | `/permissions/{id}` | *Soft delete*. |
-| `PATCH` | `/permissions/{id}/restore` | Restaura permissão deletada (referências ativas). |
+| `POST` | `/permissions/{id}/restore` | Restaura permissão deletada. |
 
 ### Users–roles (`/users-roles`)
 
@@ -178,7 +201,7 @@ Em ambiente **Development**, a especificação OpenAPI fica em **`/openapi/v1.js
 
 ## Testes de integração
 
-A suite usa **SQL Server real**. Cada execução cria um banco dedicado (`auth_svc_it_<guid>`), aplica **migrations** e faz **DROP DATABASE** ao terminar (adequado para rodar testes em paralelo). Há cobertura para **`/systems`**, **`/users`**, **`/routes`**, **`/permission-types`**, **`/roles`**, **`/permissions`** e **`/users-roles`**.
+A suite usa **SQL Server real**. Cada execução cria um banco dedicado (`auth_svc_it_<guid>`), aplica **migrations**, garante o **catálogo oficial de permissões** e o usuário bootstrap de integração, e faz **DROP DATABASE** ao terminar. Há cobertura para autenticação, **`/systems`**, **`/users`**, **`/systems/routes`**, **`/permissions/types`**, **`/tokens/types`**, **`/roles`**, **`/permissions`**, **`/users-roles`**, vínculos de permissões e papéis.
 
 Defina a connection string **sem** `Database` / `Initial Catalog`:
 
@@ -194,9 +217,8 @@ Sem `AUTH_SERVICE_TEST_SQL_BASE`, a criação do `WebAppFactory` falha — compo
 ## Roadmap
 
 1. Entidade **Recurso** e relação com **Rotas** conforme o modelo alvo (hoje `Routes` liga-se diretamente ao sistema).
-2. Gestão de **permissões** por recurso/rota.
-3. **Autenticação** (tokens/sessão) e **políticas de autorização** na API.
-4. Evolução da documentação OpenAPI e mais cenários de teste.
+2. Refinamento de **permissões** por recurso/rota e matriz de perfis.
+3. Evolução da documentação OpenAPI e mais cenários de teste (incluindo 403 por permissão ausente).
 
 ## Apêndice: SDK .NET em container
 

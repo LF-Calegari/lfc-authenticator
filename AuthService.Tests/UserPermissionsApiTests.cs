@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text.Json;
 using AuthService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,17 +12,10 @@ public class UserPermissionsApiTests : IAsyncLifetime
     private WebAppFactory _factory = null!;
     private HttpClient _client = null!;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true
-    };
-
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
         _factory = new WebAppFactory();
-        _client = _factory.CreateClient();
-        return Task.CompletedTask;
+        _client = await TestApiClient.CreateAuthenticatedAsync(_factory);
     }
 
     public Task DisposeAsync()
@@ -40,9 +32,9 @@ public class UserPermissionsApiTests : IAsyncLifetime
     private async Task<Guid> CreateUserAsync(string emailLocal, bool active = true)
     {
         var email = $"{emailLocal}@up.test";
-        var r = await _client.PostAsJsonAsync("/users", UserCreateBody("U", email, active: active), JsonOptions);
+        var r = await _client.PostAsJsonAsync("/users", UserCreateBody("U", email, active: active), TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
-        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(JsonOptions);
+        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
         return dto.Id;
     }
@@ -50,19 +42,19 @@ public class UserPermissionsApiTests : IAsyncLifetime
     private async Task<Guid> CreateSystemAsync(string code)
     {
         var r = await _client.PostAsJsonAsync("/systems",
-            new { name = "S", code, description = (string?)null }, JsonOptions);
+            new { name = "S", code, description = (string?)null }, TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
-        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(JsonOptions);
+        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
         return dto.Id;
     }
 
     private async Task<Guid> CreatePermissionTypeAsync(string code)
     {
-        var r = await _client.PostAsJsonAsync("/permission-types",
-            new { name = "T", code, description = (string?)null }, JsonOptions);
+        var r = await _client.PostAsJsonAsync("/permissions/types",
+            new { name = "T", code, description = (string?)null }, TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
-        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(JsonOptions);
+        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
         return dto.Id;
     }
@@ -70,9 +62,9 @@ public class UserPermissionsApiTests : IAsyncLifetime
     private async Task<Guid> CreatePermissionAsync(Guid systemId, Guid permissionTypeId)
     {
         var r = await _client.PostAsJsonAsync("/permissions",
-            new { systemId, permissionTypeId, description = (string?)null }, JsonOptions);
+            new { systemId, permissionTypeId, description = (string?)null }, TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
-        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(JsonOptions);
+        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
         return dto.Id;
     }
@@ -88,10 +80,10 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var permissionId = await CreatePermissionAsync(sysId, typeId);
 
         var response = await _client.PostAsJsonAsync("/users-permissions",
-            UserPermissionBody(userId, permissionId), JsonOptions);
+            UserPermissionBody(userId, permissionId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
-        var dto = await response.Content.ReadFromJsonAsync<UserPermissionDto>(JsonOptions);
+        var dto = await response.Content.ReadFromJsonAsync<UserPermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
         Assert.NotEqual(Guid.Empty, dto.Id);
         Assert.Equal(userId, dto.UserId);
@@ -109,10 +101,10 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var typeId = await CreatePermissionTypeAsync("PT_UP_DUP");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
 
-        await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permissionId), JsonOptions);
+        await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permissionId), TestApiClient.JsonOptions);
 
         var response = await _client.PostAsJsonAsync("/users-permissions",
-            UserPermissionBody(userId, permissionId), JsonOptions);
+            UserPermissionBody(userId, permissionId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
 
@@ -124,7 +116,7 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var permissionId = await CreatePermissionAsync(sysId, typeId);
 
         var response = await _client.PostAsJsonAsync("/users-permissions",
-            UserPermissionBody(Guid.NewGuid(), permissionId), JsonOptions);
+            UserPermissionBody(Guid.NewGuid(), permissionId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -134,7 +126,7 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var userId = await CreateUserAsync("up_inv_p");
 
         var response = await _client.PostAsJsonAsync("/users-permissions",
-            UserPermissionBody(userId, Guid.NewGuid()), JsonOptions);
+            UserPermissionBody(userId, Guid.NewGuid()), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -147,7 +139,7 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var permissionId = await CreatePermissionAsync(sysId, typeId);
 
         var response = await _client.PostAsJsonAsync("/users-permissions",
-            UserPermissionBody(userId, permissionId), JsonOptions);
+            UserPermissionBody(userId, permissionId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         var json = await response.Content.ReadAsStringAsync();
@@ -162,8 +154,8 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var typeId = await CreatePermissionTypeAsync("PT_UP_CONC");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
         var body = UserPermissionBody(userId, permissionId);
-        var t1 = _client.PostAsJsonAsync("/users-permissions", body, JsonOptions);
-        var t2 = _client.PostAsJsonAsync("/users-permissions", body, JsonOptions);
+        var t1 = _client.PostAsJsonAsync("/users-permissions", body, TestApiClient.JsonOptions);
+        var t2 = _client.PostAsJsonAsync("/users-permissions", body, TestApiClient.JsonOptions);
         await Task.WhenAll(t1, t2);
 
         var r1 = await t1;
@@ -182,15 +174,15 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var permA = await CreatePermissionAsync(sysId, typeId);
         var permB = await CreatePermissionAsync(sysId, typeId);
 
-        await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permA), JsonOptions);
-        var second = await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permB), JsonOptions);
-        var secondDto = await second.Content.ReadFromJsonAsync<UserPermissionDto>(JsonOptions);
+        await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permA), TestApiClient.JsonOptions);
+        var second = await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permB), TestApiClient.JsonOptions);
+        var secondDto = await second.Content.ReadFromJsonAsync<UserPermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(secondDto);
         await _client.DeleteAsync($"/users-permissions/{secondDto.Id}");
 
         var listResp = await _client.GetAsync("/users-permissions");
         listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<UserPermissionDto>>(JsonOptions);
+        var list = await listResp.Content.ReadFromJsonAsync<List<UserPermissionDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
         Assert.All(list, x => Assert.Null(x.DeletedAt));
         Assert.Contains(list, x => x.PermissionId == permA);
@@ -205,8 +197,8 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var typeId = await CreatePermissionTypeAsync("PT_UP_GET");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
         var create = await _client.PostAsJsonAsync("/users-permissions",
-            UserPermissionBody(userId, permissionId), JsonOptions);
-        var dto = await create.Content.ReadFromJsonAsync<UserPermissionDto>(JsonOptions);
+            UserPermissionBody(userId, permissionId), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserPermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         var getOk = await _client.GetAsync($"/users-permissions/{dto.Id}");
@@ -225,8 +217,8 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var typeId = await CreatePermissionTypeAsync("PT_UP_RS_ACT");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
         var create = await _client.PostAsJsonAsync("/users-permissions",
-            UserPermissionBody(userId, permissionId), JsonOptions);
-        var dto = await create.Content.ReadFromJsonAsync<UserPermissionDto>(JsonOptions);
+            UserPermissionBody(userId, permissionId), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserPermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         var patch = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Patch,
@@ -242,8 +234,8 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var typeId = await CreatePermissionTypeAsync("PT_UP_RS_OK");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
         var create = await _client.PostAsJsonAsync("/users-permissions",
-            UserPermissionBody(userId, permissionId), JsonOptions);
-        var dto = await create.Content.ReadFromJsonAsync<UserPermissionDto>(JsonOptions);
+            UserPermissionBody(userId, permissionId), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserPermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         await _client.DeleteAsync($"/users-permissions/{dto.Id}");
@@ -257,7 +249,7 @@ public class UserPermissionsApiTests : IAsyncLifetime
 
         var getOk = await _client.GetAsync($"/users-permissions/{dto.Id}");
         Assert.Equal(HttpStatusCode.OK, getOk.StatusCode);
-        var restored = await getOk.Content.ReadFromJsonAsync<UserPermissionDto>(JsonOptions);
+        var restored = await getOk.Content.ReadFromJsonAsync<UserPermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(restored);
         Assert.Null(restored.DeletedAt);
     }
@@ -270,8 +262,8 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var typeId = await CreatePermissionTypeAsync("PT_UP_RS_BAD_U");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
         var create = await _client.PostAsJsonAsync("/users-permissions",
-            UserPermissionBody(userId, permissionId), JsonOptions);
-        var dto = await create.Content.ReadFromJsonAsync<UserPermissionDto>(JsonOptions);
+            UserPermissionBody(userId, permissionId), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserPermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         await _client.DeleteAsync($"/users-permissions/{dto.Id}");
@@ -291,13 +283,13 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var permA = await CreatePermissionAsync(sysId, typeId);
         var permB = await CreatePermissionAsync(sysId, typeId);
 
-        await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permA), JsonOptions);
-        var b = await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permB), JsonOptions);
-        var dtoB = await b.Content.ReadFromJsonAsync<UserPermissionDto>(JsonOptions);
+        await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permA), TestApiClient.JsonOptions);
+        var b = await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permB), TestApiClient.JsonOptions);
+        var dtoB = await b.Content.ReadFromJsonAsync<UserPermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dtoB);
 
         var put = await _client.PutAsJsonAsync($"/users-permissions/{dtoB.Id}",
-            UserPermissionBody(userId, permA), JsonOptions);
+            UserPermissionBody(userId, permA), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, put.StatusCode);
     }
 
@@ -309,8 +301,8 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var typeId = await CreatePermissionTypeAsync("PT_UP_DEL");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
         var create = await _client.PostAsJsonAsync("/users-permissions",
-            UserPermissionBody(userId, permissionId), JsonOptions);
-        var dto = await create.Content.ReadFromJsonAsync<UserPermissionDto>(JsonOptions);
+            UserPermissionBody(userId, permissionId), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserPermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         var del1 = await _client.DeleteAsync($"/users-permissions/{dto.Id}");
@@ -334,13 +326,13 @@ public class UserPermissionsApiTests : IAsyncLifetime
         var sysId = await CreateSystemAsync("SYS_UP_HIDE");
         var typeId = await CreatePermissionTypeAsync("PT_UP_HIDE");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
-        await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permissionId), JsonOptions);
+        await _client.PostAsJsonAsync("/users-permissions", UserPermissionBody(userId, permissionId), TestApiClient.JsonOptions);
 
         await _client.DeleteAsync($"/permissions/{permissionId}");
 
         var listResp = await _client.GetAsync("/users-permissions");
         listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<UserPermissionDto>>(JsonOptions);
+        var list = await listResp.Content.ReadFromJsonAsync<List<UserPermissionDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
         Assert.DoesNotContain(list, x => x.PermissionId == permissionId);
     }

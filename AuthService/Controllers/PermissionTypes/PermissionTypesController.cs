@@ -1,6 +1,8 @@
 using System.ComponentModel.DataAnnotations;
+using AuthService.Auth;
 using AuthService.Data;
 using AuthService.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Data.SqlClient;
@@ -9,7 +11,7 @@ using Microsoft.EntityFrameworkCore;
 namespace AuthService.Controllers.PermissionTypes;
 
 [ApiController]
-[Route("permission-types")]
+[Route("permissions/types")]
 public class PermissionTypesController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -106,6 +108,7 @@ public class PermissionTypesController : ControllerBase
         new ConflictObjectResult(new { message = "Já existe um permission type com este Code." });
 
     [HttpPost]
+    [Authorize(Policy = PermissionPolicies.PermissionsTypesCreate)]
     public async Task<IActionResult> Create([FromBody] CreatePermissionTypeRequest request)
     {
         if (!ModelState.IsValid)
@@ -147,6 +150,7 @@ public class PermissionTypesController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = PermissionPolicies.PermissionsTypesRead)]
     public async Task<IActionResult> GetAll()
     {
         var list = await _db.PermissionTypes
@@ -164,6 +168,7 @@ public class PermissionTypesController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.PermissionsTypesRead)]
     public async Task<IActionResult> GetById(Guid id)
     {
         var entity = await _db.PermissionTypes.FirstOrDefaultAsync(p => p.Id == id);
@@ -173,6 +178,7 @@ public class PermissionTypesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.PermissionsTypesUpdate)]
     public async Task<IActionResult> UpdateById(Guid id, [FromBody] UpdatePermissionTypeRequest request)
     {
         if (!ModelState.IsValid)
@@ -211,6 +217,7 @@ public class PermissionTypesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.PermissionsTypesDelete)]
     public async Task<IActionResult> DeleteById(Guid id)
     {
         var entity = await _db.PermissionTypes.FirstOrDefaultAsync(p => p.Id == id);
@@ -223,7 +230,8 @@ public class PermissionTypesController : ControllerBase
         return NoContent();
     }
 
-    [HttpPatch("{id:guid}/restore")]
+    [HttpPost("{id:guid}/restore")]
+    [Authorize(Policy = PermissionPolicies.PermissionsTypesRestore)]
     public async Task<IActionResult> RestoreById(Guid id)
     {
         var entity = await _db.PermissionTypes
