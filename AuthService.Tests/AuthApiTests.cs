@@ -192,8 +192,28 @@ public class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task Users_WithoutToken_ReturnsUnauthorized()
     {
-        var anon = _factory.CreateClient();
+        using var anon = _factory.CreateClient();
         var response = await anon.GetAsync("/users");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Users_WithValidTokenButWithoutUsersRead_ReturnsForbidden()
+    {
+        await _admin.PostAsJsonAsync("/users",
+            new { name = "Sem Users.Read", email = "sem.users.read@example.com", password = "SenhaSegura1!", identity = 1, active = true },
+            TestApiClient.JsonOptions);
+
+        var login = await _anon.PostAsJsonAsync("/auth/login",
+            LoginBody("sem.users.read@example.com", "SenhaSegura1!"), TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(loginDto);
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/users");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
+        var response = await _anon.SendAsync(req);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 }

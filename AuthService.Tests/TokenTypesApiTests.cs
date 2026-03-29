@@ -53,7 +53,7 @@ public class TokenTypesApiTests : IAsyncLifetime
     [Fact]
     public async Task Get_WithoutToken_ReturnsUnauthorized()
     {
-        var anon = _factory.CreateClient();
+        using var anon = _factory.CreateClient();
         var response = await anon.GetAsync("/tokens/types");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
