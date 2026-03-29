@@ -36,12 +36,12 @@ Você DEVE ler:
 
 Para qualquer ação de **ler Issue**, **ler PR** ou interagir com PR no GitHub, use **somente** o PAT em:
 
-`./credentials/reviewer.token`
+`./.credentials/reviewer.token`
 
 Antes de qualquer comando `gh` relacionado a Issue/PR, execute **exatamente**:
 
 ```bash
-TOKEN_PATH="./credentials/reviewer.token"
+TOKEN_PATH="./.credentials/reviewer.token"
 EXPECTED_REVIEWER_LOGIN="evacalegari1"
 
 if [ ! -f "$TOKEN_PATH" ]; then
@@ -62,7 +62,7 @@ fi
 Após validar, execute os comandos `gh` **na mesma sessão**.
 
 Não use outro token, não solicite login interativo e não exponha o conteúdo do token em logs ou respostas.
-Nunca, em hipótese alguma, faça commit do arquivo de token `./credentials/reviewer.token`.
+Nunca, em hipótese alguma, faça commit do arquivo de token `./.credentials/reviewer.token`.
 
 ---
 

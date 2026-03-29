@@ -109,12 +109,12 @@ feature/<issue-number>/<descricao-curta>
 
 Para qualquer ação de **ler Issue** ou **criar PR** no GitHub, use **somente** o PAT em:
 
-`./credentials/programmer.token`
+`./.credentials/programmer.token`
 
 Antes de qualquer comando `gh` relacionado a Issue/PR, execute **exatamente**:
 
 ```bash
-TOKEN_PATH="./credentials/programmer.token"
+TOKEN_PATH="./.credentials/programmer.token"
 EXPECTED_PROGRAMMER_LOGIN="calegariluisfernando"
 
 if [ ! -f "$TOKEN_PATH" ]; then
@@ -135,7 +135,7 @@ fi
 Após validar, execute os comandos `gh` **na mesma sessão**.
 
 Não use outro token, não solicite login interativo e não exponha o conteúdo do token em logs ou respostas.
-Nunca, em hipótese alguma, faça commit do arquivo de token `./credentials/programmer.token`.
+Nunca, em hipótese alguma, faça commit do arquivo de token `./.credentials/programmer.token`.
 
 ---
 
