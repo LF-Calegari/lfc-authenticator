@@ -60,6 +60,45 @@ Você DEVE começar com:
 
 ---
 
+# 🗃️ Migrations EF Core (obrigatório quando houver mudança de modelo)
+
+Para qualquer alteração de modelo/persistência que exija migration:
+
+- Gere migration **somente** com `dotnet ef migrations add` (nunca criar arquivo de migration/manualmente).
+- O nome informado no comando deve ser **descritivo e sem timestamp** (ex.: `CreateUserPermissionsTable`).
+- O timestamp no nome do arquivo é gerado automaticamente pelo EF (`yyyyMMddHHmmss`) e deve refletir a geração atual.
+- Se o timestamp sair inconsistente/suspeito, apague a migration gerada e gere novamente pelo comando correto.
+- Não editar `*Designer.cs` e `AppDbContextModelSnapshot.cs` manualmente, exceto ajuste mínimo pós-geração com justificativa técnica explícita.
+
+Comando padrão (host):
+
+```bash
+dotnet ef migrations add <MigrationName> \
+  --project AuthService/AuthService.csproj \
+  --startup-project AuthService/AuthService.csproj \
+  --output-dir Data/Migrations
+```
+
+Fallback quando `dotnet` não estiver disponível no host (usar Docker SDK):
+
+```bash
+docker run --rm -v "$PWD:/src" -w /src mcr.microsoft.com/dotnet/sdk:10.0 \
+  dotnet ef migrations add <MigrationName> \
+  --project AuthService/AuthService.csproj \
+  --startup-project AuthService/AuthService.csproj \
+  --output-dir Data/Migrations
+```
+
+Validação obrigatória após gerar migration:
+
+```bash
+dotnet ef migrations has-pending-model-changes --project AuthService/AuthService.csproj
+```
+
+Se o comando acima indicar mudanças pendentes, a migration está incorreta e deve ser regenerada/corrigida antes de seguir.
+
+---
+
 # 🧪 Testes (obrigatório quando aplicável)
 
 - Criar ou ajustar testes
