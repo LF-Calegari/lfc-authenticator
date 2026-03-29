@@ -316,6 +316,34 @@ public class PermissionsApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, patch.StatusCode);
     }
 
+    [Fact]
+    public async Task Create_WithDeletedPermissionType_ReturnsBadRequest()
+    {
+        var sysId = await CreateSystemAsync("PERM_SYS_DELPT");
+        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_DELPT");
+        await _client.DeleteAsync($"/permission-types/{typeId}");
+
+        var response = await _client.PostAsJsonAsync("/permissions",
+            PermCreateBody(sysId, typeId), JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Restore_WhenPermissionTypeSoftDeleted_ReturnsBadRequest()
+    {
+        var sysId = await CreateSystemAsync("PERM_SYS_RPT");
+        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_RPT");
+        var create = await _client.PostAsJsonAsync("/permissions", PermCreateBody(sysId, typeId), JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(JsonOptions);
+        Assert.NotNull(dto);
+
+        await _client.DeleteAsync($"/permissions/{dto.Id}");
+        await _client.DeleteAsync($"/permission-types/{typeId}");
+
+        var patch = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Patch, $"/permissions/{dto.Id}/restore"));
+        Assert.Equal(HttpStatusCode.BadRequest, patch.StatusCode);
+    }
+
     private sealed record RefDto(Guid Id);
 
     private sealed record PermissionDto(

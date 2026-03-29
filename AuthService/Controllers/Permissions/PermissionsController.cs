@@ -58,10 +58,10 @@ public class PermissionsController : ControllerBase
     private static PermissionResponse ToResponse(AppPermission e) =>
         new(e.Id, e.SystemId, e.PermissionTypeId, e.Description, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
 
-    private static void ValidateDescription(ModelStateDictionary modelState, string? descriptionOrNull)
+    private static void ValidateDescription(ModelStateDictionary modelState, string? descriptionOrNull, string descriptionPropertyKey)
     {
         if (descriptionOrNull is { Length: > 500 })
-            modelState.AddModelError(nameof(CreatePermissionRequest.Description), "Description deve ter no máximo 500 caracteres.");
+            modelState.AddModelError(descriptionPropertyKey, "Description deve ter no máximo 500 caracteres.");
     }
 
     private static bool IsForeignKeyViolation(DbUpdateException ex)
@@ -113,7 +113,7 @@ public class PermissionsController : ControllerBase
         }
 
         var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
-        ValidateDescription(ModelState, description);
+        ValidateDescription(ModelState, description, nameof(CreatePermissionRequest.Description));
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
@@ -197,7 +197,7 @@ public class PermissionsController : ControllerBase
         }
 
         var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
-        ValidateDescription(ModelState, description);
+        ValidateDescription(ModelState, description, nameof(UpdatePermissionRequest.Description));
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
