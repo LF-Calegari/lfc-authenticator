@@ -13,10 +13,12 @@ namespace AuthService.Controllers.Roles;
 public class RolesController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly ILogger<RolesController> _logger;
 
-    public RolesController(AppDbContext db)
+    public RolesController(AppDbContext db, ILogger<RolesController> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     public class CreateRoleRequest
@@ -108,7 +110,10 @@ public class RolesController : ControllerBase
             return ValidationProblem(ModelState);
 
         if (await _db.Roles.IgnoreQueryFilters().AnyAsync(r => r.Code == code))
+        {
+            _logger.LogWarning("Conflito ao criar role: já existe Code {Code}.", code);
             return UniqueConflictResult();
+        }
 
         var now = DateTime.UtcNow;
         var entity = new AppRole
@@ -127,9 +132,16 @@ public class RolesController : ControllerBase
         }
         catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
         {
+            _logger.LogWarning(ex, "Conflito de unicidade ao criar role com Code {Code}.", code);
             return UniqueConflictResult();
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro inesperado ao persistir novo role (Code {Code}).", code);
+            throw;
+        }
 
+        _logger.LogInformation("Role criado: {RoleId}, Code {Code}.", entity.Id, code);
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
     }
 
@@ -176,7 +188,10 @@ public class RolesController : ControllerBase
             return NotFound(new { message = "Role não encontrado." });
 
         if (await _db.Roles.IgnoreQueryFilters().AnyAsync(r => r.Id != id && r.Code == code))
+        {
+            _logger.LogWarning("Conflito ao atualizar role {RoleId}: Code {Code} já em uso.", id, code);
             return new ConflictObjectResult(new { message = "Já existe outro role com este Code." });
+        }
 
         entity.Name = name;
         entity.Code = code;
@@ -188,9 +203,16 @@ public class RolesController : ControllerBase
         }
         catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
         {
+            _logger.LogWarning(ex, "Conflito de unicidade ao atualizar role {RoleId} para Code {Code}.", id, code);
             return new ConflictObjectResult(new { message = "Já existe outro role com este Code." });
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro inesperado ao persistir atualização do role {RoleId}.", id);
+            throw;
+        }
 
+        _logger.LogInformation("Role atualizado: {RoleId}.", id);
         return Ok(ToResponse(entity));
     }
 
@@ -203,7 +225,17 @@ public class RolesController : ControllerBase
 
         entity.DeletedAt = DateTime.UtcNow;
         entity.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro inesperado ao excluir (soft) role {RoleId}.", id);
+            throw;
+        }
+
+        _logger.LogInformation("Role excluído (soft): {RoleId}.", id);
         return NoContent();
     }
 
@@ -219,7 +251,17 @@ public class RolesController : ControllerBase
 
         entity.DeletedAt = null;
         entity.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro inesperado ao restaurar role {RoleId}.", id);
+            throw;
+        }
+
+        _logger.LogInformation("Role restaurado: {RoleId}.", id);
         return Ok(ToResponse(entity));
     }
 }

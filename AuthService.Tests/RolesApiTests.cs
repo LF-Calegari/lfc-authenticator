@@ -114,6 +114,38 @@ public class RolesApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Create_NameExceedsMaxLength_ReturnsBadRequest()
+    {
+        var name81 = new string('n', 81);
+        var response = await _client.PostAsJsonAsync("/roles",
+            new { name = name81, code = "ROLE_LEN_NAME" }, JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_CodeExceedsMaxLength_ReturnsBadRequest()
+    {
+        var code51 = new string('c', 51);
+        var response = await _client.PostAsJsonAsync("/roles",
+            new { name = "Nome válido", code = code51 }, JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Restore só aplica a linhas soft-deleted; role ativo não é encontrado pela query e retorna 404.
+    /// </summary>
+    [Fact]
+    public async Task Restore_ActiveRole_ReturnsNotFound()
+    {
+        var create = await _client.PostAsJsonAsync("/roles", new { name = "Ativo", code = "ROLE_ACTIVE_R" }, JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<RoleDto>(JsonOptions);
+        Assert.NotNull(dto);
+
+        var patch = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Patch, $"/roles/{dto.Id}/restore"));
+        Assert.Equal(HttpStatusCode.NotFound, patch.StatusCode);
+    }
+
+    [Fact]
     public async Task Put_WhitespaceOnlyName_ReturnsBadRequest()
     {
         var create = await _client.PostAsJsonAsync("/roles", new { name = "S", code = "ROLE_W1" }, JsonOptions);

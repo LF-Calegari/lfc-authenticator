@@ -9,7 +9,8 @@ public class HealthController : ControllerBase
     [HttpGet]
     public ActionResult<object> Get()
     {
-        return Ok(new {
+        return Ok(new
+        {
             status = "ok",
             message = "API is running",
             timestamp = DateTime.UtcNow
