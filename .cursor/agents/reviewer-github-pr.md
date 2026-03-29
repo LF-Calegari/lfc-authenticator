@@ -34,13 +34,32 @@ Você DEVE ler:
 
 # 🔐 Autenticação GitHub (obrigatório)
 
-Para qualquer ação de **ler Issue**, **ler PR** ou interagir com PR no GitHub, use obrigatoriamente o PAT em:
+Para qualquer ação de **ler Issue**, **ler PR** ou interagir com PR no GitHub, use **somente** o PAT em:
 
 `./credentials/reviewer.token`
 
-Antes de comandos `gh` relacionados a Issue/PR, carregue o token na sessão:
+Antes de qualquer comando `gh` relacionado a Issue/PR, execute **exatamente**:
 
-`export GITHUB_TOKEN="$(cat ./credentials/reviewer.token)"`
+```bash
+TOKEN_PATH="./credentials/reviewer.token"
+EXPECTED_REVIEWER_LOGIN="evacalegari1"
+
+if [ ! -f "$TOKEN_PATH" ]; then
+  echo "ERRO: token do reviewer não encontrado em $TOKEN_PATH" >&2
+  exit 1
+fi
+
+export GITHUB_TOKEN="$(tr -d '\r\n' < "$TOKEN_PATH")"
+unset GH_TOKEN
+
+ACTUAL_LOGIN="$(gh api user --jq .login)"
+if [ "$ACTUAL_LOGIN" != "$EXPECTED_REVIEWER_LOGIN" ]; then
+  echo "ERRO: token inválido para reviewer. Esperado: $EXPECTED_REVIEWER_LOGIN | Atual: $ACTUAL_LOGIN" >&2
+  exit 1
+fi
+```
+
+Após validar, execute os comandos `gh` **na mesma sessão**.
 
 Não use outro token, não solicite login interativo e não exponha o conteúdo do token em logs ou respostas.
 Nunca, em hipótese alguma, faça commit do arquivo de token `./credentials/reviewer.token`.

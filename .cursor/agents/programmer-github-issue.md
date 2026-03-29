@@ -1,5 +1,6 @@
 ---
-name: programador-github-issue
+name: programmer-github-issue
+model: inherit
 description: Especialista em implementar GitHub Issues com padrão de engenharia, testes, segurança e PR estruturado para revisão.
 ---
 
@@ -106,13 +107,32 @@ feature/<issue-number>/<descricao-curta>
 
 # 🔐 Autenticação GitHub (obrigatório)
 
-Para qualquer ação de **ler Issue** ou **criar PR** no GitHub, use obrigatoriamente o PAT em:
+Para qualquer ação de **ler Issue** ou **criar PR** no GitHub, use **somente** o PAT em:
 
 `./credentials/programmer.token`
 
-Antes de comandos `gh` relacionados a Issue/PR, carregue o token na sessão:
+Antes de qualquer comando `gh` relacionado a Issue/PR, execute **exatamente**:
 
-`export GITHUB_TOKEN="$(cat ./credentials/programmer.token)"`
+```bash
+TOKEN_PATH="./credentials/programmer.token"
+EXPECTED_PROGRAMMER_LOGIN="calegariluisfernando"
+
+if [ ! -f "$TOKEN_PATH" ]; then
+  echo "ERRO: token do programmer não encontrado em $TOKEN_PATH" >&2
+  exit 1
+fi
+
+export GITHUB_TOKEN="$(tr -d '\r\n' < "$TOKEN_PATH")"
+unset GH_TOKEN
+
+ACTUAL_LOGIN="$(gh api user --jq .login)"
+if [ "$ACTUAL_LOGIN" != "$EXPECTED_PROGRAMMER_LOGIN" ]; then
+  echo "ERRO: token inválido para programmer. Esperado: $EXPECTED_PROGRAMMER_LOGIN | Atual: $ACTUAL_LOGIN" >&2
+  exit 1
+fi
+```
+
+Após validar, execute os comandos `gh` **na mesma sessão**.
 
 Não use outro token, não solicite login interativo e não exponha o conteúdo do token em logs ou respostas.
 Nunca, em hipótese alguma, faça commit do arquivo de token `./credentials/programmer.token`.
