@@ -28,7 +28,7 @@ O AuthService concentra a gestão de permissões e padroniza como perfis, usuár
 
 ### Implementado hoje
 
-- CRUD com *soft delete* e restore para **`/systems`**, **`/users`**, **`/routes`**, **`/permission-types`** e **`/roles`**.
+- CRUD com *soft delete* e restore para **`/systems`**, **`/users`**, **`/routes`**, **`/permission-types`**, **`/roles`** e **`/permissions`**.
 - **`/routes`** está vinculada a **sistema ativo** (`systemId`); leituras e restore respeitam o sistema pai não deletado.
 - Testes de integração com SQL Server real (criação e descarte de banco por execução).
 
@@ -144,11 +144,26 @@ Mesmo padrão de *soft delete* e **404** para deletados que **`/systems`**. `Cod
 | `DELETE` | `/roles/{id}` | *Soft delete*. |
 | `PATCH` | `/roles/{id}/restore` | Restaura registro deletado. |
 
+### Permissions (`/permissions`)
+
+Vinculadas a **sistema** e **tipo de permissão** existentes e ativos (`systemId`, `permissionTypeId`). *Soft delete* e **404** como em `/systems`. Corpo: `systemId`, `permissionTypeId`, `description` (opcional, máx. 500 caracteres).
+
+Nos **`GET`**, só aparecem permissões cujo **sistema** e **tipo de permissão** ainda estão ativos. **`PATCH .../restore`** exige ambos ativos.
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/permissions` | Cria (`systemId` e `permissionTypeId` obrigatórios e ativos). |
+| `GET` | `/permissions` | Lista permissões ativas com sistema e tipo ativos. |
+| `GET` | `/permissions/{id}` | Detalhe (permissão ativa + referências ativas). |
+| `PUT` | `/permissions/{id}` | Atualização completa. |
+| `DELETE` | `/permissions/{id}` | *Soft delete*. |
+| `PATCH` | `/permissions/{id}/restore` | Restaura permissão deletada (referências ativas). |
+
 Em ambiente **Development**, a especificação OpenAPI fica em **`/openapi/v1.json`**.
 
 ## Testes de integração
 
-A suite usa **SQL Server real**. Cada execução cria um banco dedicado (`auth_svc_it_<guid>`), aplica **migrations** e faz **DROP DATABASE** ao terminar (adequado para rodar testes em paralelo). Há cobertura para **`/systems`**, **`/users`**, **`/routes`**, **`/permission-types`** e **`/roles`**.
+A suite usa **SQL Server real**. Cada execução cria um banco dedicado (`auth_svc_it_<guid>`), aplica **migrations** e faz **DROP DATABASE** ao terminar (adequado para rodar testes em paralelo). Há cobertura para **`/systems`**, **`/users`**, **`/routes`**, **`/permission-types`**, **`/roles`** e **`/permissions`**.
 
 Defina a connection string **sem** `Database` / `Initial Catalog`:
 
