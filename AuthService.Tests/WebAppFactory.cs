@@ -47,7 +47,9 @@ public class WebAppFactory : WebApplicationFactory<Program>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:DefaultConnection"] = _appConnectionString
+                ["ConnectionStrings:DefaultConnection"] = _appConnectionString,
+                ["Auth:Jwt:Secret"] = "integration-tests-jwt-secret-key-32chars!!",
+                ["Auth:Jwt:ExpirationMinutes"] = "60"
             });
         });
     }
