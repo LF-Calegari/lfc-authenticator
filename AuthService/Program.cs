@@ -1,8 +1,10 @@
 using AuthService.Auth;
 using AuthService.Data;
+using AuthService.OpenApi;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,27 +36,47 @@ builder.Services.AddAuthorization(options =>
 });
 
 builder.Services.AddControllers();
-
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Auth Service API",
+        Version = "v1",
+        Description = "Autenticação, autorização e cadastros correlatos. Rotas versionadas sob o prefixo /v1."
+    });
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "JWT no header Authorization (Bearer {token})."
+    });
+    options.DocumentFilter<V1PathPrefixDocumentFilter>();
+});
 
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
-
 if (!app.Environment.IsEnvironment("Testing"))
 {
     app.UseHttpsRedirection();
 }
 
+// Swagger antes de autenticação/autorização: documentação e OpenAPI JSON são anônimos.
+app.UseSwagger();
+app.UseSwaggerUI(options =>
+{
+    options.RoutePrefix = "docs";
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Auth Service API v1");
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapControllers();
+app.MapGroup("/v1").MapControllers();
 
 if (!app.Environment.IsEnvironment("Testing"))
 {

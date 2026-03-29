@@ -27,7 +27,7 @@ public class RolePermissionsApiTests : IAsyncLifetime
 
     private async Task<Guid> CreateRoleAsync(string code)
     {
-        var r = await _client.PostAsJsonAsync("/roles",
+        var r = await _client.PostAsJsonAsync("/v1/roles",
             new { name = "R", code, }, TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
         var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(TestApiClient.JsonOptions);
@@ -37,7 +37,7 @@ public class RolePermissionsApiTests : IAsyncLifetime
 
     private async Task<Guid> CreateSystemAsync(string code)
     {
-        var r = await _client.PostAsJsonAsync("/systems",
+        var r = await _client.PostAsJsonAsync("/v1/systems",
             new { name = "S", code, description = (string?)null }, TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
         var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(TestApiClient.JsonOptions);
@@ -47,7 +47,7 @@ public class RolePermissionsApiTests : IAsyncLifetime
 
     private async Task<Guid> CreatePermissionTypeAsync(string code)
     {
-        var r = await _client.PostAsJsonAsync("/permissions/types",
+        var r = await _client.PostAsJsonAsync("/v1/permissions/types",
             new { name = "T", code, description = (string?)null }, TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
         var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(TestApiClient.JsonOptions);
@@ -57,7 +57,7 @@ public class RolePermissionsApiTests : IAsyncLifetime
 
     private async Task<Guid> CreatePermissionAsync(Guid systemId, Guid permissionTypeId)
     {
-        var r = await _client.PostAsJsonAsync("/permissions",
+        var r = await _client.PostAsJsonAsync("/v1/permissions",
             new { systemId, permissionTypeId, description = (string?)null }, TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
         var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(TestApiClient.JsonOptions);
@@ -75,7 +75,7 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var typeId = await CreatePermissionTypeAsync("PT_RP_CREATE");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
 
-        var response = await _client.PostAsJsonAsync("/roles-permissions",
+        var response = await _client.PostAsJsonAsync("/v1/roles-permissions",
             RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
@@ -97,9 +97,9 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var typeId = await CreatePermissionTypeAsync("PT_RP_DUP");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
 
-        await _client.PostAsJsonAsync("/roles-permissions", RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/v1/roles-permissions", RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
 
-        var response = await _client.PostAsJsonAsync("/roles-permissions",
+        var response = await _client.PostAsJsonAsync("/v1/roles-permissions",
             RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
@@ -111,7 +111,7 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var typeId = await CreatePermissionTypeAsync("PT_RP_INV_R");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
 
-        var response = await _client.PostAsJsonAsync("/roles-permissions",
+        var response = await _client.PostAsJsonAsync("/v1/roles-permissions",
             RolePermissionBody(Guid.NewGuid(), permissionId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -121,7 +121,7 @@ public class RolePermissionsApiTests : IAsyncLifetime
     {
         var roleId = await CreateRoleAsync("RP_INV_P");
 
-        var response = await _client.PostAsJsonAsync("/roles-permissions",
+        var response = await _client.PostAsJsonAsync("/v1/roles-permissions",
             RolePermissionBody(roleId, Guid.NewGuid()), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -134,8 +134,8 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var typeId = await CreatePermissionTypeAsync("PT_RP_CONC");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
         var body = RolePermissionBody(roleId, permissionId);
-        var t1 = _client.PostAsJsonAsync("/roles-permissions", body, TestApiClient.JsonOptions);
-        var t2 = _client.PostAsJsonAsync("/roles-permissions", body, TestApiClient.JsonOptions);
+        var t1 = _client.PostAsJsonAsync("/v1/roles-permissions", body, TestApiClient.JsonOptions);
+        var t2 = _client.PostAsJsonAsync("/v1/roles-permissions", body, TestApiClient.JsonOptions);
         await Task.WhenAll(t1, t2);
 
         var r1 = await t1;
@@ -154,13 +154,13 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var permA = await CreatePermissionAsync(sysId, typeId);
         var permB = await CreatePermissionAsync(sysId, typeId);
 
-        await _client.PostAsJsonAsync("/roles-permissions", RolePermissionBody(roleId, permA), TestApiClient.JsonOptions);
-        var second = await _client.PostAsJsonAsync("/roles-permissions", RolePermissionBody(roleId, permB), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/v1/roles-permissions", RolePermissionBody(roleId, permA), TestApiClient.JsonOptions);
+        var second = await _client.PostAsJsonAsync("/v1/roles-permissions", RolePermissionBody(roleId, permB), TestApiClient.JsonOptions);
         var secondDto = await second.Content.ReadFromJsonAsync<RolePermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(secondDto);
-        await _client.DeleteAsync($"/roles-permissions/{secondDto.Id}");
+        await _client.DeleteAsync($"/v1/roles-permissions/{secondDto.Id}");
 
-        var listResp = await _client.GetAsync("/roles-permissions");
+        var listResp = await _client.GetAsync("/v1/roles-permissions");
         listResp.EnsureSuccessStatusCode();
         var list = await listResp.Content.ReadFromJsonAsync<List<RolePermissionDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
@@ -176,16 +176,16 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var sysId = await CreateSystemAsync("SYS_RP_GET");
         var typeId = await CreatePermissionTypeAsync("PT_RP_GET");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
-        var create = await _client.PostAsJsonAsync("/roles-permissions",
+        var create = await _client.PostAsJsonAsync("/v1/roles-permissions",
             RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RolePermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        var getOk = await _client.GetAsync($"/roles-permissions/{dto.Id}");
+        var getOk = await _client.GetAsync($"/v1/roles-permissions/{dto.Id}");
         Assert.Equal(HttpStatusCode.OK, getOk.StatusCode);
 
-        await _client.DeleteAsync($"/roles-permissions/{dto.Id}");
-        var get404 = await _client.GetAsync($"/roles-permissions/{dto.Id}");
+        await _client.DeleteAsync($"/v1/roles-permissions/{dto.Id}");
+        var get404 = await _client.GetAsync($"/v1/roles-permissions/{dto.Id}");
         Assert.Equal(HttpStatusCode.NotFound, get404.StatusCode);
     }
 
@@ -196,13 +196,13 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var sysId = await CreateSystemAsync("SYS_RP_RS_ACT");
         var typeId = await CreatePermissionTypeAsync("PT_RP_RS_ACT");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
-        var create = await _client.PostAsJsonAsync("/roles-permissions",
+        var create = await _client.PostAsJsonAsync("/v1/roles-permissions",
             RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RolePermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         var patch = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Patch,
-            $"/roles-permissions/{dto.Id}/restore"));
+            $"/v1/roles-permissions/{dto.Id}/restore"));
         Assert.Equal(HttpStatusCode.NotFound, patch.StatusCode);
     }
 
@@ -213,21 +213,21 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var sysId = await CreateSystemAsync("SYS_RP_RS_OK");
         var typeId = await CreatePermissionTypeAsync("PT_RP_RS_OK");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
-        var create = await _client.PostAsJsonAsync("/roles-permissions",
+        var create = await _client.PostAsJsonAsync("/v1/roles-permissions",
             RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RolePermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        await _client.DeleteAsync($"/roles-permissions/{dto.Id}");
+        await _client.DeleteAsync($"/v1/roles-permissions/{dto.Id}");
 
-        var get404 = await _client.GetAsync($"/roles-permissions/{dto.Id}");
+        var get404 = await _client.GetAsync($"/v1/roles-permissions/{dto.Id}");
         Assert.Equal(HttpStatusCode.NotFound, get404.StatusCode);
 
         var patch = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Patch,
-            $"/roles-permissions/{dto.Id}/restore"));
+            $"/v1/roles-permissions/{dto.Id}/restore"));
         Assert.Equal(HttpStatusCode.OK, patch.StatusCode);
 
-        var getOk = await _client.GetAsync($"/roles-permissions/{dto.Id}");
+        var getOk = await _client.GetAsync($"/v1/roles-permissions/{dto.Id}");
         Assert.Equal(HttpStatusCode.OK, getOk.StatusCode);
         var restored = await getOk.Content.ReadFromJsonAsync<RolePermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(restored);
@@ -241,16 +241,16 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var sysId = await CreateSystemAsync("SYS_RP_RS_BAD_R");
         var typeId = await CreatePermissionTypeAsync("PT_RP_RS_BAD_R");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
-        var create = await _client.PostAsJsonAsync("/roles-permissions",
+        var create = await _client.PostAsJsonAsync("/v1/roles-permissions",
             RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RolePermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        await _client.DeleteAsync($"/roles-permissions/{dto.Id}");
-        await _client.DeleteAsync($"/roles/{roleId}");
+        await _client.DeleteAsync($"/v1/roles-permissions/{dto.Id}");
+        await _client.DeleteAsync($"/v1/roles/{roleId}");
 
         var patch = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Patch,
-            $"/roles-permissions/{dto.Id}/restore"));
+            $"/v1/roles-permissions/{dto.Id}/restore"));
         Assert.Equal(HttpStatusCode.BadRequest, patch.StatusCode);
     }
 
@@ -263,12 +263,12 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var permA = await CreatePermissionAsync(sysId, typeId);
         var permB = await CreatePermissionAsync(sysId, typeId);
 
-        await _client.PostAsJsonAsync("/roles-permissions", RolePermissionBody(roleId, permA), TestApiClient.JsonOptions);
-        var b = await _client.PostAsJsonAsync("/roles-permissions", RolePermissionBody(roleId, permB), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/v1/roles-permissions", RolePermissionBody(roleId, permA), TestApiClient.JsonOptions);
+        var b = await _client.PostAsJsonAsync("/v1/roles-permissions", RolePermissionBody(roleId, permB), TestApiClient.JsonOptions);
         var dtoB = await b.Content.ReadFromJsonAsync<RolePermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dtoB);
 
-        var put = await _client.PutAsJsonAsync($"/roles-permissions/{dtoB.Id}",
+        var put = await _client.PutAsJsonAsync($"/v1/roles-permissions/{dtoB.Id}",
             RolePermissionBody(roleId, permA), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, put.StatusCode);
     }
@@ -280,12 +280,12 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var sysId = await CreateSystemAsync("SYS_RP_DEL");
         var typeId = await CreatePermissionTypeAsync("PT_RP_DEL");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
-        var create = await _client.PostAsJsonAsync("/roles-permissions",
+        var create = await _client.PostAsJsonAsync("/v1/roles-permissions",
             RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<RolePermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        var del1 = await _client.DeleteAsync($"/roles-permissions/{dto.Id}");
+        var del1 = await _client.DeleteAsync($"/v1/roles-permissions/{dto.Id}");
         Assert.Equal(HttpStatusCode.NoContent, del1.StatusCode);
 
         using (var scope = _factory.Services.CreateScope())
@@ -295,7 +295,7 @@ public class RolePermissionsApiTests : IAsyncLifetime
             Assert.NotNull(row.DeletedAt);
         }
 
-        var del2 = await _client.DeleteAsync($"/roles-permissions/{dto.Id}");
+        var del2 = await _client.DeleteAsync($"/v1/roles-permissions/{dto.Id}");
         Assert.Equal(HttpStatusCode.NotFound, del2.StatusCode);
     }
 
@@ -306,11 +306,11 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var sysId = await CreateSystemAsync("SYS_RP_HIDE");
         var typeId = await CreatePermissionTypeAsync("PT_RP_HIDE");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
-        await _client.PostAsJsonAsync("/roles-permissions", RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/v1/roles-permissions", RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
 
-        await _client.DeleteAsync($"/permissions/{permissionId}");
+        await _client.DeleteAsync($"/v1/permissions/{permissionId}");
 
-        var listResp = await _client.GetAsync("/roles-permissions");
+        var listResp = await _client.GetAsync("/v1/roles-permissions");
         listResp.EnsureSuccessStatusCode();
         var list = await listResp.Content.ReadFromJsonAsync<List<RolePermissionDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
@@ -324,11 +324,11 @@ public class RolePermissionsApiTests : IAsyncLifetime
         var sysId = await CreateSystemAsync("SYS_RP_HIDE_R");
         var typeId = await CreatePermissionTypeAsync("PT_RP_HIDE_R");
         var permissionId = await CreatePermissionAsync(sysId, typeId);
-        await _client.PostAsJsonAsync("/roles-permissions", RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/v1/roles-permissions", RolePermissionBody(roleId, permissionId), TestApiClient.JsonOptions);
 
-        await _client.DeleteAsync($"/roles/{roleId}");
+        await _client.DeleteAsync($"/v1/roles/{roleId}");
 
-        var listResp = await _client.GetAsync("/roles-permissions");
+        var listResp = await _client.GetAsync("/v1/roles-permissions");
         listResp.EnsureSuccessStatusCode();
         var list = await listResp.Content.ReadFromJsonAsync<List<RolePermissionDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);

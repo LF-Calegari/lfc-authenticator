@@ -23,7 +23,7 @@ internal static class TestApiClient
     internal static async Task<HttpClient> CreateAuthenticatedAsync(WebAppFactory factory)
     {
         var client = factory.CreateClient();
-        var login = await client.PostAsJsonAsync("/auth/login",
+        var login = await client.PostAsJsonAsync("/v1/auth/login",
             new { email = IntegrationBootstrapSeeder.Email, password = IntegrationBootstrapSeeder.Password },
             JsonOptions);
         login.EnsureSuccessStatusCode();
