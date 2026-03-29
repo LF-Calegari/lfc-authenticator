@@ -8,24 +8,21 @@ using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
-namespace AuthService.Controllers.Routes;
+namespace AuthService.Controllers.TokenTypes;
 
 [ApiController]
-[Route("systems/routes")]
-public class RoutesController : ControllerBase
+[Route("tokens/types")]
+public class TokenTypesController : ControllerBase
 {
     private readonly AppDbContext _db;
 
-    public RoutesController(AppDbContext db)
+    public TokenTypesController(AppDbContext db)
     {
         _db = db;
     }
 
-    public class CreateRouteRequest
+    public class CreateTokenTypeRequest
     {
-        [Required(ErrorMessage = "SystemId é obrigatório.")]
-        public Guid SystemId { get; set; }
-
         [Required(ErrorMessage = "Name é obrigatório.")]
         [MaxLength(80, ErrorMessage = "Name deve ter no máximo 80 caracteres.")]
         public string Name { get; set; } = string.Empty;
@@ -38,11 +35,8 @@ public class RoutesController : ControllerBase
         public string? Description { get; set; }
     }
 
-    public class UpdateRouteRequest
+    public class UpdateTokenTypeRequest
     {
-        [Required(ErrorMessage = "SystemId é obrigatório.")]
-        public Guid SystemId { get; set; }
-
         [Required(ErrorMessage = "Name é obrigatório.")]
         [MaxLength(80, ErrorMessage = "Name deve ter no máximo 80 caracteres.")]
         public string Name { get; set; } = string.Empty;
@@ -55,9 +49,8 @@ public class RoutesController : ControllerBase
         public string? Description { get; set; }
     }
 
-    public record RouteResponse(
+    public record TokenTypeResponse(
         Guid Id,
-        Guid SystemId,
         string Name,
         string Code,
         string? Description,
@@ -66,8 +59,8 @@ public class RoutesController : ControllerBase
         DateTime? DeletedAt
     );
 
-    private static RouteResponse ToResponse(AppRoute r) =>
-        new(r.Id, r.SystemId, r.Name, r.Code, r.Description, r.CreatedAt, r.UpdatedAt, r.DeletedAt);
+    private static TokenTypeResponse ToResponse(AppSystemTokenType e) =>
+        new(e.Id, e.Name, e.Code, e.Description, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
 
     private static void ValidateNormalizedFields(
         ModelStateDictionary modelState,
@@ -76,19 +69,19 @@ public class RoutesController : ControllerBase
         string? descriptionOrNull)
     {
         if (string.IsNullOrWhiteSpace(name))
-            modelState.AddModelError(nameof(CreateRouteRequest.Name), "Name é obrigatório e não pode ser apenas espaços.");
+            modelState.AddModelError(nameof(CreateTokenTypeRequest.Name), "Name é obrigatório e não pode ser apenas espaços.");
 
         if (string.IsNullOrWhiteSpace(code))
-            modelState.AddModelError(nameof(CreateRouteRequest.Code), "Code é obrigatório e não pode ser apenas espaços.");
+            modelState.AddModelError(nameof(CreateTokenTypeRequest.Code), "Code é obrigatório e não pode ser apenas espaços.");
 
         if (name.Length > 80)
-            modelState.AddModelError(nameof(CreateRouteRequest.Name), "Name deve ter no máximo 80 caracteres.");
+            modelState.AddModelError(nameof(CreateTokenTypeRequest.Name), "Name deve ter no máximo 80 caracteres.");
 
         if (code.Length > 50)
-            modelState.AddModelError(nameof(CreateRouteRequest.Code), "Code deve ter no máximo 50 caracteres.");
+            modelState.AddModelError(nameof(CreateTokenTypeRequest.Code), "Code deve ter no máximo 50 caracteres.");
 
         if (descriptionOrNull is { Length: > 500 })
-            modelState.AddModelError(nameof(CreateRouteRequest.Description), "Description deve ter no máximo 500 caracteres.");
+            modelState.AddModelError(nameof(CreateTokenTypeRequest.Description), "Description deve ter no máximo 500 caracteres.");
     }
 
     private static bool IsUniqueConstraintViolation(DbUpdateException ex)
@@ -105,48 +98,21 @@ public class RoutesController : ControllerBase
                || text.Contains("duplicate key", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsForeignKeyViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-        {
-            if (e is SqlException sql)
-                return sql.Number == 547;
-        }
-
-        return false;
-    }
-
     private static IEnumerable<string> GetExceptionMessages(Exception ex)
     {
         for (Exception? e = ex; e != null; e = e.InnerException)
             yield return e.Message;
     }
 
-    private static IActionResult CodeConflictResult() =>
-        new ConflictObjectResult(new { message = "Já existe uma route com este Code." });
-
-    private async Task<bool> SystemExistsAndActiveAsync(Guid systemId) =>
-        systemId != Guid.Empty && await _db.Systems.AnyAsync(s => s.Id == systemId);
-
-    /// <summary>Routes ativas cujo sistema pai ainda está ativo (leitura alinhada a POST/PUT).</summary>
-    private IQueryable<AppRoute> ActiveRoutesWithActiveSystem() =>
-        _db.Routes.Where(r => _db.Systems.Any(s => s.Id == r.SystemId));
-
-    private IActionResult InvalidSystemIdResult()
-    {
-        ModelState.AddModelError(nameof(CreateRouteRequest.SystemId), "SystemId inválido ou sistema inativo.");
-        return ValidationProblem(ModelState);
-    }
+    private static IActionResult UniqueConflictResult() =>
+        new ConflictObjectResult(new { message = "Já existe um token type com este Code." });
 
     [HttpPost]
-    [Authorize(Policy = PermissionPolicies.SystemsRoutesCreate)]
-    public async Task<IActionResult> Create([FromBody] CreateRouteRequest request)
+    [Authorize(Policy = PermissionPolicies.SystemTokensTypesCreate)]
+    public async Task<IActionResult> Create([FromBody] CreateTokenTypeRequest request)
     {
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
-
-        if (!await SystemExistsAndActiveAsync(request.SystemId))
-            return InvalidSystemIdResult();
 
         var name = request.Name.Trim();
         var code = request.Code.Trim();
@@ -156,13 +122,12 @@ public class RoutesController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        if (await _db.Routes.IgnoreQueryFilters().AnyAsync(r => r.Code == code))
-            return CodeConflictResult();
+        if (await _db.SystemTokenTypes.IgnoreQueryFilters().AnyAsync(p => p.Code == code))
+            return UniqueConflictResult();
 
         var now = DateTime.UtcNow;
-        var entity = new AppRoute
+        var entity = new AppSystemTokenType
         {
-            SystemId = request.SystemId,
             Name = name,
             Code = code,
             Description = description,
@@ -170,7 +135,7 @@ public class RoutesController : ControllerBase
             UpdatedAt = now,
             DeletedAt = null
         };
-        _db.Routes.Add(entity);
+        _db.SystemTokenTypes.Add(entity);
 
         try
         {
@@ -178,58 +143,46 @@ public class RoutesController : ControllerBase
         }
         catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
         {
-            return CodeConflictResult();
-        }
-        catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
-        {
-            return InvalidSystemIdResult();
+            return UniqueConflictResult();
         }
 
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
     }
 
     [HttpGet]
-    [Authorize(Policy = PermissionPolicies.SystemsRoutesRead)]
+    [Authorize(Policy = PermissionPolicies.SystemTokensTypesRead)]
     public async Task<IActionResult> GetAll()
     {
-        var list = await ActiveRoutesWithActiveSystem()
-            .OrderBy(r => r.CreatedAt)
-            .Select(r => new RouteResponse(
-                r.Id,
-                r.SystemId,
-                r.Name,
-                r.Code,
-                r.Description,
-                r.CreatedAt,
-                r.UpdatedAt,
-                r.DeletedAt))
+        var list = await _db.SystemTokenTypes
+            .OrderBy(p => p.CreatedAt)
+            .Select(p => new TokenTypeResponse(
+                p.Id,
+                p.Name,
+                p.Code,
+                p.Description,
+                p.CreatedAt,
+                p.UpdatedAt,
+                p.DeletedAt))
             .ToListAsync();
         return Ok(list);
     }
 
     [HttpGet("{id:guid}")]
-    [Authorize(Policy = PermissionPolicies.SystemsRoutesRead)]
+    [Authorize(Policy = PermissionPolicies.SystemTokensTypesRead)]
     public async Task<IActionResult> GetById(Guid id)
     {
-        var entity = await ActiveRoutesWithActiveSystem().FirstOrDefaultAsync(r => r.Id == id);
+        var entity = await _db.SystemTokenTypes.FirstOrDefaultAsync(p => p.Id == id);
         if (entity is null)
-            return NotFound(new { message = "Route não encontrada." });
+            return NotFound(new { message = "Token type não encontrado." });
         return Ok(ToResponse(entity));
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Policy = PermissionPolicies.SystemsRoutesUpdate)]
-    public async Task<IActionResult> UpdateById(Guid id, [FromBody] UpdateRouteRequest request)
+    [Authorize(Policy = PermissionPolicies.SystemTokensTypesUpdate)]
+    public async Task<IActionResult> UpdateById(Guid id, [FromBody] UpdateTokenTypeRequest request)
     {
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
-
-        var entity = await _db.Routes.FirstOrDefaultAsync(r => r.Id == id);
-        if (entity is null)
-            return NotFound(new { message = "Route não encontrada." });
-
-        if (!await SystemExistsAndActiveAsync(request.SystemId))
-            return InvalidSystemIdResult();
 
         var name = request.Name.Trim();
         var code = request.Code.Trim();
@@ -239,10 +192,13 @@ public class RoutesController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        if (await _db.Routes.IgnoreQueryFilters().AnyAsync(r => r.Id != id && r.Code == code))
-            return new ConflictObjectResult(new { message = "Já existe outra route com este Code." });
+        var entity = await _db.SystemTokenTypes.FirstOrDefaultAsync(p => p.Id == id);
+        if (entity is null)
+            return NotFound(new { message = "Token type não encontrado." });
 
-        entity.SystemId = request.SystemId;
+        if (await _db.SystemTokenTypes.IgnoreQueryFilters().AnyAsync(p => p.Id != id && p.Code == code))
+            return new ConflictObjectResult(new { message = "Já existe outro token type com este Code." });
+
         entity.Name = name;
         entity.Code = code;
         entity.Description = description;
@@ -254,23 +210,19 @@ public class RoutesController : ControllerBase
         }
         catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
         {
-            return new ConflictObjectResult(new { message = "Já existe outra route com este Code." });
-        }
-        catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
-        {
-            return InvalidSystemIdResult();
+            return new ConflictObjectResult(new { message = "Já existe outro token type com este Code." });
         }
 
         return Ok(ToResponse(entity));
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Policy = PermissionPolicies.SystemsRoutesDelete)]
+    [Authorize(Policy = PermissionPolicies.SystemTokensTypesDelete)]
     public async Task<IActionResult> DeleteById(Guid id)
     {
-        var entity = await _db.Routes.FirstOrDefaultAsync(r => r.Id == id);
+        var entity = await _db.SystemTokenTypes.FirstOrDefaultAsync(p => p.Id == id);
         if (entity is null)
-            return NotFound(new { message = "Route não encontrada." });
+            return NotFound(new { message = "Token type não encontrado." });
 
         entity.DeletedAt = DateTime.UtcNow;
         entity.UpdatedAt = DateTime.UtcNow;
@@ -279,23 +231,15 @@ public class RoutesController : ControllerBase
     }
 
     [HttpPost("{id:guid}/restore")]
-    [Authorize(Policy = PermissionPolicies.SystemsRoutesRestore)]
+    [Authorize(Policy = PermissionPolicies.SystemTokensTypesRestore)]
     public async Task<IActionResult> RestoreById(Guid id)
     {
-        var entity = await _db.Routes
+        var entity = await _db.SystemTokenTypes
             .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(r => r.Id == id && r.DeletedAt != null);
+            .FirstOrDefaultAsync(p => p.Id == id && p.DeletedAt != null);
 
         if (entity is null)
-            return NotFound(new { message = "Route não encontrada ou não está deletada." });
-
-        if (!await SystemExistsAndActiveAsync(entity.SystemId))
-        {
-            return BadRequest(new
-            {
-                message = "Não é possível restaurar a route: o sistema vinculado está inativo ou foi removido."
-            });
-        }
+            return NotFound(new { message = "Token type não encontrado ou não está deletado." });
 
         entity.DeletedAt = null;
         entity.UpdatedAt = DateTime.UtcNow;

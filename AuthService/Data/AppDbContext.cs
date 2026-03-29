@@ -12,6 +12,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AppPermissionType> PermissionTypes => Set<AppPermissionType>();
     public DbSet<AppRole> Roles => Set<AppRole>();
     public DbSet<AppPermission> Permissions => Set<AppPermission>();
+    public DbSet<AppSystemTokenType> SystemTokenTypes => Set<AppSystemTokenType>();
     public DbSet<AppUserRole> UserRoles => Set<AppUserRole>();
     public DbSet<AppUserPermission> UserPermissions => Set<AppUserPermission>();
     public DbSet<AppRolePermission> RolePermissions => Set<AppRolePermission>();

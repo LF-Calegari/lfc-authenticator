@@ -1,6 +1,8 @@
 using System.ComponentModel.DataAnnotations;
+using AuthService.Auth;
 using AuthService.Data;
 using AuthService.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Data.SqlClient;
@@ -97,6 +99,7 @@ public class RolesController : ControllerBase
         new ConflictObjectResult(new { message = "Já existe um role com este Code." });
 
     [HttpPost]
+    [Authorize(Policy = PermissionPolicies.RolesCreate)]
     public async Task<IActionResult> Create([FromBody] CreateRoleRequest request)
     {
         if (!ModelState.IsValid)
@@ -146,6 +149,7 @@ public class RolesController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = PermissionPolicies.RolesRead)]
     public async Task<IActionResult> GetAll()
     {
         var list = await _db.Roles
@@ -162,6 +166,7 @@ public class RolesController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.RolesRead)]
     public async Task<IActionResult> GetById(Guid id)
     {
         var entity = await _db.Roles.FirstOrDefaultAsync(r => r.Id == id);
@@ -171,6 +176,7 @@ public class RolesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.RolesUpdate)]
     public async Task<IActionResult> UpdateById(Guid id, [FromBody] UpdateRoleRequest request)
     {
         if (!ModelState.IsValid)
@@ -217,6 +223,7 @@ public class RolesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = PermissionPolicies.RolesDelete)]
     public async Task<IActionResult> DeleteById(Guid id)
     {
         var entity = await _db.Roles.FirstOrDefaultAsync(r => r.Id == id);
@@ -239,7 +246,8 @@ public class RolesController : ControllerBase
         return NoContent();
     }
 
-    [HttpPatch("{id:guid}/restore")]
+    [HttpPost("{id:guid}/restore")]
+    [Authorize(Policy = PermissionPolicies.RolesRestore)]
     public async Task<IActionResult> RestoreById(Guid id)
     {
         var entity = await _db.Roles

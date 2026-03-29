@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text.Json;
 using AuthService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,17 +12,10 @@ public class UsersRolesApiTests : IAsyncLifetime
     private WebAppFactory _factory = null!;
     private HttpClient _client = null!;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true
-    };
-
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
         _factory = new WebAppFactory();
-        _client = _factory.CreateClient();
-        return Task.CompletedTask;
+        _client = await TestApiClient.CreateAuthenticatedAsync(_factory);
     }
 
     public Task DisposeAsync()
@@ -40,9 +32,9 @@ public class UsersRolesApiTests : IAsyncLifetime
     private async Task<Guid> CreateUserAsync(string emailLocal)
     {
         var email = $"{emailLocal}@ur.test";
-        var r = await _client.PostAsJsonAsync("/users", UserCreateBody("U", email), JsonOptions);
+        var r = await _client.PostAsJsonAsync("/users", UserCreateBody("U", email), TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
-        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(JsonOptions);
+        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
         return dto.Id;
     }
@@ -50,9 +42,9 @@ public class UsersRolesApiTests : IAsyncLifetime
     private async Task<Guid> CreateRoleAsync(string code)
     {
         var r = await _client.PostAsJsonAsync("/roles",
-            new { name = "R", code }, JsonOptions);
+            new { name = "R", code }, TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
-        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(JsonOptions);
+        var dto = await r.Content.ReadFromJsonAsync<RefGuidDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
         return dto.Id;
     }
@@ -65,10 +57,10 @@ public class UsersRolesApiTests : IAsyncLifetime
         var userId = await CreateUserAsync("ur_create");
         var roleId = await CreateRoleAsync("ROLE_UR_CREATE");
 
-        var response = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), JsonOptions);
+        var response = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
-        var dto = await response.Content.ReadFromJsonAsync<UserRoleDto>(JsonOptions);
+        var dto = await response.Content.ReadFromJsonAsync<UserRoleDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
         Assert.True(dto.Id > 0);
         Assert.Equal(userId, dto.UserId);
@@ -84,9 +76,9 @@ public class UsersRolesApiTests : IAsyncLifetime
         var userId = await CreateUserAsync("ur_dup");
         var roleId = await CreateRoleAsync("ROLE_UR_DUP");
 
-        await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), JsonOptions);
+        await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), TestApiClient.JsonOptions);
 
-        var response = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), JsonOptions);
+        var response = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
 
@@ -96,7 +88,7 @@ public class UsersRolesApiTests : IAsyncLifetime
         var roleId = await CreateRoleAsync("ROLE_UR_INV_U");
 
         var response = await _client.PostAsJsonAsync("/users-roles",
-            UserRoleBody(Guid.NewGuid(), roleId), JsonOptions);
+            UserRoleBody(Guid.NewGuid(), roleId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -106,7 +98,7 @@ public class UsersRolesApiTests : IAsyncLifetime
         var userId = await CreateUserAsync("ur_inv_r");
 
         var response = await _client.PostAsJsonAsync("/users-roles",
-            UserRoleBody(userId, Guid.NewGuid()), JsonOptions);
+            UserRoleBody(userId, Guid.NewGuid()), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -116,8 +108,8 @@ public class UsersRolesApiTests : IAsyncLifetime
         var userId = await CreateUserAsync("ur_conc");
         var roleId = await CreateRoleAsync("ROLE_UR_CONC");
         var body = UserRoleBody(userId, roleId);
-        var t1 = _client.PostAsJsonAsync("/users-roles", body, JsonOptions);
-        var t2 = _client.PostAsJsonAsync("/users-roles", body, JsonOptions);
+        var t1 = _client.PostAsJsonAsync("/users-roles", body, TestApiClient.JsonOptions);
+        var t2 = _client.PostAsJsonAsync("/users-roles", body, TestApiClient.JsonOptions);
         await Task.WhenAll(t1, t2);
 
         var r1 = await t1;
@@ -134,15 +126,15 @@ public class UsersRolesApiTests : IAsyncLifetime
         var roleA = await CreateRoleAsync("ROLE_UR_LIST_A");
         var roleB = await CreateRoleAsync("ROLE_UR_LIST_B");
 
-        await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleA), JsonOptions);
-        var second = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleB), JsonOptions);
-        var secondDto = await second.Content.ReadFromJsonAsync<UserRoleDto>(JsonOptions);
+        await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleA), TestApiClient.JsonOptions);
+        var second = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleB), TestApiClient.JsonOptions);
+        var secondDto = await second.Content.ReadFromJsonAsync<UserRoleDto>(TestApiClient.JsonOptions);
         Assert.NotNull(secondDto);
         await _client.DeleteAsync($"/users-roles/{secondDto.Id}");
 
         var listResp = await _client.GetAsync("/users-roles");
         listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<UserRoleDto>>(JsonOptions);
+        var list = await listResp.Content.ReadFromJsonAsync<List<UserRoleDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
         Assert.All(list, x => Assert.Null(x.DeletedAt));
         Assert.Contains(list, x => x.RoleId == roleA);
@@ -154,8 +146,8 @@ public class UsersRolesApiTests : IAsyncLifetime
     {
         var userId = await CreateUserAsync("ur_get");
         var roleId = await CreateRoleAsync("ROLE_UR_GET");
-        var create = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), JsonOptions);
-        var dto = await create.Content.ReadFromJsonAsync<UserRoleDto>(JsonOptions);
+        var create = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserRoleDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         var getOk = await _client.GetAsync($"/users-roles/{dto.Id}");
@@ -171,8 +163,8 @@ public class UsersRolesApiTests : IAsyncLifetime
     {
         var userId = await CreateUserAsync("ur_rs_act");
         var roleId = await CreateRoleAsync("ROLE_UR_RS_ACT");
-        var create = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), JsonOptions);
-        var dto = await create.Content.ReadFromJsonAsync<UserRoleDto>(JsonOptions);
+        var create = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserRoleDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         var patch = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Patch, $"/users-roles/{dto.Id}/restore"));
@@ -184,8 +176,8 @@ public class UsersRolesApiTests : IAsyncLifetime
     {
         var userId = await CreateUserAsync("ur_rs_ok");
         var roleId = await CreateRoleAsync("ROLE_UR_RS_OK");
-        var create = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), JsonOptions);
-        var dto = await create.Content.ReadFromJsonAsync<UserRoleDto>(JsonOptions);
+        var create = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserRoleDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         await _client.DeleteAsync($"/users-roles/{dto.Id}");
@@ -198,7 +190,7 @@ public class UsersRolesApiTests : IAsyncLifetime
 
         var getOk = await _client.GetAsync($"/users-roles/{dto.Id}");
         Assert.Equal(HttpStatusCode.OK, getOk.StatusCode);
-        var restored = await getOk.Content.ReadFromJsonAsync<UserRoleDto>(JsonOptions);
+        var restored = await getOk.Content.ReadFromJsonAsync<UserRoleDto>(TestApiClient.JsonOptions);
         Assert.NotNull(restored);
         Assert.Null(restored.DeletedAt);
     }
@@ -208,8 +200,8 @@ public class UsersRolesApiTests : IAsyncLifetime
     {
         var userId = await CreateUserAsync("ur_rs_bad_u");
         var roleId = await CreateRoleAsync("ROLE_UR_RS_BAD_U");
-        var create = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), JsonOptions);
-        var dto = await create.Content.ReadFromJsonAsync<UserRoleDto>(JsonOptions);
+        var create = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserRoleDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         await _client.DeleteAsync($"/users-roles/{dto.Id}");
@@ -226,12 +218,12 @@ public class UsersRolesApiTests : IAsyncLifetime
         var roleA = await CreateRoleAsync("ROLE_UR_PUT_A");
         var roleB = await CreateRoleAsync("ROLE_UR_PUT_B");
 
-        await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleA), JsonOptions);
-        var b = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleB), JsonOptions);
-        var dtoB = await b.Content.ReadFromJsonAsync<UserRoleDto>(JsonOptions);
+        await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleA), TestApiClient.JsonOptions);
+        var b = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleB), TestApiClient.JsonOptions);
+        var dtoB = await b.Content.ReadFromJsonAsync<UserRoleDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dtoB);
 
-        var put = await _client.PutAsJsonAsync($"/users-roles/{dtoB.Id}", UserRoleBody(userId, roleA), JsonOptions);
+        var put = await _client.PutAsJsonAsync($"/users-roles/{dtoB.Id}", UserRoleBody(userId, roleA), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, put.StatusCode);
     }
 
@@ -240,8 +232,8 @@ public class UsersRolesApiTests : IAsyncLifetime
     {
         var userId = await CreateUserAsync("ur_del");
         var roleId = await CreateRoleAsync("ROLE_UR_DEL");
-        var create = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), JsonOptions);
-        var dto = await create.Content.ReadFromJsonAsync<UserRoleDto>(JsonOptions);
+        var create = await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserRoleDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         var del1 = await _client.DeleteAsync($"/users-roles/{dto.Id}");
@@ -263,13 +255,13 @@ public class UsersRolesApiTests : IAsyncLifetime
     {
         var userId = await CreateUserAsync("ur_hide_r");
         var roleId = await CreateRoleAsync("ROLE_UR_HIDE_R");
-        await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), JsonOptions);
+        await _client.PostAsJsonAsync("/users-roles", UserRoleBody(userId, roleId), TestApiClient.JsonOptions);
 
         await _client.DeleteAsync($"/roles/{roleId}");
 
         var listResp = await _client.GetAsync("/users-roles");
         listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<UserRoleDto>>(JsonOptions);
+        var list = await listResp.Content.ReadFromJsonAsync<List<UserRoleDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
         Assert.DoesNotContain(list, x => x.RoleId == roleId);
     }

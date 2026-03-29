@@ -52,27 +52,6 @@ public class AuthController : ControllerBase
     private static AuthUserResponse ToAuthUser(UserEntity u) =>
         new(u.Id, u.Name, u.Email, u.Identity, u.Active, u.CreatedAt, u.UpdatedAt);
 
-    private async Task<IReadOnlyList<Guid>> GetEffectivePermissionIdsAsync(Guid userId)
-    {
-        var direct = await _db.UserPermissions
-            .AsNoTracking()
-            .Where(up => up.UserId == userId)
-            .Select(up => up.PermissionId)
-            .ToListAsync();
-
-        var viaRoles = await _db.UserRoles
-            .AsNoTracking()
-            .Where(ur => ur.UserId == userId)
-            .Join(
-                _db.RolePermissions.AsNoTracking(),
-                ur => ur.RoleId,
-                rp => rp.RoleId,
-                (_, rp) => rp.PermissionId)
-            .ToListAsync();
-
-        return direct.Concat(viaRoles).Distinct().OrderBy(x => x).ToList();
-    }
-
     [HttpPost("login")]
     [AllowAnonymous]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
@@ -115,7 +94,9 @@ public class AuthController : ControllerBase
         if (user is null)
             return Unauthorized(new { message = "Usuário não encontrado." });
 
-        var permissionIds = await GetEffectivePermissionIdsAsync(userId);
+        var permissionIds = (await EffectivePermissionIds.GetForUserAsync(_db, userId))
+            .OrderBy(x => x)
+            .ToList();
         return Ok(new VerifyTokenResponse(ToAuthUser(user), permissionIds));
     }
 
