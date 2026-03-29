@@ -28,7 +28,7 @@ O AuthService concentra a gestão de permissões e padroniza como perfis, usuár
 
 ### Implementado hoje
 
-- CRUD com *soft delete* e restore para **`/systems`**, **`/users`** e **`/routes`**.
+- CRUD com *soft delete* e restore para **`/systems`**, **`/users`**, **`/routes`** e **`/permission-types`**.
 - **`/routes`** está vinculada a **sistema ativo** (`systemId`); leituras e restore respeitam o sistema pai não deletado.
 - Testes de integração com SQL Server real (criação e descarte de banco por execução).
 
@@ -118,11 +118,24 @@ Nos **`GET`**, só aparecem routes cujo **sistema pai** ainda está ativo; se o 
 | `DELETE` | `/routes/{id}` | *Soft delete*. |
 | `PATCH` | `/routes/{id}/restore` | Restaura route deletada (sistema ativo). |
 
+### Permission types (`/permission-types`)
+
+Mesmo padrão de *soft delete* e **404** para deletados que **`/systems`**. `Code` é **único globalmente**. Corpo: `name`, `code`, `description` (opcional).
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/permission-types` | Cria registro. |
+| `GET` | `/permission-types` | Lista apenas ativos. |
+| `GET` | `/permission-types/{id}` | Detalhe (ativo). |
+| `PUT` | `/permission-types/{id}` | Atualização completa. |
+| `DELETE` | `/permission-types/{id}` | *Soft delete*. |
+| `PATCH` | `/permission-types/{id}/restore` | Restaura registro deletado. |
+
 Em ambiente **Development**, a especificação OpenAPI fica em **`/openapi/v1.json`**.
 
 ## Testes de integração
 
-A suite usa **SQL Server real**. Cada execução cria um banco dedicado (`auth_svc_it_<guid>`), aplica **migrations** e faz **DROP DATABASE** ao terminar (adequado para rodar testes em paralelo). Há cobertura para **`/systems`**, **`/users`** e **`/routes`**.
+A suite usa **SQL Server real**. Cada execução cria um banco dedicado (`auth_svc_it_<guid>`), aplica **migrations** e faz **DROP DATABASE** ao terminar (adequado para rodar testes em paralelo). Há cobertura para **`/systems`**, **`/users`**, **`/routes`** e **`/permission-types`**.
 
 Defina a connection string **sem** `Database` / `Initial Catalog`:
 
