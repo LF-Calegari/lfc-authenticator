@@ -53,6 +53,25 @@ public class AuthApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Login_AfterUserCreate_StoredPassword_IsHashedNotPlaintext()
+    {
+        const string plain = "SenhaSegura1!";
+        await _admin.PostAsJsonAsync("/v1/users",
+            new { name = "Hash Check", email = "hash.check@example.com", password = plain, identity = 1, active = true },
+            TestApiClient.JsonOptions);
+
+        var login = await _anon.PostAsJsonAsync("/v1/auth/login",
+            LoginBody("hash.check@example.com", plain), TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.Users.AsNoTracking().FirstAsync(u => u.Email == "hash.check@example.com");
+        Assert.NotEqual(plain, row.Password);
+        Assert.True(row.Password.Length > 80, "Esperado hash PBKDF2 na coluna Password.");
+    }
+
+    [Fact]
     public async Task Login_ValidCredentials_ReturnsToken()
     {
         await _admin.PostAsJsonAsync("/v1/users",

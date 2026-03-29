@@ -1,4 +1,5 @@
 using AuthService.Models;
+using AuthService.Security;
 using Microsoft.EntityFrameworkCore;
 
 namespace AuthService.Data;
@@ -24,7 +25,7 @@ public static class IntegrationBootstrapSeeder
             {
                 Name = "Integration Bootstrap",
                 Email = normalizedEmail,
-                Password = Password,
+                Password = UserPasswordHasher.HashPlainPassword(Password),
                 Identity = 0,
                 Active = true,
                 TokenVersion = 0,
@@ -38,6 +39,13 @@ public static class IntegrationBootstrapSeeder
         else
         {
             user = existing;
+            var (_, newHash) = UserPasswordHasher.Verify(user, Password);
+            if (newHash is not null)
+            {
+                user.Password = newHash;
+                user.UpdatedAt = utc;
+                await db.SaveChangesAsync(cancellationToken);
+            }
         }
 
         var allPermissionIds = await db.Permissions.AsNoTracking().Select(p => p.Id).ToListAsync(cancellationToken);

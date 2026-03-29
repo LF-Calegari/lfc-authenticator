@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using AuthService.Auth;
 using AuthService.Data;
+using AuthService.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -179,7 +180,7 @@ public class UsersController : ControllerBase
         {
             Name = name,
             Email = email,
-            Password = password,
+            Password = UserPasswordHasher.HashPlainPassword(password),
             Identity = request.Identity,
             Active = request.Active,
             CreatedAt = now,
@@ -293,7 +294,7 @@ public class UsersController : ControllerBase
         if (user is null)
             return NotFound(new { message = "Usuário não encontrado." });
 
-        user.Password = password;
+        user.Password = UserPasswordHasher.HashPlainPassword(password);
         user.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return Ok(ToResponse(user));
