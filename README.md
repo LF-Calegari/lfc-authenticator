@@ -162,7 +162,7 @@ AuthService/
 
 ### Endpoints somente autenticados (sem política `perm:`)
 
-Os controllers **`/v1/users-roles`**, **`/v1/users-permissions`** e **`/v1/roles-permissions`** exigem **apenas** usuário autenticado (JWT válido), sem checagem de permissão nomeada adicional.
+O controller **`/v1/roles-permissions`** exige **apenas** usuário autenticado (JWT válido), sem checagem de permissão nomeada adicional.
 
 ### Anonimato permitido
 
@@ -250,6 +250,8 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 
 **POST:** `name`, `email`, `password`, `identity`, `active` (opcional, padrão `true`). **PUT** usuário: `name`, `email`, `identity`, `active` (sem senha). Email normalizado (ex.: minúsculas).
 
+**GET** `/v1/users/{id}` retorna também os vínculos ativos **`roles`** (lista com `id` inteiro, `userId`, `roleId`, auditoria e `deletedAt`) e **`permissions`** (lista com `id` GUID, `userId`, `permissionId`, auditoria e `deletedAt`). Listagens **`GET /v1/users`** e respostas de criação/atualização devolvem `roles` e `permissions` como arrays vazios.
+
 ### Tipos de token — `/v1/tokens/types`
 
 | Método | Endpoint | Auth | Permissão |
@@ -297,30 +299,6 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 | `POST` | `/v1/permissions/{id}/restore` | Sim | `perm:Permissions.Restore` |
 
 Corpo: `systemId`, `permissionTypeId`, `description` (opcional). Restauração exige referências ativas coerentes com as regras do controller.
-
-### Usuário ↔ papel — `/v1/users-roles`
-
-`{id}` é **`int`** (identity). Par `(userId, roleId)` único (inclui registros deletados logicamente, conforme regras do banco).
-
-| Método | Endpoint | Auth | Permissão |
-|--------|----------|------|-----------|
-| `POST` | `/v1/users-roles` | Sim | — |
-| `GET` | `/v1/users-roles` | Sim | — |
-| `GET` | `/v1/users-roles/{id}` | Sim | — |
-| `PUT` | `/v1/users-roles/{id}` | Sim | — |
-| `DELETE` | `/v1/users-roles/{id}` | Sim | — |
-| `PATCH` | `/v1/users-roles/{id}/restore` | Sim | — |
-
-### Usuário ↔ permissão — `/v1/users-permissions`
-
-| Método | Endpoint | Auth | Permissão |
-|--------|----------|------|-----------|
-| `POST` | `/v1/users-permissions` | Sim | — |
-| `GET` | `/v1/users-permissions` | Sim | — |
-| `GET` | `/v1/users-permissions/{id}` | Sim | — |
-| `PUT` | `/v1/users-permissions/{id}` | Sim | — |
-| `DELETE` | `/v1/users-permissions/{id}` | Sim | — |
-| `PATCH` | `/v1/users-permissions/{id}/restore` | Sim | — |
 
 ### Papel ↔ permissão — `/v1/roles-permissions`
 
@@ -460,7 +438,7 @@ Sem essa variável, o `WebApplicationFactory` falha na construção — comporta
 | Falha ao conectar ao SQL | Senha/porta/host; `TrustServerCertificate=True` em dev; firewall. |
 | `dotnet ef` não encontrado | `dotnet tool install --global dotnet-ef` ou `dotnet tool restore` no projeto. |
 | 401 em todas as rotas protegidas | Cabeçalho `Authorization: Bearer`; relógio do cliente; token expirado ou após **logout**. |
-| 403 em recurso específico | Usuário não possui GUID da permissão correspondente à política `perm:…` (vincular via papéis ou `users-permissions`). |
+| 403 em recurso específico | Usuário não possui GUID da permissão correspondente à política `perm:…` (vincular via papéis, permissões diretas no usuário ou processos de dados; consulte **`GET /v1/users/{id}`** para os vínculos). |
 | 404 em entidade “que existe” | Pode estar *soft-deleted*; usar rota de **restore** quando aplicável. |
 | Docker `app` não sobe | Aguardar healthcheck do `db`; conferir `MSSQL_SA_PASSWORD` no `.env`. |
 | Caminho 404 na API | Prefixo **`/v1`** obrigatório em todos os controllers mapeados. |
