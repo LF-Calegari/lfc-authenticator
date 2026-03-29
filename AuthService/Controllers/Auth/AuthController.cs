@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using AuthService.Auth;
 using AuthService.Data;
+using AuthService.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -66,10 +67,24 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Credenciais inválidas." });
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
-        if (user is null || user.Password != password)
+        if (user is null)
         {
             _logger.LogWarning("Tentativa de login falhou para o email {Email}.", email);
             return Unauthorized(new { message = "Credenciais inválidas." });
+        }
+
+        var (passwordOk, newStoredPassword) = UserPasswordHasher.Verify(user, password);
+        if (!passwordOk)
+        {
+            _logger.LogWarning("Tentativa de login falhou para o email {Email}.", email);
+            return Unauthorized(new { message = "Credenciais inválidas." });
+        }
+
+        if (newStoredPassword is not null)
+        {
+            user.Password = newStoredPassword;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
         }
 
         if (!user.Active)

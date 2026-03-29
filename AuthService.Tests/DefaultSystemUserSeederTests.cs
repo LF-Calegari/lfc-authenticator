@@ -26,6 +26,17 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DefaultUser_StoredPassword_IsNotPlaintext()
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var normalized = DefaultSystemUserSeeder.Email.Trim().ToLowerInvariant();
+        var row = await db.Users.AsNoTracking().IgnoreQueryFilters().FirstAsync(u => u.Email == normalized);
+        Assert.NotEqual(DefaultSystemUserSeeder.Password, row.Password);
+        Assert.True(row.Password.Length > 80, "Esperado hash PBKDF2 na coluna Password, não texto plano.");
+    }
+
+    [Fact]
     public async Task DefaultUser_ExistsAfterBootstrap_CanLoginWithSeededCredentials()
     {
         var response = await _client.PostAsJsonAsync("/v1/auth/login",

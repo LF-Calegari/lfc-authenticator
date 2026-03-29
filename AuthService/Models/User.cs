@@ -21,8 +21,9 @@ public class User : ISoftDelete
     [EmailAddress]
     public string Email { get; set; } = string.Empty;
 
+    /// <summary>Hash PBKDF2 (ASP.NET Identity). Não armazenar texto plano.</summary>
     [Required]
-    [StringLength(60)]
+    [StringLength(500)]
     public string Password { get; set; } = string.Empty;
 
     public int Identity { get; set; }
