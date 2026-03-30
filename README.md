@@ -2,6 +2,8 @@
 
 API REST em **ASP.NET Core** para **autenticação JWT**, **autorização baseada em permissões** persistidas em **SQL Server** e **cadastros** correlatos (sistemas, rotas, tipos de permissão, permissões, papéis e vínculos). O serviço centraliza o catálogo oficial de permissões e padroniza o que cada usuário pode fazer nos demais sistemas do ecossistema.
 
+> Atualização de contrato (issue #36): as rotas oficiais públicas são prefixadas por `/api/v1`.
+
 ---
 
 ## Índice

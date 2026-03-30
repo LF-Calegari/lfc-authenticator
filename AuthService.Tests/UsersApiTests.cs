@@ -222,7 +222,7 @@ public class UsersApiTests : IAsyncLifetime
             new { password = "NovaSenhaSegura2!" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.OK, putPwd.StatusCode);
 
-        var anon = _factory.CreateClient();
+        var anon = _factory.CreateApiClient();
         var oldLogin = await anon.PostAsJsonAsync("/v1/auth/login",
             new { email = "pwd.change@example.com", password = "SenhaSegura1!" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Unauthorized, oldLogin.StatusCode);

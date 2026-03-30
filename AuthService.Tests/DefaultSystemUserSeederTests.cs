@@ -15,7 +15,7 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _factory = new WebAppFactory();
-        _client = _factory.CreateClient();
+        _client = _factory.CreateApiClient();
     }
 
     public Task DisposeAsync()
@@ -39,7 +39,7 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     [Fact]
     public async Task DefaultUser_ExistsAfterBootstrap_CanLoginWithSeededCredentials()
     {
-        var response = await _client.PostAsJsonAsync("/v1/auth/login",
+        var response = await _client.PostAsJsonAsync("/api/v1/auth/login",
             new { email = DefaultSystemUserSeeder.Email, password = DefaultSystemUserSeeder.Password },
             TestApiClient.JsonOptions);
 

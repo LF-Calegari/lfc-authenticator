@@ -300,6 +300,6 @@ public class RoutesController : ControllerBase
         entity.DeletedAt = null;
         entity.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
-        return Ok(ToResponse(entity));
+        return Ok(new { message = "Route restaurada com sucesso." });
     }
 }

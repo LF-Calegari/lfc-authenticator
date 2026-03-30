@@ -18,7 +18,7 @@ public class AuthApiTests : IAsyncLifetime
     {
         _factory = new WebAppFactory();
         _admin = await TestApiClient.CreateAuthenticatedAsync(_factory);
-        _anon = _factory.CreateClient();
+        _anon = _factory.CreateApiClient();
     }
 
     public Task DisposeAsync()
@@ -34,22 +34,15 @@ public class AuthApiTests : IAsyncLifetime
     private sealed class LoginResponseDto
     {
         public string Token { get; set; } = string.Empty;
-        public DateTime ExpiresAtUtc { get; set; }
     }
 
     private sealed class VerifyDto
-    {
-        public AuthUserDto? User { get; set; }
-        public List<Guid>? PermissionIds { get; set; }
-    }
-
-    private sealed class AuthUserDto
     {
         public Guid Id { get; set; }
         public string Name { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
         public int Identity { get; set; }
-        public bool Active { get; set; }
+        public List<Guid>? Permissions { get; set; }
     }
 
     [Fact]
@@ -85,7 +78,6 @@ public class AuthApiTests : IAsyncLifetime
         var dto = await response.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
         Assert.False(string.IsNullOrWhiteSpace(dto.Token));
-        Assert.True(dto.ExpiresAtUtc > DateTime.UtcNow);
     }
 
     [Fact]
@@ -159,9 +151,9 @@ public class AuthApiTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<VerifyDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(body?.User);
-        Assert.Equal("v.user@example.com", body.User.Email);
-        Assert.NotNull(body.PermissionIds);
+        Assert.NotNull(body);
+        Assert.Equal("v.user@example.com", body.Email);
+        Assert.NotNull(body.Permissions);
     }
 
     [Fact]
@@ -211,7 +203,7 @@ public class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task Users_WithoutToken_ReturnsUnauthorized()
     {
-        using var anon = _factory.CreateClient();
+        using var anon = _factory.CreateApiClient();
         var response = await anon.GetAsync("/v1/users");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }

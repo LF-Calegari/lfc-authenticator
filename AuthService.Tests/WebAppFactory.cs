@@ -66,6 +66,19 @@ public class WebAppFactory : WebApplicationFactory<Program>
         return host;
     }
 
+    public HttpClient CreateApiClient()
+    {
+        var handler = new LegacyV1PrefixHandler
+        {
+            InnerHandler = Server.CreateHandler()
+        };
+
+        return new HttpClient(handler)
+        {
+            BaseAddress = Server.BaseAddress
+        };
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing && !_disposed)
@@ -91,5 +104,30 @@ public class WebAppFactory : WebApplicationFactory<Program>
         }
 
         base.Dispose(disposing);
+    }
+
+    private sealed class LegacyV1PrefixHandler : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri is { } uri)
+            {
+                var path = uri.IsAbsoluteUri ? uri.AbsolutePath : uri.OriginalString;
+                if (path.Equals("/v1", StringComparison.OrdinalIgnoreCase))
+                {
+                    request.RequestUri = uri.IsAbsoluteUri
+                        ? new UriBuilder(uri) { Path = "/api/v1" }.Uri
+                        : new Uri("/api/v1", UriKind.Relative);
+                }
+                else if (path.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase))
+                {
+                    request.RequestUri = uri.IsAbsoluteUri
+                        ? new UriBuilder(uri) { Path = "/api" + path }.Uri
+                        : new Uri("/api" + path, UriKind.Relative);
+                }
+            }
+
+            return base.SendAsync(request, cancellationToken);
+        }
     }
 }
