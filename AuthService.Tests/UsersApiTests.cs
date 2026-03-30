@@ -39,7 +39,7 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task Create_Post_ReturnsCreated_WithUtcTimestamps_AndNullDeletedAt()
     {
-        var response = await _client.PostAsJsonAsync("/v1/users",
+        var response = await _client.PostAsJsonAsync("/api/v1/users",
             UserCreateBody("Usuário X", "usuario.x@example.com"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
@@ -57,18 +57,18 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task Create_DuplicateEmail_ReturnsConflict()
     {
-        await _client.PostAsJsonAsync("/v1/users", UserCreateBody("A", "dup@example.com"), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("A", "dup@example.com"), TestApiClient.JsonOptions);
 
-        var response = await _client.PostAsJsonAsync("/v1/users", UserCreateBody("B", "dup@example.com"), TestApiClient.JsonOptions);
+        var response = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("B", "dup@example.com"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
 
     [Fact]
     public async Task Create_DuplicateEmail_NormalizesWhitespaceAndCase_ReturnsConflict()
     {
-        await _client.PostAsJsonAsync("/v1/users", UserCreateBody("A", "same@example.com"), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("A", "same@example.com"), TestApiClient.JsonOptions);
 
-        var response = await _client.PostAsJsonAsync("/v1/users",
+        var response = await _client.PostAsJsonAsync("/api/v1/users",
             UserCreateBody("B", "  SAME@EXAMPLE.COM  "), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
@@ -76,12 +76,12 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task Update_DuplicateEmail_NormalizesCase_ReturnsConflict()
     {
-        await _client.PostAsJsonAsync("/v1/users", UserCreateBody("A", "a_mail@example.com"), TestApiClient.JsonOptions);
-        var b = await _client.PostAsJsonAsync("/v1/users", UserCreateBody("B", "b_mail@example.com"), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("A", "a_mail@example.com"), TestApiClient.JsonOptions);
+        var b = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("B", "b_mail@example.com"), TestApiClient.JsonOptions);
         var dtoB = await b.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dtoB);
 
-        var put = await _client.PutAsJsonAsync($"/v1/users/{dtoB.Id}",
+        var put = await _client.PutAsJsonAsync($"/api/v1/users/{dtoB.Id}",
             UserUpdateBody("B2", "A_MAIL@EXAMPLE.COM"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, put.StatusCode);
     }
@@ -92,8 +92,8 @@ public class UsersApiTests : IAsyncLifetime
         const string email = "concurrent@example.com";
         var bodyA = UserCreateBody("A", email);
         var bodyB = UserCreateBody("B", email);
-        var t1 = _client.PostAsJsonAsync("/v1/users", bodyA, TestApiClient.JsonOptions);
-        var t2 = _client.PostAsJsonAsync("/v1/users", bodyB, TestApiClient.JsonOptions);
+        var t1 = _client.PostAsJsonAsync("/api/v1/users", bodyA, TestApiClient.JsonOptions);
+        var t2 = _client.PostAsJsonAsync("/api/v1/users", bodyB, TestApiClient.JsonOptions);
         await Task.WhenAll(t1, t2);
 
         var r1 = await t1;
@@ -106,7 +106,7 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task Create_WhitespaceOnlyName_ReturnsBadRequest()
     {
-        var response = await _client.PostAsJsonAsync("/v1/users",
+        var response = await _client.PostAsJsonAsync("/api/v1/users",
             UserCreateBody("   ", "n1@example.com"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -114,7 +114,7 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task Create_WhitespaceOnlyEmail_ReturnsBadRequest()
     {
-        var response = await _client.PostAsJsonAsync("/v1/users",
+        var response = await _client.PostAsJsonAsync("/api/v1/users",
             UserCreateBody("Nome", "\t  "), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -122,7 +122,7 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task Create_WhitespaceOnlyPassword_ReturnsBadRequest()
     {
-        var response = await _client.PostAsJsonAsync("/v1/users",
+        var response = await _client.PostAsJsonAsync("/api/v1/users",
             new { name = "N", email = "p1@example.com", password = "   ", identity = 1, active = true }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -130,11 +130,11 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task Put_WhitespaceOnlyName_ReturnsBadRequest()
     {
-        var create = await _client.PostAsJsonAsync("/v1/users", UserCreateBody("S", "w1@example.com"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("S", "w1@example.com"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        var put = await _client.PutAsJsonAsync($"/v1/users/{dto.Id}",
+        var put = await _client.PutAsJsonAsync($"/api/v1/users/{dto.Id}",
             UserUpdateBody("   ", "w1@example.com"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
     }
@@ -142,14 +142,14 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task GetAll_ReturnsOnlyActiveUsers()
     {
-        await _client.PostAsJsonAsync("/v1/users", UserCreateBody("Ativo", "ativo@example.com"), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("Ativo", "ativo@example.com"), TestApiClient.JsonOptions);
 
-        var other = await _client.PostAsJsonAsync("/v1/users", UserCreateBody("Outro", "outro@example.com"), TestApiClient.JsonOptions);
+        var other = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("Outro", "outro@example.com"), TestApiClient.JsonOptions);
         var toDelete = await other.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
         Assert.NotNull(toDelete);
-        await _client.DeleteAsync($"/v1/users/{toDelete.Id}");
+        await _client.DeleteAsync($"/api/v1/users/{toDelete.Id}");
 
-        var listResp = await _client.GetAsync("/v1/users");
+        var listResp = await _client.GetAsync("/api/v1/users");
         listResp.EnsureSuccessStatusCode();
         var list = await listResp.Content.ReadFromJsonAsync<List<UserDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
@@ -161,31 +161,31 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task GetById_Active_ReturnsOk_Deleted_Returns404()
     {
-        var create = await _client.PostAsJsonAsync("/v1/users", UserCreateBody("S", "g1@example.com"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("S", "g1@example.com"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        var getOk = await _client.GetAsync($"/v1/users/{dto.Id}");
+        var getOk = await _client.GetAsync($"/api/v1/users/{dto.Id}");
         Assert.Equal(HttpStatusCode.OK, getOk.StatusCode);
 
-        await _client.DeleteAsync($"/v1/users/{dto.Id}");
-        var get404 = await _client.GetAsync($"/v1/users/{dto.Id}");
+        await _client.DeleteAsync($"/api/v1/users/{dto.Id}");
+        var get404 = await _client.GetAsync($"/api/v1/users/{dto.Id}");
         Assert.Equal(HttpStatusCode.NotFound, get404.StatusCode);
     }
 
     [Fact]
     public async Task Update_Active_ReturnsOk_Deleted_Returns404()
     {
-        var create = await _client.PostAsJsonAsync("/v1/users", UserCreateBody("S", "u1@example.com"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("S", "u1@example.com"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        var putOk = await _client.PutAsJsonAsync($"/v1/users/{dto.Id}",
+        var putOk = await _client.PutAsJsonAsync($"/api/v1/users/{dto.Id}",
             UserUpdateBody("S2", "u1@example.com", identity: 2, active: false), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.OK, putOk.StatusCode);
 
-        await _client.DeleteAsync($"/v1/users/{dto.Id}");
-        var put404 = await _client.PutAsJsonAsync($"/v1/users/{dto.Id}",
+        await _client.DeleteAsync($"/api/v1/users/{dto.Id}");
+        var put404 = await _client.PutAsJsonAsync($"/api/v1/users/{dto.Id}",
             UserUpdateBody("S3", "u1@example.com"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.NotFound, put404.StatusCode);
     }
@@ -193,11 +193,11 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task Delete_SoftDelete_ThenDeleteAgain_Returns404()
     {
-        var create = await _client.PostAsJsonAsync("/v1/users", UserCreateBody("S", "d1@example.com"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("S", "d1@example.com"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        var del1 = await _client.DeleteAsync($"/v1/users/{dto.Id}");
+        var del1 = await _client.DeleteAsync($"/api/v1/users/{dto.Id}");
         Assert.Equal(HttpStatusCode.NoContent, del1.StatusCode);
 
         using (var scope = _factory.Services.CreateScope())
@@ -207,27 +207,27 @@ public class UsersApiTests : IAsyncLifetime
             Assert.NotNull(row.DeletedAt);
         }
 
-        var del2 = await _client.DeleteAsync($"/v1/users/{dto.Id}");
+        var del2 = await _client.DeleteAsync($"/api/v1/users/{dto.Id}");
         Assert.Equal(HttpStatusCode.NotFound, del2.StatusCode);
     }
 
     [Fact]
     public async Task UpdatePassword_Put_ThenLoginWithNewPassword_ReturnsOk()
     {
-        var create = await _client.PostAsJsonAsync("/v1/users", UserCreateBody("P", "pwd.change@example.com"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("P", "pwd.change@example.com"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        var putPwd = await _client.PutAsJsonAsync($"/v1/users/{dto.Id}/password",
+        var putPwd = await _client.PutAsJsonAsync($"/api/v1/users/{dto.Id}/password",
             new { password = "NovaSenhaSegura2!" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.OK, putPwd.StatusCode);
 
         var anon = _factory.CreateApiClient();
-        var oldLogin = await anon.PostAsJsonAsync("/v1/auth/login",
+        var oldLogin = await anon.PostAsJsonAsync("/api/v1/auth/login",
             new { email = "pwd.change@example.com", password = "SenhaSegura1!" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Unauthorized, oldLogin.StatusCode);
 
-        var newLogin = await anon.PostAsJsonAsync("/v1/auth/login",
+        var newLogin = await anon.PostAsJsonAsync("/api/v1/auth/login",
             new { email = "pwd.change@example.com", password = "NovaSenhaSegura2!" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.OK, newLogin.StatusCode);
     }
@@ -235,25 +235,25 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task Restore_Deleted_ThenOperationsWorkAgain()
     {
-        var create = await _client.PostAsJsonAsync("/v1/users", UserCreateBody("S", "r1@example.com"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("S", "r1@example.com"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        await _client.DeleteAsync($"/v1/users/{dto.Id}");
+        await _client.DeleteAsync($"/api/v1/users/{dto.Id}");
 
-        var get404 = await _client.GetAsync($"/v1/users/{dto.Id}");
+        var get404 = await _client.GetAsync($"/api/v1/users/{dto.Id}");
         Assert.Equal(HttpStatusCode.NotFound, get404.StatusCode);
 
-        var restore = await _client.PostAsync($"/v1/users/{dto.Id}/restore", null);
+        var restore = await _client.PostAsync($"/api/v1/users/{dto.Id}/restore", null);
         Assert.Equal(HttpStatusCode.OK, restore.StatusCode);
 
-        var getOk = await _client.GetAsync($"/v1/users/{dto.Id}");
+        var getOk = await _client.GetAsync($"/api/v1/users/{dto.Id}");
         Assert.Equal(HttpStatusCode.OK, getOk.StatusCode);
         var restored = await getOk.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
         Assert.NotNull(restored);
         Assert.Null(restored.DeletedAt);
 
-        var listResp = await _client.GetAsync("/v1/users");
+        var listResp = await _client.GetAsync("/api/v1/users");
         listResp.EnsureSuccessStatusCode();
         var list = await listResp.Content.ReadFromJsonAsync<List<UserDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
@@ -263,13 +263,13 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task GetById_ReturnsRolesAndPermissions_WhenLinkedInDatabase()
     {
-        var create = await _client.PostAsJsonAsync("/v1/users",
+        var create = await _client.PostAsJsonAsync("/api/v1/users",
             UserCreateBody("Com vínculos", "user.links@example.com"), TestApiClient.JsonOptions);
         create.EnsureSuccessStatusCode();
         var created = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
         Assert.NotNull(created);
 
-        var roleResp = await _client.PostAsJsonAsync("/v1/roles",
+        var roleResp = await _client.PostAsJsonAsync("/api/v1/roles",
             new { name = "Papel teste vínculo", code = $"ut-user-detail-{Guid.NewGuid():N}" },
             TestApiClient.JsonOptions);
         roleResp.EnsureSuccessStatusCode();
@@ -302,7 +302,7 @@ public class UsersApiTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        var getResp = await _client.GetAsync($"/v1/users/{created.Id}");
+        var getResp = await _client.GetAsync($"/api/v1/users/{created.Id}");
         getResp.EnsureSuccessStatusCode();
         var detail = await getResp.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
         Assert.NotNull(detail);
@@ -327,7 +327,7 @@ public class UsersApiTests : IAsyncLifetime
                 .SingleAsync();
         }
 
-        var getResp = await _client.GetAsync($"/v1/users/{bootstrapId}");
+        var getResp = await _client.GetAsync($"/api/v1/users/{bootstrapId}");
         getResp.EnsureSuccessStatusCode();
         var detail = await getResp.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
         Assert.NotNull(detail);
@@ -338,8 +338,8 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task GetAll_ReturnsEmptyRolesAndPermissions_OnEachUser()
     {
-        await _client.PostAsJsonAsync("/v1/users", UserCreateBody("Lista", "list.empty@example.com"), TestApiClient.JsonOptions);
-        var listResp = await _client.GetAsync("/v1/users");
+        await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("Lista", "list.empty@example.com"), TestApiClient.JsonOptions);
+        var listResp = await _client.GetAsync("/api/v1/users");
         listResp.EnsureSuccessStatusCode();
         var list = await listResp.Content.ReadFromJsonAsync<List<UserDetailDto>>(TestApiClient.JsonOptions);
         Assert.NotNull(list);
@@ -351,7 +351,7 @@ public class UsersApiTests : IAsyncLifetime
     [Fact]
     public async Task GetById_UnknownUser_ReturnsNotFound()
     {
-        var response = await _client.GetAsync($"/v1/users/{Guid.NewGuid()}");
+        var response = await _client.GetAsync($"/api/v1/users/{Guid.NewGuid()}");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 

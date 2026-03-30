@@ -61,7 +61,7 @@ public class ApiVersioningAndDocsTests : IAsyncLifetime
             .ToArray();
 
         Assert.DoesNotContain("/api/v1/roles-permissions", paths);
-        Assert.DoesNotContain(paths, p => p.StartsWith("/v1", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(paths, p => p.StartsWith("/api/v1", StringComparison.OrdinalIgnoreCase));
 
         var expected = new[]
         {
