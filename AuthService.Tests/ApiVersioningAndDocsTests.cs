@@ -27,7 +27,7 @@ public class ApiVersioningAndDocsTests : IAsyncLifetime
     [Fact]
     public async Task Health_WithoutVersionPrefix_IsNotPublicApi()
     {
-        // FallbackPolicy exige JWT; rota sem /v1 não existe como endpoint versionado → desafio 401.
+        // FallbackPolicy exige JWT; rota sem /api/v1 não existe como endpoint versionado → desafio 401.
         var response = await _client.GetAsync("/health");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -61,7 +61,7 @@ public class ApiVersioningAndDocsTests : IAsyncLifetime
             .ToArray();
 
         Assert.DoesNotContain("/api/v1/roles-permissions", paths);
-        Assert.DoesNotContain(paths, p => p.StartsWith("/api/v1", StringComparison.OrdinalIgnoreCase));
+        Assert.All(paths, p => Assert.StartsWith("/api/v1", p, StringComparison.OrdinalIgnoreCase));
 
         var expected = new[]
         {

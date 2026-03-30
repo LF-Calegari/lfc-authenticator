@@ -15,7 +15,7 @@ API REST em **ASP.NET Core** para **autenticação JWT**, **autorização basead
 - [Fluxo de inicialização](#fluxo-de-inicialização-da-aplicação)
 - [Arquitetura em alto nível](#arquitetura-em-alto-nível)
 - [Autenticação e autorização](#autenticação-e-autorização)
-- [Versionamento da API (`/v1`)](#versionamento-da-api-v1)
+- [Versionamento da API (`/api/v1`)](#versionamento-da-api-v1)
 - [Documentação OpenAPI (Swagger)](#documentação-openapi-swagger)
 - [Referência de rotas](#referência-de-rotas)
 - [Exemplos de uso](#exemplos-de-uso)
@@ -89,7 +89,7 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 4. Na pasta `AuthService`: `dotnet run`  
    URLs padrão do perfil HTTP: **http://localhost:5052** (veja `Properties/launchSettings.json`).
 
-Todas as rotas da API REST ficam sob o prefixo **`/v1`** (ex.: `GET http://localhost:5052/v1/health`).
+Todas as rotas da API REST ficam sob o prefixo **`/api/v1`** (ex.: `GET http://localhost:5052/api/v1/health`).
 
 ---
 
@@ -117,7 +117,7 @@ export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 1. **`WebApplication.CreateBuilder`** — registra `AppDbContext` (SQL Server), opções JWT, serviços de autenticação/autorização customizados, controllers e Swagger.
 2. **Pipeline HTTP** — em ambientes diferentes de **Testing**, `UseHttpsRedirection`. **Swagger** e **Swagger UI** são registrados **antes** de autenticação/autorização, ficando **anônimos**.
 3. **`UseAuthentication`** / **`UseAuthorization`** — JWT *handler* valida cabeçalho `Authorization: Bearer …`, *claims* e coerência com o usuário no banco (`TokenVersion`, ativo).
-4. **`MapGroup("/v1").MapControllers()`** — todas as rotas de API ficam versionadas em `/v1`.
+4. **`MapGroup("/api/v1").MapControllers()`** — todas as rotas de API ficam versionadas em `/api/v1`.
 5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante sistemas, tipos e permissões oficiais no banco; em seguida `DefaultSystemUserSeeder.EnsureDefaultUserAsync` garante o usuário padrão do sistema (e-mail `root@email.com.br`, senha inicial **em texto** apenas na constante `DefaultSystemUserSeeder.Password` usada na *seed*; no banco persiste-se **somente o hash** PBKDF2) com vínculos às permissões do catálogo, de forma idempotente. **Em produção, troque a senha imediatamente após o primeiro acesso.**
 
 ---
@@ -131,7 +131,7 @@ AuthService/
 ├── Security/             # Hash e verificação de senha (ASP.NET Identity PasswordHasher / PBKDF2)
 ├── Data/                 # AppDbContext, migrations, seeders (catálogo oficial, usuário padrão, bootstrap de testes)
 ├── Models/               # Entidades EF Core
-├── OpenApi/              # Filtros Swagger (prefixo /v1 nos paths do documento)
+├── OpenApi/              # Filtros Swagger (prefixo /api/v1 nos paths do documento)
 └── Program.cs            # Composição, pipeline, mapa de rotas
 ```
 
@@ -145,14 +145,14 @@ AuthService/
 
 ### JWT (Bearer)
 
-- **Login:** `POST /v1/auth/login` com `email` e `password` → resposta com `token` e `expiresAtUtc`.
+- **Login:** `POST /api/v1/auth/login` com `email` e `password` → resposta com `token`.
 - **Cabeçalho:** `Authorization: Bearer <jwt>`.
 - O token inclui identificação do usuário (`sub`) e versão de sessão (`tv`). Alterações em `TokenVersion` (ex.: **logout**) invalidam tokens antigos.
 
 ### Senhas (armazenamento e boas práticas)
 
 - A coluna `Users.Password` guarda **apenas hash** (PBKDF2 via `PasswordHasher` do ASP.NET Core Identity), nunca a senha em texto puro.
-- `POST /v1/users` e `PUT /v1/users/{id}/password` aceitam a senha em texto na requisição; a API calcula o hash antes de persistir.
+- `POST /api/v1/users` e `PUT /api/v1/users/{id}/password` aceitam a senha em texto na requisição; a API calcula o hash antes de persistir.
 - O login compara a senha informada com o hash (`UserPasswordHasher` em `Security/`). Bases com usuários legados em texto plano: no primeiro login bem-sucedido (ou na *seed* idempotente, quando aplicável), o valor é substituído por hash.
 - Boas práticas: senhas fortes, rotação após primeiro acesso do usuário padrão, e segredo JWT forte em produção (ver [Configuração e variáveis de ambiente](#configuração-e-variáveis-de-ambiente)).
 
@@ -164,19 +164,20 @@ AuthService/
 
 ### Endpoints somente autenticados (sem política `perm:`)
 
-O controller **`/v1/roles-permissions`** exige **apenas** usuário autenticado (JWT válido), sem checagem de permissão nomeada adicional.
+- `GET /api/v1/auth/verify-token`
+- `GET /api/v1/auth/logout`
 
 ### Anonimato permitido
 
-- `GET /v1/health`
-- `POST /v1/auth/login`
+- `GET /api/v1/health`
+- `POST /api/v1/auth/login`
 - Documentação Swagger (`/docs`, JSON em `/swagger/v1/swagger.json`)
 
 ---
 
-## Versionamento da API (`/v1`)
+## Versionamento da API (`/api/v1`)
 
-Todas as rotas listadas na referência abaixo são relativas ao prefixo **`/v1`**. Exemplo completo: `https://localhost:7218/v1/systems`.
+Todas as rotas listadas na referência abaixo são relativas ao prefixo **`/api/v1`**. Exemplo completo: `https://localhost:7218/api/v1/systems`.
 
 ---
 
@@ -185,7 +186,7 @@ Todas as rotas listadas na referência abaixo são relativas ao prefixo **`/v1`*
 | Recurso | Caminho |
 |---------|---------|
 | Swagger UI | **`/docs`** |
-| OpenAPI JSON | **`/swagger/v1/swagger.json`** (paths já prefixados com `/v1` via filtro de documento) |
+| OpenAPI JSON | **`/swagger/v1/swagger.json`** (paths já prefixados com `/api/v1` via filtro de documento) |
 
 A UI está configurada para não exigir autenticação; para testar endpoints protegidos, use **Authorize** na Swagger UI e informe `Bearer <token>`.
 
@@ -202,116 +203,105 @@ Legenda:
 
 | Método | Endpoint | Auth | Permissão |
 |--------|----------|------|-----------|
-| `GET` | `/v1/health` | Não | — |
+| `GET` | `/api/v1/health` | Não | — |
 
-### Autenticação — `/v1/auth`
-
-| Método | Endpoint | Auth | Permissão |
-|--------|----------|------|-----------|
-| `POST` | `/v1/auth/login` | Não | — |
-| `GET` | `/v1/auth/verify-token` | Sim | — |
-| `GET` | `/v1/auth/logout` | Sim | — |
-
-### Sistemas — `/v1/systems`
+### Autenticação — `/api/v1/auth`
 
 | Método | Endpoint | Auth | Permissão |
 |--------|----------|------|-----------|
-| `POST` | `/v1/systems` | Sim | `perm:Systems.Create` |
-| `GET` | `/v1/systems` | Sim | `perm:Systems.Read` |
-| `GET` | `/v1/systems/{id}` | Sim | `perm:Systems.Read` |
-| `PUT` | `/v1/systems/{id}` | Sim | `perm:Systems.Update` |
-| `DELETE` | `/v1/systems/{id}` | Sim | `perm:Systems.Delete` |
-| `POST` | `/v1/systems/{id}/restore` | Sim | `perm:Systems.Restore` |
+| `POST` | `/api/v1/auth/login` | Não | — |
+| `GET` | `/api/v1/auth/verify-token` | Sim | — |
+| `GET` | `/api/v1/auth/logout` | Sim | — |
+
+### Sistemas — `/api/v1/systems`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/api/v1/systems` | Sim | `perm:Systems.Create` |
+| `GET` | `/api/v1/systems` | Sim | `perm:Systems.Read` |
+| `GET` | `/api/v1/systems/{id}` | Sim | `perm:Systems.Read` |
+| `PUT` | `/api/v1/systems/{id}` | Sim | `perm:Systems.Update` |
+| `DELETE` | `/api/v1/systems/{id}` | Sim | `perm:Systems.Delete` |
+| `POST` | `/api/v1/systems/{id}/restore` | Sim | `perm:Systems.Restore` |
 
 Corpo típico de criação/atualização: `name`, `code`, `description` (opcional). Registros *soft-deleted* retornam **404** em leitura/alteração/exclusão até restaurados.
 
-### Rotas de sistema — `/v1/systems/routes`
+### Rotas de sistema — `/api/v1/systems/routes`
 
 | Método | Endpoint | Auth | Permissão |
 |--------|----------|------|-----------|
-| `POST` | `/v1/systems/routes` | Sim | `perm:SystemsRoutes.Create` |
-| `GET` | `/v1/systems/routes` | Sim | `perm:SystemsRoutes.Read` |
-| `GET` | `/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Read` |
-| `PUT` | `/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Update` |
-| `DELETE` | `/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Delete` |
-| `POST` | `/v1/systems/routes/{id}/restore` | Sim | `perm:SystemsRoutes.Restore` |
+| `POST` | `/api/v1/systems/routes` | Sim | `perm:SystemsRoutes.Create` |
+| `GET` | `/api/v1/systems/routes` | Sim | `perm:SystemsRoutes.Read` |
+| `GET` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Read` |
+| `PUT` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Update` |
+| `DELETE` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Delete` |
+| `POST` | `/api/v1/systems/routes/{id}/restore` | Sim | `perm:SystemsRoutes.Restore` |
 
 `systemId` obrigatório; `code` único globalmente. Listagens consideram sistema pai ativo.
 
-### Usuários — `/v1/users`
+### Usuários — `/api/v1/users`
 
 | Método | Endpoint | Auth | Permissão |
 |--------|----------|------|-----------|
-| `POST` | `/v1/users` | Sim | `perm:Users.Create` |
-| `GET` | `/v1/users` | Sim | `perm:Users.Read` |
-| `GET` | `/v1/users/{id}` | Sim | `perm:Users.Read` |
-| `PUT` | `/v1/users/{id}` | Sim | `perm:Users.Update` |
-| `PUT` | `/v1/users/{id}/password` | Sim | `perm:Users.Update` |
-| `DELETE` | `/v1/users/{id}` | Sim | `perm:Users.Delete` |
-| `POST` | `/v1/users/{id}/restore` | Sim | `perm:Users.Restore` |
+| `POST` | `/api/v1/users` | Sim | `perm:Users.Create` |
+| `GET` | `/api/v1/users` | Sim | `perm:Users.Read` |
+| `GET` | `/api/v1/users/{id}` | Sim | `perm:Users.Read` |
+| `PUT` | `/api/v1/users/{id}` | Sim | `perm:Users.Update` |
+| `PUT` | `/api/v1/users/{id}/password` | Sim | `perm:Users.Update` |
+| `DELETE` | `/api/v1/users/{id}` | Sim | `perm:Users.Delete` |
+| `POST` | `/api/v1/users/{id}/restore` | Sim | `perm:Users.Restore` |
 
 **POST:** `name`, `email`, `password`, `identity`, `active` (opcional, padrão `true`). **PUT** usuário: `name`, `email`, `identity`, `active` (sem senha). Email normalizado (ex.: minúsculas).
 
-**GET** `/v1/users/{id}` retorna também os vínculos ativos **`roles`** (lista com `id` inteiro, `userId`, `roleId`, auditoria e `deletedAt`) e **`permissions`** (lista com `id` GUID, `userId`, `permissionId`, auditoria e `deletedAt`). Listagens **`GET /v1/users`** e respostas de criação/atualização devolvem `roles` e `permissions` como arrays vazios.
+**GET** `/api/v1/users/{id}` retorna também os vínculos ativos **`roles`** (lista com `id` inteiro, `userId`, `roleId`, auditoria e `deletedAt`) e **`permissions`** (lista com `id` GUID, `userId`, `permissionId`, auditoria e `deletedAt`). Listagens **`GET /api/v1/users`** e respostas de criação/atualização devolvem `roles` e `permissions` como arrays vazios.
 
-### Tipos de token — `/v1/tokens/types`
-
-| Método | Endpoint | Auth | Permissão |
-|--------|----------|------|-----------|
-| `POST` | `/v1/tokens/types` | Sim | `perm:SystemTokensTypes.Create` |
-| `GET` | `/v1/tokens/types` | Sim | `perm:SystemTokensTypes.Read` |
-| `GET` | `/v1/tokens/types/{id}` | Sim | `perm:SystemTokensTypes.Read` |
-| `PUT` | `/v1/tokens/types/{id}` | Sim | `perm:SystemTokensTypes.Update` |
-| `DELETE` | `/v1/tokens/types/{id}` | Sim | `perm:SystemTokensTypes.Delete` |
-| `POST` | `/v1/tokens/types/{id}/restore` | Sim | `perm:SystemTokensTypes.Restore` |
-
-### Tipos de permissão — `/v1/permissions/types`
+### Tipos de token — `/api/v1/tokens/types`
 
 | Método | Endpoint | Auth | Permissão |
 |--------|----------|------|-----------|
-| `POST` | `/v1/permissions/types` | Sim | `perm:PermissionsTypes.Create` |
-| `GET` | `/v1/permissions/types` | Sim | `perm:PermissionsTypes.Read` |
-| `GET` | `/v1/permissions/types/{id}` | Sim | `perm:PermissionsTypes.Read` |
-| `PUT` | `/v1/permissions/types/{id}` | Sim | `perm:PermissionsTypes.Update` |
-| `DELETE` | `/v1/permissions/types/{id}` | Sim | `perm:PermissionsTypes.Delete` |
-| `POST` | `/v1/permissions/types/{id}/restore` | Sim | `perm:PermissionsTypes.Restore` |
+| `POST` | `/api/v1/tokens/types` | Sim | `perm:SystemTokensTypes.Create` |
+| `GET` | `/api/v1/tokens/types` | Sim | `perm:SystemTokensTypes.Read` |
+| `GET` | `/api/v1/tokens/types/{id}` | Sim | `perm:SystemTokensTypes.Read` |
+| `PUT` | `/api/v1/tokens/types/{id}` | Sim | `perm:SystemTokensTypes.Update` |
+| `DELETE` | `/api/v1/tokens/types/{id}` | Sim | `perm:SystemTokensTypes.Delete` |
+| `POST` | `/api/v1/tokens/types/{id}/restore` | Sim | `perm:SystemTokensTypes.Restore` |
+
+### Tipos de permissão — `/api/v1/permissions/types`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/api/v1/permissions/types` | Sim | `perm:PermissionsTypes.Create` |
+| `GET` | `/api/v1/permissions/types` | Sim | `perm:PermissionsTypes.Read` |
+| `GET` | `/api/v1/permissions/types/{id}` | Sim | `perm:PermissionsTypes.Read` |
+| `PUT` | `/api/v1/permissions/types/{id}` | Sim | `perm:PermissionsTypes.Update` |
+| `DELETE` | `/api/v1/permissions/types/{id}` | Sim | `perm:PermissionsTypes.Delete` |
+| `POST` | `/api/v1/permissions/types/{id}/restore` | Sim | `perm:PermissionsTypes.Restore` |
 
 `code` único globalmente.
 
-### Papéis (roles) — `/v1/roles`
+### Papéis (roles) — `/api/v1/roles`
 
 | Método | Endpoint | Auth | Permissão |
 |--------|----------|------|-----------|
-| `POST` | `/v1/roles` | Sim | `perm:Roles.Create` |
-| `GET` | `/v1/roles` | Sim | `perm:Roles.Read` |
-| `GET` | `/v1/roles/{id}` | Sim | `perm:Roles.Read` |
-| `PUT` | `/v1/roles/{id}` | Sim | `perm:Roles.Update` |
-| `DELETE` | `/v1/roles/{id}` | Sim | `perm:Roles.Delete` |
-| `POST` | `/v1/roles/{id}/restore` | Sim | `perm:Roles.Restore` |
+| `POST` | `/api/v1/roles` | Sim | `perm:Roles.Create` |
+| `GET` | `/api/v1/roles` | Sim | `perm:Roles.Read` |
+| `GET` | `/api/v1/roles/{id}` | Sim | `perm:Roles.Read` |
+| `PUT` | `/api/v1/roles/{id}` | Sim | `perm:Roles.Update` |
+| `DELETE` | `/api/v1/roles/{id}` | Sim | `perm:Roles.Delete` |
+| `POST` | `/api/v1/roles/{id}/restore` | Sim | `perm:Roles.Restore` |
 
-### Permissões — `/v1/permissions`
+### Permissões — `/api/v1/permissions`
 
 | Método | Endpoint | Auth | Permissão |
 |--------|----------|------|-----------|
-| `POST` | `/v1/permissions` | Sim | `perm:Permissions.Create` |
-| `GET` | `/v1/permissions` | Sim | `perm:Permissions.Read` |
-| `GET` | `/v1/permissions/{id}` | Sim | `perm:Permissions.Read` |
-| `PUT` | `/v1/permissions/{id}` | Sim | `perm:Permissions.Update` |
-| `DELETE` | `/v1/permissions/{id}` | Sim | `perm:Permissions.Delete` |
-| `POST` | `/v1/permissions/{id}/restore` | Sim | `perm:Permissions.Restore` |
+| `POST` | `/api/v1/permissions` | Sim | `perm:Permissions.Create` |
+| `GET` | `/api/v1/permissions` | Sim | `perm:Permissions.Read` |
+| `GET` | `/api/v1/permissions/{id}` | Sim | `perm:Permissions.Read` |
+| `PUT` | `/api/v1/permissions/{id}` | Sim | `perm:Permissions.Update` |
+| `DELETE` | `/api/v1/permissions/{id}` | Sim | `perm:Permissions.Delete` |
+| `POST` | `/api/v1/permissions/{id}/restore` | Sim | `perm:Permissions.Restore` |
 
 Corpo: `systemId`, `permissionTypeId`, `description` (opcional). Restauração exige referências ativas coerentes com as regras do controller.
-
-### Papel ↔ permissão — `/v1/roles-permissions`
-
-| Método | Endpoint | Auth | Permissão |
-|--------|----------|------|-----------|
-| `POST` | `/v1/roles-permissions` | Sim | — |
-| `GET` | `/v1/roles-permissions` | Sim | — |
-| `GET` | `/v1/roles-permissions/{id}` | Sim | — |
-| `PUT` | `/v1/roles-permissions/{id}` | Sim | — |
-| `DELETE` | `/v1/roles-permissions/{id}` | Sim | — |
-| `PATCH` | `/v1/roles-permissions/{id}/restore` | Sim | — |
 
 ---
 
@@ -322,33 +312,33 @@ Substitua a base pela URL da sua instância (`http://localhost:5052`, `http://lo
 **Login**
 
 ```bash
-curl -s -X POST "http://localhost:5052/v1/auth/login" \
+curl -s -X POST "http://localhost:5052/api/v1/auth/login" \
   -H "Content-Type: application/json" \
   -d '{"email":"usuario@exemplo.com","password":"suaSenha"}'
 ```
 
-Resposta esperada (200): JSON com `token` e `expiresAtUtc`.
+Resposta esperada (200): JSON com `token`.
 
 **Chamada autenticada (ex.: listar sistemas)**
 
 ```bash
-curl -s "http://localhost:5052/v1/systems" \
+curl -s "http://localhost:5052/api/v1/systems" \
   -H "Authorization: Bearer SEU_JWT_AQUI"
 ```
 
 **Verificar token e permissões efetivas (ids)**
 
 ```bash
-curl -s "http://localhost:5052/v1/auth/verify-token" \
+curl -s "http://localhost:5052/api/v1/auth/verify-token" \
   -H "Authorization: Bearer SEU_JWT_AQUI"
 ```
 
-Resposta (200): objeto `user` + lista `permissionIds` (GUIDs das permissões efetivas).
+Resposta (200): objeto com `id`, `name`, `email`, `identity` e `permissions` (lista de GUIDs).
 
 **Health check**
 
 ```bash
-curl -s "http://localhost:5052/v1/health"
+curl -s "http://localhost:5052/api/v1/health"
 ```
 
 ---
@@ -440,10 +430,10 @@ Sem essa variável, o `WebApplicationFactory` falha na construção — comporta
 | Falha ao conectar ao SQL | Senha/porta/host; `TrustServerCertificate=True` em dev; firewall. |
 | `dotnet ef` não encontrado | `dotnet tool install --global dotnet-ef` ou `dotnet tool restore` no projeto. |
 | 401 em todas as rotas protegidas | Cabeçalho `Authorization: Bearer`; relógio do cliente; token expirado ou após **logout**. |
-| 403 em recurso específico | Usuário não possui GUID da permissão correspondente à política `perm:…` (vincular via papéis, permissões diretas no usuário ou processos de dados; consulte **`GET /v1/users/{id}`** para os vínculos). |
+| 403 em recurso específico | Usuário não possui GUID da permissão correspondente à política `perm:…` (vincular via papéis, permissões diretas no usuário ou processos de dados; consulte **`GET /api/v1/users/{id}`** para os vínculos). |
 | 404 em entidade “que existe” | Pode estar *soft-deleted*; usar rota de **restore** quando aplicável. |
 | Docker `app` não sobe | Aguardar healthcheck do `db`; conferir `MSSQL_SA_PASSWORD` no `.env`. |
-| Caminho 404 na API | Prefixo **`/v1`** obrigatório em todos os controllers mapeados. |
+| Caminho 404 na API | Prefixo **`/api/v1`** obrigatório em todos os controllers mapeados. |
 
 ---
 
@@ -452,7 +442,7 @@ Sem essa variável, o `WebApplicationFactory` falha na construção — comporta
 - **Nunca** commitar segredos reais; use variáveis de ambiente ou cofres em produção.
 - Troque `Auth:Jwt:Secret` em qualquer ambiente exposto; o repositório contém valores apenas para desenvolvimento.
 - **HTTPS** em produção; em desenvolvimento local o perfil pode usar só HTTP.
-- Após alterar permissões ou papéis, clientes podem chamar **`/v1/auth/verify-token`** para obter a lista atualizada de `permissionIds`.
+- Após alterar permissões ou papéis, clientes podem chamar **`/api/v1/auth/verify-token`** para obter a lista atualizada de `permissions`.
 - Mantenha o **README** alinhado às rotas ao introduzir novos controllers ou políticas.
 
 ---
