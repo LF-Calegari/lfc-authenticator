@@ -244,6 +244,6 @@ public class SystemsController : ControllerBase
         entity.DeletedAt = null;
         entity.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
-        return Ok(ToResponse(entity));
+        return Ok(new { message = "Sistema restaurado com sucesso." });
     }
 }

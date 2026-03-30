@@ -43,7 +43,7 @@ builder.Services.AddSwaggerGen(options =>
     {
         Title = "Auth Service API",
         Version = "v1",
-        Description = "Autenticação, autorização e cadastros correlatos. Rotas versionadas sob o prefixo /v1."
+        Description = "Autenticação, autorização e cadastros correlatos. Rotas versionadas sob o prefixo /api/v1."
     });
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -55,6 +55,7 @@ builder.Services.AddSwaggerGen(options =>
         Description = "JWT no header Authorization (Bearer {token})."
     });
     options.DocumentFilter<V1PathPrefixDocumentFilter>();
+    options.OperationFilter<ContractExamplesOperationFilter>();
 });
 
 var app = builder.Build();
@@ -76,7 +77,7 @@ app.UseSwaggerUI(options =>
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGroup("/v1").MapControllers();
+app.MapGroup("/api/v1").MapControllers();
 
 if (!app.Environment.IsEnvironment("Testing"))
 {

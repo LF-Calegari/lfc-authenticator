@@ -289,6 +289,6 @@ public class PermissionsController : ControllerBase
         }
 
         _logger.LogInformation("Permissão restaurada: {PermissionId}.", id);
-        return Ok(ToResponse(entity));
+        return Ok(new { message = "Permissão restaurada com sucesso." });
     }
 }

@@ -66,6 +66,14 @@ public class WebAppFactory : WebApplicationFactory<Program>
         return host;
     }
 
+    public HttpClient CreateApiClient()
+    {
+        return CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = Server.BaseAddress
+        });
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing && !_disposed)
@@ -92,4 +100,5 @@ public class WebAppFactory : WebApplicationFactory<Program>
 
         base.Dispose(disposing);
     }
+
 }

@@ -270,6 +270,6 @@ public class RolesController : ControllerBase
         }
 
         _logger.LogInformation("Role restaurado: {RoleId}.", id);
-        return Ok(ToResponse(entity));
+        return Ok(new { message = "Role restaurado com sucesso." });
     }
 }

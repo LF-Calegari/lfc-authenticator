@@ -29,7 +29,7 @@ public class TokenTypesApiTests : IAsyncLifetime
     public async Task Create_Post_ReturnsCreated_WithUtcTimestamps_AndNullDeletedAt()
     {
         var body = new { name = "Tipo token", code = "TT_X", description = "Opcional" };
-        var response = await _client.PostAsJsonAsync("/v1/tokens/types", body, TestApiClient.JsonOptions);
+        var response = await _client.PostAsJsonAsync("/api/v1/tokens/types", body, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
         var dto = await response.Content.ReadFromJsonAsync<TokenTypeDto>(TestApiClient.JsonOptions);
@@ -44,33 +44,33 @@ public class TokenTypesApiTests : IAsyncLifetime
     [Fact]
     public async Task Create_DuplicateCode_ReturnsConflict()
     {
-        await _client.PostAsJsonAsync("/v1/tokens/types", new { name = "A", code = "TT_DUP" }, TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/tokens/types", new { name = "A", code = "TT_DUP" }, TestApiClient.JsonOptions);
 
-        var response = await _client.PostAsJsonAsync("/v1/tokens/types", new { name = "B", code = "TT_DUP" }, TestApiClient.JsonOptions);
+        var response = await _client.PostAsJsonAsync("/api/v1/tokens/types", new { name = "B", code = "TT_DUP" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
 
     [Fact]
     public async Task Get_WithoutToken_ReturnsUnauthorized()
     {
-        using var anon = _factory.CreateClient();
-        var response = await anon.GetAsync("/v1/tokens/types");
+        using var anon = _factory.CreateApiClient();
+        var response = await anon.GetAsync("/api/v1/tokens/types");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
     public async Task Restore_Deleted_ThenGetReturnsOk()
     {
-        var create = await _client.PostAsJsonAsync("/v1/tokens/types", new { name = "S", code = "TT_R1" }, TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/tokens/types", new { name = "S", code = "TT_R1" }, TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<TokenTypeDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        await _client.DeleteAsync($"/v1/tokens/types/{dto.Id}");
+        await _client.DeleteAsync($"/api/v1/tokens/types/{dto.Id}");
 
-        var restore = await _client.PostAsync($"/v1/tokens/types/{dto.Id}/restore", null);
+        var restore = await _client.PostAsync($"/api/v1/tokens/types/{dto.Id}/restore", null);
         Assert.Equal(HttpStatusCode.OK, restore.StatusCode);
 
-        var getOk = await _client.GetAsync($"/v1/tokens/types/{dto.Id}");
+        var getOk = await _client.GetAsync($"/api/v1/tokens/types/{dto.Id}");
         Assert.Equal(HttpStatusCode.OK, getOk.StatusCode);
 
         using (var scope = _factory.Services.CreateScope())

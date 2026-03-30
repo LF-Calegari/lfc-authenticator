@@ -6,7 +6,6 @@ using AuthService.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using UserEntity = AuthService.Models.User;
 
 namespace AuthService.Controllers.Auth;
 
@@ -37,21 +36,14 @@ public class AuthController : ControllerBase
         public string Password { get; set; } = string.Empty;
     }
 
-    public record LoginResponse(string Token, DateTime ExpiresAtUtc);
+    public record LoginResponse(string Token);
 
-    public record AuthUserResponse(
+    public record VerifyTokenResponse(
         Guid Id,
         string Name,
         string Email,
         int Identity,
-        bool Active,
-        DateTime CreatedAt,
-        DateTime UpdatedAt);
-
-    public record VerifyTokenResponse(AuthUserResponse User, IReadOnlyList<Guid> PermissionIds);
-
-    private static AuthUserResponse ToAuthUser(UserEntity u) =>
-        new(u.Id, u.Name, u.Email, u.Identity, u.Active, u.CreatedAt, u.UpdatedAt);
+        IReadOnlyList<Guid> Permissions);
 
     [HttpPost("login")]
     [AllowAnonymous]
@@ -93,8 +85,8 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Credenciais inválidas." });
         }
 
-        var token = _jwt.CreateAccessToken(user.Id, user.TokenVersion, out var expiresAt);
-        return Ok(new LoginResponse(token, expiresAt.UtcDateTime));
+        var token = _jwt.CreateAccessToken(user.Id, user.TokenVersion, out _);
+        return Ok(new LoginResponse(token));
     }
 
     [HttpGet("verify-token")]
@@ -112,7 +104,12 @@ public class AuthController : ControllerBase
         var permissionIds = (await EffectivePermissionIds.GetForUserAsync(_db, userId))
             .OrderBy(x => x)
             .ToList();
-        return Ok(new VerifyTokenResponse(ToAuthUser(user), permissionIds));
+        return Ok(new VerifyTokenResponse(
+            user.Id,
+            user.Name,
+            user.Email,
+            user.Identity,
+            permissionIds));
     }
 
     [HttpGet("logout")]

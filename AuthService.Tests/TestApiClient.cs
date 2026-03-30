@@ -22,8 +22,8 @@ internal static class TestApiClient
     /// <summary>Cliente HTTP com JWT do usuário bootstrap (todas as permissões oficiais).</summary>
     internal static async Task<HttpClient> CreateAuthenticatedAsync(WebAppFactory factory)
     {
-        var client = factory.CreateClient();
-        var login = await client.PostAsJsonAsync("/v1/auth/login",
+        var client = factory.CreateApiClient();
+        var login = await client.PostAsJsonAsync("/api/v1/auth/login",
             new { email = IntegrationBootstrapSeeder.Email, password = IntegrationBootstrapSeeder.Password },
             JsonOptions);
         login.EnsureSuccessStatusCode();

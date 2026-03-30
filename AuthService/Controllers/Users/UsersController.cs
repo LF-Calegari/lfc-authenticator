@@ -377,6 +377,6 @@ public class UsersController : ControllerBase
         user.DeletedAt = null;
         user.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
-        return Ok(ToResponse(user));
+        return Ok(new { message = "Usuário restaurado com sucesso." });
     }
 }
