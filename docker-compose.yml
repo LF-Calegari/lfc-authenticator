@@ -1,21 +1,35 @@
+# Raiz do repositório. Requer arquivo .env (veja .env.example).
+# Uso: docker compose up -d
+# Migrações (primeira vez / após mudar migrations): docker compose --profile migrate run --rm migrate
+# Testes de integração (SQL real): docker compose --profile test run --rm test
+
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      # Sobrescreve appsettings.Development.json com a mesma senha do SQL (variável do .env).
+      ConnectionStrings__DefaultConnection: "Server=db,1433;Database=AuthServiceDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
     ports:
       - "8080:5042"
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Development
     volumes:
       - ./AuthService:/app
     working_dir: /app
+    depends_on:
+      db:
+        condition: service_healthy
 
   db:
     image: mcr.microsoft.com/mssql/server:2022-latest
+    env_file:
+      - .env
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "SenhaForte@123"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
     ports:
       - "1433:1433"
     volumes:
@@ -24,12 +38,47 @@ services:
       test:
         [
           "CMD-SHELL",
-          "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"SenhaForte@123\" -C -Q 'SELECT 1' || exit 1",
+          "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1",
         ]
       interval: 5s
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  # Aplica migrations no AuthServiceDb (usa a mesma imagem do app para ter dotnet-ef no PATH).
+  migrate:
+    profiles: [migrate]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      ConnectionStrings__DefaultConnection: "Server=db,1433;Database=AuthServiceDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+    volumes:
+      - ./AuthService:/app
+    working_dir: /app
+    depends_on:
+      db:
+        condition: service_healthy
+    # dotnet-tools.json no volume faz o SDK exigir tool restore antes de `dotnet ef`.
+    command: ["sh", "-c", "dotnet restore && dotnet tool restore && dotnet ef database update"]
+
+  # Testes de integração: monta a raiz do repo; SQL em db:1433 na rede do compose.
+  test:
+    profiles: [test]
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    env_file:
+      - .env
+    environment:
+      AUTH_SERVICE_TEST_SQL_BASE: "Server=db,1433;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["dotnet", "test", "AuthService.Tests/AuthService.Tests.csproj", "-v", "minimal"]
 
 volumes:
   mssql_data:

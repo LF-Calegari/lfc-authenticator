@@ -21,14 +21,21 @@ public class User : ISoftDelete
     [EmailAddress]
     public string Email { get; set; } = string.Empty;
 
+    /// <summary>Hash PBKDF2 (ASP.NET Identity). Não armazenar texto plano.</summary>
     [Required]
-    [StringLength(60)]
+    [StringLength(500)]
     public string Password { get; set; } = string.Empty;
 
     public int Identity { get; set; }
 
     [Required]
     public bool Active { get; set; } = true;
+
+    /// <summary>
+    /// Incrementado no logout para invalidar JWTs emitidos anteriormente (claim <c>tv</c>).
+    /// </summary>
+    [Required]
+    public int TokenVersion { get; set; }
 
     [Required]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
