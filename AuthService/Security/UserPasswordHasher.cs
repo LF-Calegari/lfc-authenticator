@@ -17,11 +17,18 @@ public static class UserPasswordHasher
     /// <returns>Sucesso da autenticação e, se necessário, novo valor a gravar em <see cref="User.Password"/>.</returns>
     public static (bool Success, string? NewStoredPassword) Verify(User user, string plainPassword)
     {
-        var result = Hasher.VerifyHashedPassword(user, user.Password, plainPassword);
-        if (result == PasswordVerificationResult.Success)
-            return (true, null);
-        if (result == PasswordVerificationResult.SuccessRehashNeeded)
-            return (true, Hasher.HashPassword(user, plainPassword));
+        try
+        {
+            var result = Hasher.VerifyHashedPassword(user, user.Password, plainPassword);
+            if (result == PasswordVerificationResult.Success)
+                return (true, null);
+            if (result == PasswordVerificationResult.SuccessRehashNeeded)
+                return (true, Hasher.HashPassword(user, plainPassword));
+        }
+        catch (FormatException)
+        {
+            // Valor legado em texto plano/não-hash: segue para fallback compatível.
+        }
 
         if (user.Password == plainPassword)
             return (true, Hasher.HashPassword(user, plainPassword));
