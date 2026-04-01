@@ -7,7 +7,7 @@ on:
     branches: [ "main", "development" ]
 
 jobs:
-  sonar:
+  analyze:
     runs-on: ubuntu-latest
 
     steps:
@@ -21,20 +21,19 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Install SonarScanner
+      - name: Install SonarScanner for .NET
         run: dotnet tool install --global dotnet-sonarscanner
 
-      - name: Begin Sonar analysis
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
-          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+      - name: Add dotnet tools to PATH
+        run: echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+
+      - name: Sonar begin
         run: |
           dotnet-sonarscanner begin \
-            /k:"$SONAR_PROJECT_KEY" \
-            /o:"$SONAR_ORGANIZATION" \
-            /d:sonar.token="$SONAR_TOKEN" \
-            /d:sonar.host.url="https://sonarcloud.io"
+            /k:"${{ secrets.SONAR_PROJECT_KEY }}" \
+            /o:"${{ secrets.SONAR_ORGANIZATION }}" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
 
       - name: Restore
         run: dotnet restore
@@ -45,7 +44,5 @@ jobs:
       - name: Test
         run: dotnet test --no-build --verbosity normal
 
-      - name: End Sonar analysis
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+      - name: Sonar end
+        run: dotnet-sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
