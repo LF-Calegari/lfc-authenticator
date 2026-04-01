@@ -44,9 +44,8 @@ jobs:
 
       - name: Test with coverage
         run: |
-          dotnet test AuthServiceTests/AuthServiceTests.csproj \
+          dotnet test AuthService.Tests/AuthService.Tests.csproj \
             --configuration Release \
-            --no-build \
             /p:CollectCoverage=true \
             /p:CoverletOutputFormat=opencover \
             /p:CoverletOutput=./TestResults/coverage.opencover.xml
