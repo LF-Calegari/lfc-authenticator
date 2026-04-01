@@ -1,0 +1,57 @@
+name: SonarCloud
+
+on:
+  push:
+    branches:
+      - main
+      - development
+  pull_request:
+
+jobs:
+  analyze:
+    name: Build, Test and Analyze
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup Java (required by SonarScanner)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install SonarScanner and Coverage tools
+        run: |
+          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+          dotnet tool install --global dotnet-sonarscanner
+          dotnet tool install --global dotnet-coverage
+
+      - name: Sonar Begin
+        run: |
+          dotnet-sonarscanner begin \
+            /k:"LF-Calegari_lfc-authenticator" \
+            /o:"LF-Calegari" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.token="${{ secrets.SONAR_TOKEN }}" \
+            /d:sonar.cs.vscoveragexml.reportsPaths="coverage.xml"
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Test with coverage
+        run: dotnet-coverage collect "dotnet test --no-build --configuration Release" -f xml -o "coverage.xml"
+
+      - name: Sonar End
+        run: dotnet-sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
