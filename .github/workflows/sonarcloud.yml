@@ -27,22 +27,32 @@ jobs:
       - name: Add dotnet tools to PATH
         run: echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
 
+      - name: Restore dependencies
+        run: dotnet restore AuthService/AuthService.csproj
+
       - name: Sonar begin
         run: |
           dotnet-sonarscanner begin \
             /k:"${{ secrets.SONAR_PROJECT_KEY }}" \
             /o:"${{ secrets.SONAR_ORGANIZATION }}" \
             /d:sonar.host.url="https://sonarcloud.io" \
-            /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
-
-      - name: Restore
-        run: dotnet restore
+            /d:sonar.token="${{ secrets.SONAR_TOKEN }}" \
+            /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
 
       - name: Build
-        run: dotnet build --no-restore
+        run: dotnet build AuthService/AuthService.csproj --no-restore --configuration Release
 
-      - name: Test
-        run: dotnet test --no-build --verbosity normal
+      - name: Test with coverage
+        run: |
+          dotnet test AuthServiceTests/AuthServiceTests.csproj \
+            --configuration Release \
+            --no-build \
+            /p:CollectCoverage=true \
+            /p:CoverletOutputFormat=opencover \
+            /p:CoverletOutput=./TestResults/coverage.opencover.xml
+
 
       - name: Sonar end
-        run: dotnet-sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"
