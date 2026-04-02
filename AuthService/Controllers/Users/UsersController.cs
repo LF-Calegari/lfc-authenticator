@@ -339,7 +339,8 @@ public class UsersController : ControllerBase
 
         user.Name = name;
         user.Email = email;
-        user.ClientId = request.ClientId;
+        // Não desassocia cliente quando ClientId não é informado no update.
+        user.ClientId = request.ClientId ?? user.ClientId;
         user.Identity = request.Identity;
         user.Active = request.Active;
         user.UpdatedAt = DateTime.UtcNow;

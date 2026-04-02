@@ -5,6 +5,7 @@ using AuthService.Data;
 using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace AuthService.Controllers.Clients;
@@ -75,6 +76,26 @@ public class ClientsController : ControllerBase
         IReadOnlyList<ClientPhoneResponse> MobilePhones,
         IReadOnlyList<ClientPhoneResponse> LandlinePhones);
 
+    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
+    {
+        for (Exception? e = ex; e != null; e = e.InnerException)
+        {
+            if (e is SqlException sql)
+                return sql.Number is 2601 or 2627;
+        }
+
+        var text = string.Join(" ", GetExceptionMessages(ex));
+        return text.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("duplicate key", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> GetExceptionMessages(Exception ex)
+    {
+        for (Exception? e = ex; e != null; e = e.InnerException)
+            yield return e.Message;
+    }
+
     [HttpPost]
     [Authorize(Policy = PermissionPolicies.ClientsCreate)]
     public async Task<IActionResult> Create([FromBody] CreateClientRequest request)
@@ -105,7 +126,20 @@ public class ClientsController : ControllerBase
             DeletedAt = null
         };
         _db.Clients.Add(entity);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            if (normalized.Cpf is not null)
+                return Conflict(new { message = "Já existe cliente com este CPF." });
+
+            if (normalized.Cnpj is not null)
+                return Conflict(new { message = "Já existe cliente com este CNPJ." });
+
+            throw;
+        }
 
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, await BuildResponseAsync(entity));
     }
@@ -168,7 +202,20 @@ public class ClientsController : ControllerBase
         client.Cnpj = normalized.Cnpj;
         client.CorporateName = normalized.CorporateName;
         client.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            if (normalized.Cpf is not null)
+                return Conflict(new { message = "Já existe cliente com este CPF." });
+
+            if (normalized.Cnpj is not null)
+                return Conflict(new { message = "Já existe cliente com este CNPJ." });
+
+            throw;
+        }
 
         return Ok(await BuildResponseAsync(client));
     }

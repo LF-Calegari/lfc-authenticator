@@ -61,6 +61,43 @@ public class ClientsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CreatePjClient_UpdateAndGetById_FullFlowWorks()
+    {
+        var cnpj = GenerateCnpj(12000000);
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PJ",
+            cnpj,
+            corporateName = "Empresa Inicial LTDA"
+        }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+        Assert.Equal("PJ", created.Type);
+        Assert.Equal(cnpj, created.Cnpj);
+        Assert.Equal("Empresa Inicial LTDA", created.CorporateName);
+        Assert.Null(created.Cpf);
+        Assert.Null(created.FullName);
+
+        var update = await _client.PutAsJsonAsync($"/api/v1/clients/{created.Id}", new
+        {
+            type = "PJ",
+            cnpj,
+            corporateName = "Empresa Atualizada LTDA"
+        }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        var updated = await update.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(updated);
+        Assert.Equal("Empresa Atualizada LTDA", updated.CorporateName);
+
+        var get = await _client.GetAsync($"/api/v1/clients/{created.Id}");
+        Assert.Equal(HttpStatusCode.OK, get.StatusCode);
+        var detail = await get.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(detail);
+        Assert.Equal("Empresa Atualizada LTDA", detail.CorporateName);
+    }
+
+    [Fact]
     public async Task CreatePfClient_DuplicateCpf_ReturnsConflict()
     {
         await _client.PostAsJsonAsync("/api/v1/clients", new
@@ -214,6 +251,32 @@ public class ClientsApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, fourth.StatusCode);
     }
 
+    [Fact]
+    public async Task DeleteClient_ThenRestore_ReturnsToActiveFlow()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000007),
+            fullName = "Cliente Restore"
+        }, TestApiClient.JsonOptions);
+        create.EnsureSuccessStatusCode();
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        var del = await _client.DeleteAsync($"/api/v1/clients/{created.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, del.StatusCode);
+
+        var getDeleted = await _client.GetAsync($"/api/v1/clients/{created.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, getDeleted.StatusCode);
+
+        var restore = await _client.PostAsync($"/api/v1/clients/{created.Id}/restore", null);
+        Assert.Equal(HttpStatusCode.OK, restore.StatusCode);
+
+        var getRestored = await _client.GetAsync($"/api/v1/clients/{created.Id}");
+        Assert.Equal(HttpStatusCode.OK, getRestored.StatusCode);
+    }
+
     private sealed record ClientDto(
         Guid Id,
         string Type,
@@ -237,5 +300,22 @@ public class ClientsApiTests : IAsyncLifetime
             sum += (input[i] - '0') * (startWeight - i);
         var result = (sum * 10) % 11;
         return result == 10 ? 0 : result;
+    }
+
+    private static string GenerateCnpj(int baseDigits)
+    {
+        var twelve = (baseDigits % 100_000_000).ToString("D8") + "0001";
+        var d1 = CheckDigitCnpj(twelve, new[] { 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2 });
+        var d2 = CheckDigitCnpj(twelve + d1, new[] { 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2 });
+        return twelve + d1 + d2;
+    }
+
+    private static int CheckDigitCnpj(string input, IReadOnlyList<int> weights)
+    {
+        var sum = 0;
+        for (var i = 0; i < input.Length; i++)
+            sum += (input[i] - '0') * weights[i];
+        var mod = sum % 11;
+        return mod < 2 ? 0 : 11 - mod;
     }
 }
