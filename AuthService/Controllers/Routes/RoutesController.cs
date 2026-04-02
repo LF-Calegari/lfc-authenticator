@@ -24,7 +24,7 @@ public class RoutesController : ControllerBase
     public class CreateRouteRequest
     {
         [Required(ErrorMessage = "SystemId é obrigatório.")]
-        public Guid SystemId { get; set; }
+        public Guid? SystemId { get; set; }
 
         [Required(ErrorMessage = "Name é obrigatório.")]
         [MaxLength(80, ErrorMessage = "Name deve ter no máximo 80 caracteres.")]
@@ -41,7 +41,7 @@ public class RoutesController : ControllerBase
     public class UpdateRouteRequest
     {
         [Required(ErrorMessage = "SystemId é obrigatório.")]
-        public Guid SystemId { get; set; }
+        public Guid? SystemId { get; set; }
 
         [Required(ErrorMessage = "Name é obrigatório.")]
         [MaxLength(80, ErrorMessage = "Name deve ter no máximo 80 caracteres.")]
@@ -145,7 +145,9 @@ public class RoutesController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        if (!await SystemExistsAndActiveAsync(request.SystemId))
+        var systemId = request.SystemId!.Value;
+
+        if (!await SystemExistsAndActiveAsync(systemId))
             return InvalidSystemIdResult();
 
         var name = request.Name.Trim();
@@ -162,7 +164,7 @@ public class RoutesController : ControllerBase
         var now = DateTime.UtcNow;
         var entity = new AppRoute
         {
-            SystemId = request.SystemId,
+            SystemId = systemId,
             Name = name,
             Code = code,
             Description = description,
@@ -228,7 +230,9 @@ public class RoutesController : ControllerBase
         if (entity is null)
             return NotFound(new { message = "Route não encontrada." });
 
-        if (!await SystemExistsAndActiveAsync(request.SystemId))
+        var systemId = request.SystemId!.Value;
+
+        if (!await SystemExistsAndActiveAsync(systemId))
             return InvalidSystemIdResult();
 
         var name = request.Name.Trim();
@@ -242,7 +246,7 @@ public class RoutesController : ControllerBase
         if (await _db.Routes.IgnoreQueryFilters().AnyAsync(r => r.Id != id && r.Code == code))
             return new ConflictObjectResult(new { message = "Já existe outra route com este Code." });
 
-        entity.SystemId = request.SystemId;
+        entity.SystemId = systemId;
         entity.Name = name;
         entity.Code = code;
         entity.Description = description;

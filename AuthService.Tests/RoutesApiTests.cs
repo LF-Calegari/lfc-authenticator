@@ -68,6 +68,14 @@ public class RoutesApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Create_WithoutSystemId_ReturnsBadRequest()
+    {
+        var response = await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            new { name = "Rota sem sistema", code = "RT_NO_SYS" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Create_DuplicateCode_ReturnsConflict()
     {
         var sysId = await CreateSystemAsync("RT_SYS_DUP");
@@ -172,6 +180,19 @@ public class RoutesApiTests : IAsyncLifetime
 
         var put = await _client.PutAsJsonAsync($"/api/v1/systems/routes/{dto.Id}",
             RouteUpdateBody(Guid.NewGuid(), "S", "RT_INV"), TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
+    }
+
+    [Fact]
+    public async Task Update_WithoutSystemId_ReturnsBadRequest()
+    {
+        var sysId = await CreateSystemAsync("RT_SYS_MISSING");
+        var create = await _client.PostAsJsonAsync("/api/v1/systems/routes", RouteCreateBody(sysId, "S", "RT_MISSING"), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+
+        var put = await _client.PutAsJsonAsync($"/api/v1/systems/routes/{dto.Id}",
+            new { name = "S atualizado", code = "RT_MISSING" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
     }
 

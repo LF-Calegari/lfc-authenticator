@@ -39,7 +39,7 @@ public class UsersController : ControllerBase
         public string Password { get; set; } = string.Empty;
 
         [Required]
-        public int Identity { get; set; }
+        public int? Identity { get; set; }
 
         public Guid? ClientId { get; set; }
 
@@ -58,12 +58,12 @@ public class UsersController : ControllerBase
         public string Email { get; set; } = string.Empty;
 
         [Required]
-        public int Identity { get; set; }
+        public int? Identity { get; set; }
 
         public Guid? ClientId { get; set; }
 
         [Required]
-        public bool Active { get; set; }
+        public bool? Active { get; set; }
     }
 
     public class UpdatePasswordRequest
@@ -235,13 +235,14 @@ public class UsersController : ControllerBase
         }
 
         var now = DateTime.UtcNow;
+        var identity = request.Identity!.Value;
         var user = new UserEntity
         {
             Name = name,
             Email = email,
             Password = UserPasswordHasher.HashPlainPassword(password),
             ClientId = clientId,
-            Identity = request.Identity,
+            Identity = identity,
             Active = request.Active,
             CreatedAt = now,
             UpdatedAt = now,
@@ -337,12 +338,15 @@ public class UsersController : ControllerBase
                 return BadRequest(new { message = "ClientId informado não existe." });
         }
 
+        var identity = request.Identity!.Value;
+        var active = request.Active!.Value;
+
         user.Name = name;
         user.Email = email;
         // Não desassocia cliente quando ClientId não é informado no update.
         user.ClientId = request.ClientId ?? user.ClientId;
-        user.Identity = request.Identity;
-        user.Active = request.Active;
+        user.Identity = identity;
+        user.Active = active;
         user.UpdatedAt = DateTime.UtcNow;
 
         try
