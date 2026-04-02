@@ -27,13 +27,11 @@ builder.Services.AddAuthentication(options =>
     .AddScheme<AuthenticationSchemeOptions, JwtBearerAuthenticationHandler>(
         BearerAuthenticationDefaults.AuthenticationScheme,
         _ => { });
-builder.Services.AddAuthorization(options =>
-{
-    options.FallbackPolicy = new AuthorizationPolicyBuilder()
+builder.Services.AddAuthorizationBuilder()
+    .SetFallbackPolicy(new AuthorizationPolicyBuilder()
         .AddAuthenticationSchemes(BearerAuthenticationDefaults.AuthenticationScheme)
         .RequireAuthenticatedUser()
-        .Build();
-});
+        .Build());
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -91,6 +89,4 @@ if (!app.Environment.IsEnvironment("Testing"))
     }
 }
 
-app.Run();
-
-public partial class Program;
+await app.RunAsync();
