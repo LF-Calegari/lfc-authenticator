@@ -36,6 +36,10 @@ public class UsersApiTests : IAsyncLifetime
     private static object UserUpdateBody(string name, string email, int identity = 1, bool active = true) =>
         new { name, email, identity, active };
 
+    private static object UserUpdateBodyWithClientId(string name, string email, Guid clientId, int identity = 1,
+        bool active = true) =>
+        new { name, email, clientId, identity, active };
+
     [Fact]
     public async Task Create_Post_ReturnsCreated_WithUtcTimestamps_AndNullDeletedAt()
     {
@@ -188,6 +192,54 @@ public class UsersApiTests : IAsyncLifetime
         var put404 = await _client.PutAsJsonAsync($"/api/v1/users/{dto.Id}",
             UserUpdateBody("S3", "u1@example.com"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.NotFound, put404.StatusCode);
+    }
+
+    [Fact]
+    public async Task Update_WithoutClientId_KeepsExistingAssociation()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Com Cliente", "keep.client@example.com"), TestApiClient.JsonOptions);
+        create.EnsureSuccessStatusCode();
+        var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+        Assert.NotNull(dto.ClientId);
+
+        var put = await _client.PutAsJsonAsync($"/api/v1/users/{dto.Id}",
+            UserUpdateBody("Com Cliente Atualizado", "keep.client@example.com", identity: 2, active: true),
+            TestApiClient.JsonOptions);
+        put.EnsureSuccessStatusCode();
+        var updated = await put.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(updated);
+        Assert.Equal(dto.ClientId, updated.ClientId);
+    }
+
+    [Fact]
+    public async Task Update_WithExplicitClientId_ReassociatesUser()
+    {
+        var createUser = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Associado", "explicit.client@example.com"), TestApiClient.JsonOptions);
+        createUser.EnsureSuccessStatusCode();
+        var user = await createUser.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+        Assert.NotNull(user.ClientId);
+
+        var createClient = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(200000000),
+            fullName = "Cliente Destino"
+        }, TestApiClient.JsonOptions);
+        createClient.EnsureSuccessStatusCode();
+        var client = await createClient.Content.ReadFromJsonAsync<ClientIdDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(client);
+
+        var put = await _client.PutAsJsonAsync($"/api/v1/users/{user.Id}",
+            UserUpdateBodyWithClientId("Associado", "explicit.client@example.com", client.Id),
+            TestApiClient.JsonOptions);
+        put.EnsureSuccessStatusCode();
+        var updated = await put.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(updated);
+        Assert.Equal(client.Id, updated.ClientId);
     }
 
     [Fact]
@@ -359,6 +411,7 @@ public class UsersApiTests : IAsyncLifetime
         Guid Id,
         string Name,
         string Email,
+        Guid? ClientId,
         int Identity,
         bool Active,
         DateTime CreatedAt,
@@ -394,4 +447,23 @@ public class UsersApiTests : IAsyncLifetime
         DateTime? DeletedAt);
 
     private sealed record IdOnlyDto(Guid Id);
+
+    private sealed record ClientIdDto(Guid Id);
+
+    private static string GenerateCpf(int baseDigits)
+    {
+        var nine = (baseDigits % 1_000_000_000).ToString("D9");
+        var d1 = CheckDigit(nine, 10);
+        var d2 = CheckDigit(nine + d1, 11);
+        return nine + d1 + d2;
+    }
+
+    private static int CheckDigit(string input, int startWeight)
+    {
+        var sum = 0;
+        for (var i = 0; i < input.Length; i++)
+            sum += (input[i] - '0') * (startWeight - i);
+        var result = (sum * 10) % 11;
+        return result == 10 ? 0 : result;
+    }
 }

@@ -87,6 +87,7 @@ if (!app.Environment.IsEnvironment("Testing"))
         await db.Database.MigrateAsync();
         await OfficialCatalogSeeder.EnsureCatalogAsync(db);
         await DefaultSystemUserSeeder.EnsureDefaultUserAsync(db);
+        await LegacyUsersClientSeeder.EnsureLegacyUsersHaveClientAsync(db);
     }
 }
 
