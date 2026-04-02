@@ -201,6 +201,24 @@ public class AuthApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task VerifyToken_MalformedAuthorizationHeader_ReturnsUnauthorized()
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
+        req.Headers.TryAddWithoutValidation("Authorization", "Basic abc123");
+        var response = await _anon.SendAsync(req);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task VerifyToken_EmptyBearerToken_ReturnsUnauthorized()
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
+        req.Headers.TryAddWithoutValidation("Authorization", "Bearer   ");
+        var response = await _anon.SendAsync(req);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Users_WithoutToken_ReturnsUnauthorized()
     {
         using var anon = _factory.CreateApiClient();
