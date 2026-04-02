@@ -3,6 +3,12 @@ namespace AuthService.Auth;
 /// <summary>Nomes de políticas <c>Authorize(Policy = ...)</c> (prefixo perm:).</summary>
 public static class PermissionPolicies
 {
+    public const string ClientsCreate = "perm:Clients.Create";
+    public const string ClientsRead = "perm:Clients.Read";
+    public const string ClientsUpdate = "perm:Clients.Update";
+    public const string ClientsDelete = "perm:Clients.Delete";
+    public const string ClientsRestore = "perm:Clients.Restore";
+
     public const string UsersCreate = "perm:Users.Create";
     public const string UsersRead = "perm:Users.Read";
     public const string UsersUpdate = "perm:Users.Update";

@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace AuthService.Models;
 
 [Index(nameof(Email), IsUnique = true, Name = "UX_Users_Email")]
+[Index(nameof(ClientId), Name = "IX_Users_ClientId")]
 [Index(nameof(DeletedAt), Name = "IX_Users_DeletedAt")]
 [Table("Users")]
 public class User : ISoftDelete
@@ -25,6 +26,8 @@ public class User : ISoftDelete
     [Required]
     [StringLength(500)]
     public string Password { get; set; } = string.Empty;
+
+    public Guid? ClientId { get; set; }
 
     public int Identity { get; set; }
 

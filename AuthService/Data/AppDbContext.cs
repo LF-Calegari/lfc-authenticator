@@ -6,6 +6,9 @@ namespace AuthService.Data;
 
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
+    public DbSet<Client> Clients => Set<Client>();
+    public DbSet<ClientEmail> ClientEmails => Set<ClientEmail>();
+    public DbSet<ClientPhone> ClientPhones => Set<ClientPhone>();
     public DbSet<User> Users => Set<User>();
     public DbSet<AppSystem> Systems => Set<AppSystem>();
     public DbSet<AppRoute> Routes => Set<AppRoute>();
@@ -26,6 +29,43 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .WithMany()
             .HasForeignKey(r => r.SystemId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Client>(entity =>
+        {
+            entity.HasIndex(c => c.Cpf)
+                .IsUnique()
+                .HasDatabaseName("UX_Clients_Cpf")
+                .HasFilter("[Cpf] IS NOT NULL");
+
+            entity.HasIndex(c => c.Cnpj)
+                .IsUnique()
+                .HasDatabaseName("UX_Clients_Cnpj")
+                .HasFilter("[Cnpj] IS NOT NULL");
+        });
+
+        modelBuilder.Entity<User>(entity =>
+        {
+            entity.HasOne<Client>()
+                .WithMany()
+                .HasForeignKey(u => u.ClientId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ClientEmail>(entity =>
+        {
+            entity.HasOne<Client>()
+                .WithMany()
+                .HasForeignKey(e => e.ClientId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ClientPhone>(entity =>
+        {
+            entity.HasOne<Client>()
+                .WithMany()
+                .HasForeignKey(e => e.ClientId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
 
         modelBuilder.Entity<AppPermission>(entity =>
         {
