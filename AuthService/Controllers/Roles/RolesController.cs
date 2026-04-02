@@ -138,11 +138,6 @@ public class RolesController : ControllerBase
             _logger.LogWarning(ex, "Conflito de unicidade ao criar role com Code {Code}.", code);
             return UniqueConflictResult();
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erro inesperado ao persistir novo role (Code {Code}).", code);
-            throw;
-        }
 
         _logger.LogInformation("Role criado: {RoleId}, Code {Code}.", entity.Id, code);
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
@@ -212,11 +207,6 @@ public class RolesController : ControllerBase
             _logger.LogWarning(ex, "Conflito de unicidade ao atualizar role {RoleId} para Code {Code}.", id, code);
             return new ConflictObjectResult(new { message = "Já existe outro role com este Code." });
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erro inesperado ao persistir atualização do role {RoleId}.", id);
-            throw;
-        }
 
         _logger.LogInformation("Role atualizado: {RoleId}.", id);
         return Ok(ToResponse(entity));
@@ -232,15 +222,7 @@ public class RolesController : ControllerBase
 
         entity.DeletedAt = DateTime.UtcNow;
         entity.UpdatedAt = DateTime.UtcNow;
-        try
-        {
-            await _db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erro inesperado ao excluir (soft) role {RoleId}.", id);
-            throw;
-        }
+        await _db.SaveChangesAsync();
 
         _logger.LogInformation("Role excluído (soft): {RoleId}.", id);
         return NoContent();
@@ -259,15 +241,7 @@ public class RolesController : ControllerBase
 
         entity.DeletedAt = null;
         entity.UpdatedAt = DateTime.UtcNow;
-        try
-        {
-            await _db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erro inesperado ao restaurar role {RoleId}.", id);
-            throw;
-        }
+        await _db.SaveChangesAsync();
 
         _logger.LogInformation("Role restaurado: {RoleId}.", id);
         return Ok(new { message = "Role restaurado com sucesso." });

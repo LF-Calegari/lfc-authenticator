@@ -146,11 +146,6 @@ public class PermissionsController : ControllerBase
             var t = await PermissionTypeExistsAndActiveAsync(permissionTypeId);
             return InvalidReferencesResult(s, t);
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erro inesperado ao persistir nova permissão.");
-            throw;
-        }
 
         _logger.LogInformation("Permissão criada: {PermissionId}.", entity.Id);
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
@@ -229,11 +224,6 @@ public class PermissionsController : ControllerBase
             var t = await PermissionTypeExistsAndActiveAsync(permissionTypeId);
             return InvalidReferencesResult(s, t);
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erro inesperado ao persistir atualização da permissão {PermissionId}.", id);
-            throw;
-        }
 
         _logger.LogInformation("Permissão atualizada: {PermissionId}.", id);
         return Ok(ToResponse(entity));
@@ -249,15 +239,7 @@ public class PermissionsController : ControllerBase
 
         entity.DeletedAt = DateTime.UtcNow;
         entity.UpdatedAt = DateTime.UtcNow;
-        try
-        {
-            await _db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erro inesperado ao excluir (soft) permissão {PermissionId}.", id);
-            throw;
-        }
+        await _db.SaveChangesAsync();
 
         _logger.LogInformation("Permissão excluída (soft): {PermissionId}.", id);
         return NoContent();
@@ -284,15 +266,7 @@ public class PermissionsController : ControllerBase
 
         entity.DeletedAt = null;
         entity.UpdatedAt = DateTime.UtcNow;
-        try
-        {
-            await _db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erro inesperado ao restaurar permissão {PermissionId}.", id);
-            throw;
-        }
+        await _db.SaveChangesAsync();
 
         _logger.LogInformation("Permissão restaurada: {PermissionId}.", id);
         return Ok(new { message = "Permissão restaurada com sucesso." });
