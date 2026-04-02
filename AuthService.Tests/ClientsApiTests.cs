@@ -117,6 +117,46 @@ public class ClientsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CreatePfClient_DuplicateCpfInParallel_ReturnsCreatedAndConflict()
+    {
+        var cpf = GenerateCpf(100000020);
+        var request = new
+        {
+            type = "PF",
+            cpf,
+            fullName = "Cliente Concorrencia PF"
+        };
+
+        var responses = await Task.WhenAll(
+            _client.PostAsJsonAsync("/api/v1/clients", request, TestApiClient.JsonOptions),
+            _client.PostAsJsonAsync("/api/v1/clients", request, TestApiClient.JsonOptions));
+
+        var statuses = responses.Select(r => r.StatusCode).ToArray();
+        Assert.Contains(HttpStatusCode.Created, statuses);
+        Assert.Contains(HttpStatusCode.Conflict, statuses);
+    }
+
+    [Fact]
+    public async Task CreatePjClient_DuplicateCnpjInParallel_ReturnsCreatedAndConflict()
+    {
+        var cnpj = GenerateCnpj(12000020);
+        var request = new
+        {
+            type = "PJ",
+            cnpj,
+            corporateName = "Empresa Concorrencia LTDA"
+        };
+
+        var responses = await Task.WhenAll(
+            _client.PostAsJsonAsync("/api/v1/clients", request, TestApiClient.JsonOptions),
+            _client.PostAsJsonAsync("/api/v1/clients", request, TestApiClient.JsonOptions));
+
+        var statuses = responses.Select(r => r.StatusCode).ToArray();
+        Assert.Contains(HttpStatusCode.Created, statuses);
+        Assert.Contains(HttpStatusCode.Conflict, statuses);
+    }
+
+    [Fact]
     public async Task UpdateClient_ChangingType_ReturnsBadRequest()
     {
         var create = await _client.PostAsJsonAsync("/api/v1/clients", new

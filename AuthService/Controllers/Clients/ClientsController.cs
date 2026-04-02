@@ -15,7 +15,10 @@ namespace AuthService.Controllers.Clients;
 public class ClientsController : ControllerBase
 {
     private static readonly EmailAddressAttribute EmailValidator = new();
-    private static readonly Regex PhoneRegex = new(@"^\+[1-9]\d{11,14}$", RegexOptions.Compiled);
+    private static readonly Regex PhoneRegex = new(
+        @"^\+[1-9]\d{11,14}$",
+        RegexOptions.Compiled,
+        TimeSpan.FromMilliseconds(200));
     private readonly AppDbContext _db;
 
     public ClientsController(AppDbContext db)
