@@ -1,29 +1,21 @@
-name: SonarCloud
-
-on:
-  push:
-    branches: [ "main", "development" ]
-  pull_request:
-    branches: [ "main", "development" ]
-
 jobs:
   analyze:
     runs-on: ubuntu-latest
     env:
-      CI_SQL_SA_PASSWORD: "YourStrong@Passw0rd123"
+      CI_SQL_SA_PASSWORD: ${{ secrets.MSSQL_SA_PASSWORD }}
     services:
       mssql:
         image: mcr.microsoft.com/mssql/server:2022-latest
         env:
           ACCEPT_EULA: "Y"
-          MSSQL_SA_PASSWORD: "YourStrong@Passw0rd123"
+          MSSQL_SA_PASSWORD: ${{ env.CI_SQL_SA_PASSWORD }}
         ports:
           - 1433:1433
         options: >-
-          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P '$$MSSQL_SA_PASSWORD' -C -Q 'SELECT 1' || exit 1"
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" || exit 1"
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 10
+          --health-retries 15
 
     steps:
       - name: Checkout
@@ -66,7 +58,6 @@ jobs:
             /p:CollectCoverage=true \
             /p:CoverletOutputFormat=opencover \
             /p:CoverletOutput=./TestResults/coverage.opencover.xml
-
 
       - name: Sonar end
         env:
