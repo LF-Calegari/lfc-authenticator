@@ -1,8 +1,12 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using AuthService.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -10,6 +14,7 @@ namespace AuthService.Tests;
 
 public class AuthApiTests : IAsyncLifetime
 {
+    private const string TestJwtSecret = "integration-tests-jwt-secret-key-32chars!!";
     private WebAppFactory _factory = null!;
     private HttpClient _admin = null!;
     private HttpClient _anon = null!;
@@ -219,6 +224,96 @@ public class AuthApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task VerifyToken_WithInvalidJwtConfiguration_ReturnsUnauthorized()
+    {
+        using var invalidSecretFactory = _factory.WithWebHostBuilder(static builder =>
+        {
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Auth:Jwt:Secret"] = "short-secret"
+                });
+            });
+        });
+        using var client = invalidSecretFactory.CreateClient();
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "abc");
+        var response = await client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task VerifyToken_ExpiredJwt_ReturnsUnauthorized()
+    {
+        var token = CreateHs256Token(
+            TestJwtSecret,
+            new Dictionary<string, object>
+            {
+                ["sub"] = Guid.NewGuid().ToString("D"),
+                ["tv"] = 0,
+                ["exp"] = DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeSeconds()
+            });
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await _anon.SendAsync(req);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task VerifyToken_WrongSignatureJwt_ReturnsUnauthorized()
+    {
+        var token = CreateHs256Token(
+            "wrong-signature-secret-key-32chars!!",
+            new Dictionary<string, object>
+            {
+                ["sub"] = Guid.NewGuid().ToString("D"),
+                ["tv"] = 0,
+                ["exp"] = DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds()
+            });
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await _anon.SendAsync(req);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task VerifyToken_WithoutSubClaim_ReturnsUnauthorized()
+    {
+        var token = CreateHs256Token(
+            TestJwtSecret,
+            new Dictionary<string, object>
+            {
+                ["tv"] = 0,
+                ["exp"] = DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds()
+            });
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await _anon.SendAsync(req);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task VerifyToken_WithoutTokenVersionClaim_ReturnsUnauthorized()
+    {
+        var token = CreateHs256Token(
+            TestJwtSecret,
+            new Dictionary<string, object>
+            {
+                ["sub"] = Guid.NewGuid().ToString("D"),
+                ["exp"] = DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds()
+            });
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await _anon.SendAsync(req);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Users_WithoutToken_ReturnsUnauthorized()
     {
         using var anon = _factory.CreateApiClient();
@@ -244,5 +339,28 @@ public class AuthApiTests : IAsyncLifetime
         var response = await _anon.SendAsync(req);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    private static string CreateHs256Token(string secret, IDictionary<string, object> payload)
+    {
+        var header = new Dictionary<string, object>
+        {
+            ["alg"] = "HS256",
+            ["typ"] = "JWT"
+        };
+        var headerSegment = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(header));
+        var payloadSegment = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(payload));
+        var signingInput = $"{headerSegment}.{payloadSegment}";
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var signature = hmac.ComputeHash(Encoding.UTF8.GetBytes(signingInput));
+        return $"{signingInput}.{Base64UrlEncode(signature)}";
+    }
+
+    private static string Base64UrlEncode(byte[] bytes)
+    {
+        return Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
     }
 }
