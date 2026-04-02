@@ -9,6 +9,21 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    env:
+      CI_SQL_SA_PASSWORD: "YourStrong@Passw0rd123"
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "YourStrong@Passw0rd123"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P '$$MSSQL_SA_PASSWORD' -C -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout
@@ -43,6 +58,8 @@ jobs:
         run: dotnet build AuthService/AuthService.csproj --no-restore --configuration Release
 
       - name: Test with coverage
+        env:
+          AUTH_SERVICE_TEST_SQL_BASE: "Server=127.0.0.1,1433;User Id=sa;Password=${{ env.CI_SQL_SA_PASSWORD }};TrustServerCertificate=True"
         run: |
           dotnet test AuthService.Tests/AuthService.Tests.csproj \
             --configuration Release \
