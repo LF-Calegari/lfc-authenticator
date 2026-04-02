@@ -220,6 +220,27 @@ public class ClientsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AddExtraEmail_DuplicateForSameClient_ReturnsConflict()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000021),
+            fullName = "Cliente Email Duplicado"
+        }, TestApiClient.JsonOptions);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        var first = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/emails",
+            new { email = "duplicado@example.com" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+
+        var second = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/emails",
+            new { email = "duplicado@example.com" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+    }
+
+    [Fact]
     public async Task RemoveExtraEmail_WhenUsedAsUsername_ReturnsBadRequest()
     {
         var create = await _client.PostAsJsonAsync("/api/v1/clients", new
@@ -248,6 +269,31 @@ public class ClientsApiTests : IAsyncLifetime
 
         var remove = await _client.DeleteAsync($"/api/v1/clients/{created.Id}/emails/{contactId}");
         Assert.Equal(HttpStatusCode.BadRequest, remove.StatusCode);
+    }
+
+    [Fact]
+    public async Task RemoveExtraEmail_RemovesAndSecondAttemptReturnsNotFound()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000022),
+            fullName = "Cliente Remocao Email"
+        }, TestApiClient.JsonOptions);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        var add = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/emails",
+            new { email = "remover@example.com" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.OK, add.StatusCode);
+        var email = await add.Content.ReadFromJsonAsync<ClientEmailDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(email);
+
+        var remove = await _client.DeleteAsync($"/api/v1/clients/{created.Id}/emails/{email.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, remove.StatusCode);
+
+        var secondRemove = await _client.DeleteAsync($"/api/v1/clients/{created.Id}/emails/{email.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, secondRemove.StatusCode);
     }
 
     [Fact]
@@ -333,6 +379,31 @@ public class ClientsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RemovePhone_RemovesAndSecondAttemptReturnsNotFound()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000023),
+            fullName = "Cliente Remocao Telefone"
+        }, TestApiClient.JsonOptions);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        var add = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/phones",
+            new { number = "+5518333333311" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.OK, add.StatusCode);
+        var phone = await add.Content.ReadFromJsonAsync<ClientPhoneDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(phone);
+
+        var remove = await _client.DeleteAsync($"/api/v1/clients/{created.Id}/phones/{phone.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, remove.StatusCode);
+
+        var secondRemove = await _client.DeleteAsync($"/api/v1/clients/{created.Id}/phones/{phone.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, secondRemove.StatusCode);
+    }
+
+    [Fact]
     public async Task DeleteClient_ThenRestore_ReturnsToActiveFlow()
     {
         var create = await _client.PostAsJsonAsync("/api/v1/clients", new
@@ -365,6 +436,8 @@ public class ClientsApiTests : IAsyncLifetime
         string? FullName,
         string? Cnpj,
         string? CorporateName);
+    private sealed record ClientEmailDto(Guid Id, string Email, DateTime CreatedAt);
+    private sealed record ClientPhoneDto(Guid Id, string Number, DateTime CreatedAt);
 
     private static string GenerateCpf(int baseDigits)
     {
