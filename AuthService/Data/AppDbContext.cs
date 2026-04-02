@@ -119,17 +119,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
-        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        foreach (var clrType in modelBuilder.Model.GetEntityTypes()
+                     .Where(et => typeof(ISoftDelete).IsAssignableFrom(et.ClrType))
+                     .Select(et => et.ClrType))
         {
-            if (typeof(ISoftDelete).IsAssignableFrom(entityType.ClrType))
-            {
-                var parameter = Expression.Parameter(entityType.ClrType, "e");
-                var property = Expression.Property(parameter, nameof(ISoftDelete.DeletedAt));
-                var nullConstant = Expression.Constant(null, typeof(DateTime?));
-                var body = Expression.Equal(property, nullConstant);
-                var lambda = Expression.Lambda(body, parameter);
-                modelBuilder.Entity(entityType.ClrType).HasQueryFilter(lambda);
-            }
+            var parameter = Expression.Parameter(clrType, "e");
+            var property = Expression.Property(parameter, nameof(ISoftDelete.DeletedAt));
+            var nullConstant = Expression.Constant(null, typeof(DateTime?));
+            var body = Expression.Equal(property, nullConstant);
+            var lambda = Expression.Lambda(body, parameter);
+            modelBuilder.Entity(clrType).HasQueryFilter(lambda);
         }
     }
 }
