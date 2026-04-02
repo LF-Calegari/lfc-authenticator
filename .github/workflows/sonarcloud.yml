@@ -46,12 +46,16 @@ jobs:
         run: dotnet restore AuthService/AuthService.csproj
 
       - name: Sonar begin
+        env:
+          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           dotnet-sonarscanner begin \
-            /k:"${{ secrets.SONAR_PROJECT_KEY }}" \
-            /o:"${{ secrets.SONAR_ORGANIZATION }}" \
+            /k:"$SONAR_PROJECT_KEY" \
+            /o:"$SONAR_ORGANIZATION" \
             /d:sonar.host.url="https://sonarcloud.io" \
-            /d:sonar.token="${{ secrets.SONAR_TOKEN }}" \
+            /d:sonar.token="$SONAR_TOKEN" \
             /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
 
       - name: Build
