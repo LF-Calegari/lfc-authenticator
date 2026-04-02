@@ -292,6 +292,47 @@ public class ClientsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AddPhone_InvalidFormat_ReturnsBadRequest()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000008),
+            fullName = "Cliente Telefone"
+        }, TestApiClient.JsonOptions);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        var add = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/phones",
+            new { number = "18999999999" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, add.StatusCode);
+    }
+
+    [Fact]
+    public async Task AddPhone_MaxThree_ReturnsBadRequestOnFourth()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000009),
+            fullName = "Cliente Limite Telefone"
+        }, TestApiClient.JsonOptions);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        for (var i = 1; i <= 3; i++)
+        {
+            var add = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/phones",
+                new { number = $"+55183333333{i:00}" }, TestApiClient.JsonOptions);
+            Assert.Equal(HttpStatusCode.OK, add.StatusCode);
+        }
+
+        var fourth = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/phones",
+            new { number = "+5518333333399" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, fourth.StatusCode);
+    }
+
+    [Fact]
     public async Task DeleteClient_ThenRestore_ReturnsToActiveFlow()
     {
         var create = await _client.PostAsJsonAsync("/api/v1/clients", new
