@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -8,17 +8,22 @@ namespace AuthService.Data.Migrations
     /// <inheritdoc />
     public partial class CreateClientsDomain : Migration
     {
+        private const string UsersTable = "Users";
+        private const string ClientsTable = "Clients";
+        private const string ClientEmailsTable = "ClientEmails";
+        private const string ClientPhonesTable = "ClientPhones";
+
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<Guid>(
                 name: "ClientId",
-                table: "Users",
+                table: UsersTable,
                 type: "uniqueidentifier",
                 nullable: true);
 
             migrationBuilder.CreateTable(
-                name: "Clients",
+                name: ClientsTable,
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
@@ -37,7 +42,7 @@ namespace AuthService.Data.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "ClientEmails",
+                name: ClientEmailsTable,
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
@@ -51,13 +56,13 @@ namespace AuthService.Data.Migrations
                     table.ForeignKey(
                         name: "FK_ClientEmails_Clients_ClientId",
                         column: x => x.ClientId,
-                        principalTable: "Clients",
+                        principalTable: ClientsTable,
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
-                name: "ClientPhones",
+                name: ClientPhonesTable,
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
@@ -72,52 +77,52 @@ namespace AuthService.Data.Migrations
                     table.ForeignKey(
                         name: "FK_ClientPhones_Clients_ClientId",
                         column: x => x.ClientId,
-                        principalTable: "Clients",
+                        principalTable: ClientsTable,
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateIndex(
                 name: "IX_Users_ClientId",
-                table: "Users",
+                table: UsersTable,
                 column: "ClientId");
 
             migrationBuilder.CreateIndex(
                 name: "UX_ClientEmails_ClientId_Email",
-                table: "ClientEmails",
+                table: ClientEmailsTable,
                 columns: new[] { "ClientId", "Email" },
                 unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "UX_ClientPhones_ClientId_Type_Number",
-                table: "ClientPhones",
+                table: ClientPhonesTable,
                 columns: new[] { "ClientId", "Type", "Number" },
                 unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_Clients_DeletedAt",
-                table: "Clients",
+                table: ClientsTable,
                 column: "DeletedAt");
 
             migrationBuilder.CreateIndex(
                 name: "UX_Clients_Cnpj",
-                table: "Clients",
+                table: ClientsTable,
                 column: "Cnpj",
                 unique: true,
                 filter: "[Cnpj] IS NOT NULL");
 
             migrationBuilder.CreateIndex(
                 name: "UX_Clients_Cpf",
-                table: "Clients",
+                table: ClientsTable,
                 column: "Cpf",
                 unique: true,
                 filter: "[Cpf] IS NOT NULL");
 
             migrationBuilder.AddForeignKey(
                 name: "FK_Users_Clients_ClientId",
-                table: "Users",
+                table: UsersTable,
                 column: "ClientId",
-                principalTable: "Clients",
+                principalTable: ClientsTable,
                 principalColumn: "Id",
                 onDelete: ReferentialAction.Restrict);
         }
@@ -127,24 +132,24 @@ namespace AuthService.Data.Migrations
         {
             migrationBuilder.DropForeignKey(
                 name: "FK_Users_Clients_ClientId",
-                table: "Users");
+                table: UsersTable);
 
             migrationBuilder.DropTable(
-                name: "ClientEmails");
+                name: ClientEmailsTable);
 
             migrationBuilder.DropTable(
-                name: "ClientPhones");
+                name: ClientPhonesTable);
 
             migrationBuilder.DropTable(
-                name: "Clients");
+                name: ClientsTable);
 
             migrationBuilder.DropIndex(
                 name: "IX_Users_ClientId",
-                table: "Users");
+                table: UsersTable);
 
             migrationBuilder.DropColumn(
                 name: "ClientId",
-                table: "Users");
+                table: UsersTable);
         }
     }
 }

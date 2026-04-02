@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -8,11 +8,13 @@ namespace AuthService.Data.Migrations
     /// <inheritdoc />
     public partial class AddSystemTokenTypes : Migration
     {
+        private const string TableName = "SystemTokenTypes";
+
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "SystemTokenTypes",
+                name: TableName,
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
@@ -30,12 +32,12 @@ namespace AuthService.Data.Migrations
 
             migrationBuilder.CreateIndex(
                 name: "IX_SystemTokenTypes_DeletedAt",
-                table: "SystemTokenTypes",
+                table: TableName,
                 column: "DeletedAt");
 
             migrationBuilder.CreateIndex(
                 name: "UX_SystemTokenTypes_Code",
-                table: "SystemTokenTypes",
+                table: TableName,
                 column: "Code",
                 unique: true);
         }
@@ -44,7 +46,7 @@ namespace AuthService.Data.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "SystemTokenTypes");
+                name: TableName);
         }
     }
 }

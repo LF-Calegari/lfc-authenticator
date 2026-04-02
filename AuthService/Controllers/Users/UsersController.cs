@@ -16,6 +16,8 @@ namespace AuthService.Controllers.Users;
 [Route("users")]
 public class UsersController : ControllerBase
 {
+    private const string UserNotFoundMessage = "Usuário não encontrado.";
+
     private readonly AppDbContext _db;
 
     public UsersController(AppDbContext db)
@@ -278,7 +280,7 @@ public class UsersController : ControllerBase
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
         if (user is null)
-            return NotFound(new { message = "Usuário não encontrado." });
+            return NotFound(new { message = UserNotFoundMessage });
 
         var roles = await _db.UserRoles
             .AsNoTracking()
@@ -326,7 +328,7 @@ public class UsersController : ControllerBase
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
         if (user is null)
-            return NotFound(new { message = "Usuário não encontrado." });
+            return NotFound(new { message = UserNotFoundMessage });
 
         if (await EmailExistsNormalizedAsync(_db, email, id))
             return new ConflictObjectResult(new { message = "Já existe outro usuário com este Email." });
@@ -384,7 +386,7 @@ public class UsersController : ControllerBase
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
         if (user is null)
-            return NotFound(new { message = "Usuário não encontrado." });
+            return NotFound(new { message = UserNotFoundMessage });
 
         user.Password = UserPasswordHasher.HashPlainPassword(password);
         user.UpdatedAt = DateTime.UtcNow;
@@ -398,7 +400,7 @@ public class UsersController : ControllerBase
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
         if (user is null)
-            return NotFound(new { message = "Usuário não encontrado." });
+            return NotFound(new { message = UserNotFoundMessage });
 
         user.DeletedAt = DateTime.UtcNow;
         user.UpdatedAt = DateTime.UtcNow;

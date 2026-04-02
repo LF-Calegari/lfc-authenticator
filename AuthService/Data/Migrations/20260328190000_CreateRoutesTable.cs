@@ -8,11 +8,13 @@ namespace AuthService.Data.Migrations
     /// <inheritdoc />
     public partial class CreateRoutesTable : Migration
     {
+        private const string TableName = "Routes";
+
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "Routes",
+                name: TableName,
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
@@ -37,17 +39,17 @@ namespace AuthService.Data.Migrations
 
             migrationBuilder.CreateIndex(
                 name: "IX_Routes_DeletedAt",
-                table: "Routes",
+                table: TableName,
                 column: "DeletedAt");
 
             migrationBuilder.CreateIndex(
                 name: "IX_Routes_SystemId",
-                table: "Routes",
+                table: TableName,
                 column: "SystemId");
 
             migrationBuilder.CreateIndex(
                 name: "UX_Routes_Code",
-                table: "Routes",
+                table: TableName,
                 column: "Code",
                 unique: true);
         }
@@ -56,7 +58,7 @@ namespace AuthService.Data.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "Routes");
+                name: TableName);
         }
     }
 }
