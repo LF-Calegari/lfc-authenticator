@@ -66,6 +66,57 @@ Nunca, em hipótese alguma, faça commit do arquivo de token `./.credentials/rev
 
 ---
 
+# 🔐 Autenticação SonarCloud (obrigatório para Quality Gate)
+
+Para validar PR que depende de SonarCloud, use somente token em:
+
+`./.credentials/sonar.token`
+
+Constantes deste repositório:
+
+- `SONAR_ORGANIZATION="lf-calegari"`
+- `SONAR_PROJECT_KEY="LF-Calegari_lfc-authenticator"`
+
+Antes de qualquer chamada à API do SonarCloud, execute exatamente:
+
+```bash
+SONAR_TOKEN_PATH="./.credentials/sonar.token"
+SONAR_ORGANIZATION="lf-calegari"
+SONAR_PROJECT_KEY="LF-Calegari_lfc-authenticator"
+
+if [ ! -f "$SONAR_TOKEN_PATH" ]; then
+  echo "ERRO: token do SonarCloud não encontrado em $SONAR_TOKEN_PATH" >&2
+  exit 1
+fi
+
+export SONAR_TOKEN="$(tr -d '\r\n' < "$SONAR_TOKEN_PATH")"
+
+if [ -z "$SONAR_TOKEN" ]; then
+  echo "ERRO: SONAR_TOKEN vazio" >&2
+  exit 1
+fi
+```
+
+Para checar Quality Gate de PR (obrigatório):
+
+```bash
+PR_NUMBER="<numero-do-pr>"
+
+curl -sS -u "$SONAR_TOKEN:" \
+  "https://sonarcloud.io/api/qualitygates/project_status?organization=${SONAR_ORGANIZATION}&projectKey=${SONAR_PROJECT_KEY}&pullRequest=${PR_NUMBER}"
+```
+
+Se o status não for `OK`, coletar evidências complementares:
+
+```bash
+curl -sS -u "$SONAR_TOKEN:" \
+  "https://sonarcloud.io/api/issues/search?organization=${SONAR_ORGANIZATION}&projects=${SONAR_PROJECT_KEY}&pullRequest=${PR_NUMBER}&resolved=false&ps=100"
+```
+
+Não exponha o token em logs/respostas e nunca comite `./.credentials/sonar.token`.
+
+---
+
 # 🔍 Etapa 2 — Validar contrato do programador
 
 Verifique se existem:
@@ -176,6 +227,12 @@ Se não → BLOCKER
 
 ## ✅ APPROVED
 - tudo ok
+
+---
+
+# 💬 Comentários em PR
+
+- Todo comentário em Issue/PR/review deve ser escrito sempre em **Markdown**.
 
 ---
 

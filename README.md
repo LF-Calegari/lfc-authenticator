@@ -411,6 +411,15 @@ dotnet ef migrations add NomeDescritivoDaMigration \
 ## Testes automatizados
 
 - Projeto: **`AuthService.Tests`**
+- Há dois tipos de suíte:
+  - **Unitária**: valida componentes isolados (sem banco/infra externa).
+  - **Integração**: usa SQL Server real e sobe a aplicação completa em memória.
+- Para executar apenas testes unitários:
+
+```bash
+dotnet test AuthService.Tests/AuthService.Tests.csproj --filter "FullyQualifiedName~UnitTests"
+```
+
 - Utilizam **SQL Server real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa seeders de catálogo e usuário bootstrap, e remove o banco ao final.
 - **Obrigatório** definir `AUTH_SERVICE_TEST_SQL_BASE` **sem** catálogo inicial:
 
@@ -452,7 +461,8 @@ Sem essa variável, o `WebApplicationFactory` falha na construção — comporta
 1. Crie branch no padrão do time (ex.: `feature/<issue>/<descricao>`).
 2. Alterações de modelo exigem **migration** gerada com `dotnet ef migrations add`.
 3. Adicione ou atualize **testes de integração** para novos endpoints ou regras.
-4. Atualize esta documentação (rotas, variáveis, troubleshooting) no mesmo PR quando o contrato público mudar.
+4. Adicione ou atualize **testes unitários** para regras críticas e serviços utilitários.
+5. Atualize esta documentação (rotas, variáveis, troubleshooting) no mesmo PR quando o contrato público mudar.
 
 **Roadmap alinhado ao domínio**
 
