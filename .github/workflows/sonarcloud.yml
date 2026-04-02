@@ -1,3 +1,11 @@
+name: SonarCloud
+
+on:
+  push:
+    branches: [ "main", "development" ]
+  pull_request:
+    branches: [ "main", "development" ]
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
