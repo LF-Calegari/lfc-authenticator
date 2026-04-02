@@ -22,52 +22,21 @@ public sealed class JwtBearerAuthenticationHandler(
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        if (!Request.Headers.TryGetValue("Authorization", out var values))
-            return AuthenticateResult.NoResult();
+        var tokenReadResult = TryReadBearerToken(out var token);
+        if (tokenReadResult is not null)
+            return tokenReadResult;
 
-        var auth = values.ToString();
-        if (string.IsNullOrWhiteSpace(auth) || !auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-            return AuthenticateResult.Fail("Cabeçalho Authorization inválido.");
+        var secretValidation = ValidateJwtSecret();
+        if (secretValidation is not null)
+            return secretValidation;
 
-        var token = auth["Bearer ".Length..].Trim();
-        if (string.IsNullOrEmpty(token))
-            return AuthenticateResult.Fail("Token ausente.");
+        var payloadResult = TryDecodePayload(token);
+        if (payloadResult.Error is not null)
+            return payloadResult.Error;
 
-        if (string.IsNullOrWhiteSpace(_jwt.Secret) || _jwt.Secret.Length < 32)
-        {
-            Logger.LogError("Auth:Jwt:Secret inválido ou ausente.");
-            return AuthenticateResult.Fail("Configuração de autenticação inválida.");
-        }
-
-        IDictionary<string, object> payload;
-        try
-        {
-            payload = JwtBuilder.Create()
-                .WithAlgorithm(new HMACSHA256Algorithm())
-                .WithSecret(_jwt.Secret)
-                .MustVerifySignature()
-                .Decode<IDictionary<string, object>>(token);
-        }
-        catch (TokenExpiredException)
-        {
-            return AuthenticateResult.Fail("Token expirado.");
-        }
-        catch (SignatureVerificationException)
-        {
-            return AuthenticateResult.Fail("Assinatura do token inválida.");
-        }
-        catch (Exception ex)
-        {
-            Logger.LogDebug(ex, "Falha ao validar JWT.");
-            return AuthenticateResult.Fail("Token inválido.");
-        }
-
-        if (!payload.TryGetValue("sub", out var subObj) || subObj?.ToString() is not { } subStr
-            || !Guid.TryParse(subStr, out var userId))
-            return AuthenticateResult.Fail("Token sem identificador de usuário válido.");
-
-        if (!payload.TryGetValue("tv", out var tvObj) || !TryGetInt32(tvObj, out var tokenVersionClaim))
-            return AuthenticateResult.Fail("Token sem versão de sessão válida.");
+        var claimExtraction = TryExtractIdentityClaims(payloadResult.Payload!, out var userId, out var tokenVersionClaim);
+        if (claimExtraction is not null)
+            return claimExtraction;
 
         await using var scope = _services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -90,6 +59,73 @@ public sealed class JwtBearerAuthenticationHandler(
         var identity = new ClaimsIdentity(claims, Scheme.Name);
         var principal = new ClaimsPrincipal(identity);
         return AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme.Name));
+    }
+
+    private AuthenticateResult? TryReadBearerToken(out string token)
+    {
+        token = string.Empty;
+        if (!Request.Headers.TryGetValue("Authorization", out var values))
+            return AuthenticateResult.NoResult();
+
+        var auth = values.ToString();
+        if (string.IsNullOrWhiteSpace(auth) || !auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return AuthenticateResult.Fail("Cabeçalho Authorization inválido.");
+
+        token = auth["Bearer ".Length..].Trim();
+        return string.IsNullOrEmpty(token) ? AuthenticateResult.Fail("Token ausente.") : null;
+    }
+
+    private AuthenticateResult? ValidateJwtSecret()
+    {
+        if (!string.IsNullOrWhiteSpace(_jwt.Secret) && _jwt.Secret.Length >= 32)
+            return null;
+
+        Logger.LogError("Auth:Jwt:Secret inválido ou ausente.");
+        return AuthenticateResult.Fail("Configuração de autenticação inválida.");
+    }
+
+    private (IDictionary<string, object>? Payload, AuthenticateResult? Error) TryDecodePayload(string token)
+    {
+        try
+        {
+            var payload = JwtBuilder.Create()
+                .WithAlgorithm(new HMACSHA256Algorithm())
+                .WithSecret(_jwt.Secret)
+                .MustVerifySignature()
+                .Decode<IDictionary<string, object>>(token);
+            return (payload, null);
+        }
+        catch (TokenExpiredException)
+        {
+            return (null, AuthenticateResult.Fail("Token expirado."));
+        }
+        catch (SignatureVerificationException)
+        {
+            return (null, AuthenticateResult.Fail("Assinatura do token inválida."));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "Falha ao validar JWT.");
+            return (null, AuthenticateResult.Fail("Token inválido."));
+        }
+    }
+
+    private static AuthenticateResult? TryExtractIdentityClaims(
+        IDictionary<string, object> payload,
+        out Guid userId,
+        out int tokenVersionClaim)
+    {
+        userId = Guid.Empty;
+        tokenVersionClaim = 0;
+
+        if (!payload.TryGetValue("sub", out var subObj) || subObj?.ToString() is not { } subStr
+            || !Guid.TryParse(subStr, out userId))
+            return AuthenticateResult.Fail("Token sem identificador de usuário válido.");
+
+        if (!payload.TryGetValue("tv", out var tvObj) || !TryGetInt32(tvObj, out tokenVersionClaim))
+            return AuthenticateResult.Fail("Token sem versão de sessão válida.");
+
+        return null;
     }
 
     private static bool TryGetInt32(object? value, out int n)
