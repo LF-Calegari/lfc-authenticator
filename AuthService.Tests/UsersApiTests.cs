@@ -132,6 +132,15 @@ public class UsersApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Create_WithoutIdentity_ReturnsBadRequest()
+    {
+        var response = await _client.PostAsJsonAsync("/api/v1/users",
+            new { name = "Sem Identity", email = "no.identity@example.com", password = "SenhaSegura1!", active = true },
+            TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Put_WhitespaceOnlyName_ReturnsBadRequest()
     {
         var create = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("S", "w1@example.com"), TestApiClient.JsonOptions);
@@ -192,6 +201,18 @@ public class UsersApiTests : IAsyncLifetime
         var put404 = await _client.PutAsJsonAsync($"/api/v1/users/{dto.Id}",
             UserUpdateBody("S3", "u1@example.com"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.NotFound, put404.StatusCode);
+    }
+
+    [Fact]
+    public async Task Update_WithoutIdentityOrActive_ReturnsBadRequest()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("S", "missing.update@example.com"), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+
+        var put = await _client.PutAsJsonAsync($"/api/v1/users/{dto.Id}",
+            new { name = "S2", email = "missing.update@example.com" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
     }
 
     [Fact]
