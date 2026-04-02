@@ -104,8 +104,8 @@ public class SystemsController : ControllerBase
             yield return e.Message;
     }
 
-    private static IActionResult UniqueConflictResult() =>
-        new ConflictObjectResult(new { message = "Já existe um sistema com este Code." });
+    private static ConflictObjectResult UniqueConflictResult() =>
+        new(new { message = "Já existe um sistema com este Code." });
 
     [HttpPost]
     [Authorize(Policy = PermissionPolicies.SystemsCreate)]

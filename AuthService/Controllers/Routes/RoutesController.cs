@@ -122,8 +122,8 @@ public class RoutesController : ControllerBase
             yield return e.Message;
     }
 
-    private static IActionResult CodeConflictResult() =>
-        new ConflictObjectResult(new { message = "Já existe uma route com este Code." });
+    private static ConflictObjectResult CodeConflictResult() =>
+        new(new { message = "Já existe uma route com este Code." });
 
     private async Task<bool> SystemExistsAndActiveAsync(Guid systemId) =>
         systemId != Guid.Empty && await _db.Systems.AnyAsync(s => s.Id == systemId);
@@ -132,7 +132,7 @@ public class RoutesController : ControllerBase
     private IQueryable<AppRoute> ActiveRoutesWithActiveSystem() =>
         _db.Routes.Where(r => _db.Systems.Any(s => s.Id == r.SystemId));
 
-    private IActionResult InvalidSystemIdResult()
+    private ActionResult InvalidSystemIdResult()
     {
         ModelState.AddModelError(nameof(CreateRouteRequest.SystemId), "SystemId inválido ou sistema inativo.");
         return ValidationProblem(ModelState);

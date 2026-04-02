@@ -12,7 +12,7 @@ namespace AuthService.Controllers.Roles;
 
 [ApiController]
 [Route("roles")]
-public class RolesController : ControllerBase
+public partial class RolesController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly ILogger<RolesController> _logger;
@@ -95,8 +95,8 @@ public class RolesController : ControllerBase
             yield return e.Message;
     }
 
-    private static IActionResult UniqueConflictResult() =>
-        new ConflictObjectResult(new { message = "Já existe um role com este Code." });
+    private static ConflictObjectResult UniqueConflictResult() =>
+        new(new { message = "Já existe um role com este Code." });
 
     [HttpPost]
     [Authorize(Policy = PermissionPolicies.RolesCreate)]
@@ -139,7 +139,7 @@ public class RolesController : ControllerBase
             return UniqueConflictResult();
         }
 
-        _logger.LogInformation("Role criado: {RoleId}, Code {Code}.", entity.Id, code);
+        LogRoleCreated(entity.Id, code);
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
     }
 
@@ -208,7 +208,7 @@ public class RolesController : ControllerBase
             return new ConflictObjectResult(new { message = "Já existe outro role com este Code." });
         }
 
-        _logger.LogInformation("Role atualizado: {RoleId}.", id);
+        LogRoleUpdated(id);
         return Ok(ToResponse(entity));
     }
 
@@ -224,7 +224,7 @@ public class RolesController : ControllerBase
         entity.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Role excluído (soft): {RoleId}.", id);
+        LogRoleDeleted(id);
         return NoContent();
     }
 
@@ -243,7 +243,19 @@ public class RolesController : ControllerBase
         entity.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Role restaurado: {RoleId}.", id);
+        LogRoleRestored(id);
         return Ok(new { message = "Role restaurado com sucesso." });
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Role criado: {RoleId}, Code {Code}.")]
+    private partial void LogRoleCreated(Guid roleId, string code);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Role atualizado: {RoleId}.")]
+    private partial void LogRoleUpdated(Guid roleId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Role excluído (soft): {RoleId}.")]
+    private partial void LogRoleDeleted(Guid roleId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Role restaurado: {RoleId}.")]
+    private partial void LogRoleRestored(Guid roleId);
 }

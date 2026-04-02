@@ -181,8 +181,8 @@ public class UsersController : ControllerBase
             yield return e.Message;
     }
 
-    private static IActionResult EmailConflictResult() =>
-        new ConflictObjectResult(new { message = "Já existe um usuário com este Email." });
+    private static ConflictObjectResult EmailConflictResult() =>
+        new(new { message = "Já existe um usuário com este Email." });
 
     /// <summary>
     /// Compara por igualdade na coluna (sem função na coluna) para permitir uso do índice único em Email.
