@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -8,11 +8,13 @@ namespace AuthService.Data.Migrations
     /// <inheritdoc />
     public partial class CreateUsersTable : Migration
     {
+        private const string TableName = "Users";
+
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "Users",
+                name: TableName,
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
@@ -32,12 +34,12 @@ namespace AuthService.Data.Migrations
 
             migrationBuilder.CreateIndex(
                 name: "IX_Users_DeletedAt",
-                table: "Users",
+                table: TableName,
                 column: "DeletedAt");
 
             migrationBuilder.CreateIndex(
                 name: "UX_Users_Email",
-                table: "Users",
+                table: TableName,
                 column: "Email",
                 unique: true);
         }
@@ -46,7 +48,7 @@ namespace AuthService.Data.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "Users");
+                name: TableName);
         }
     }
 }

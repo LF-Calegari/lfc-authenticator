@@ -13,6 +13,10 @@ namespace AuthService.Controllers.Auth;
 [Route("auth")]
 public class AuthController : ControllerBase
 {
+    private const string InvalidCredentialsMessage = "Credenciais inválidas.";
+    private const string InvalidTokenMessage = "Token inválido.";
+    private const string UserNotFoundMessage = "Usuário não encontrado.";
+
     private readonly AppDbContext _db;
     private readonly IJwtTokenService _jwt;
     private readonly ILogger<AuthController> _logger;
@@ -56,20 +60,20 @@ public class AuthController : ControllerBase
         var password = request.Password.Trim();
 
         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
-            return Unauthorized(new { message = "Credenciais inválidas." });
+            return Unauthorized(new { message = InvalidCredentialsMessage });
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
         if (user is null)
         {
             _logger.LogWarning("Tentativa de login falhou para o email {Email}.", email);
-            return Unauthorized(new { message = "Credenciais inválidas." });
+            return Unauthorized(new { message = InvalidCredentialsMessage });
         }
 
         var (passwordOk, newStoredPassword) = UserPasswordHasher.Verify(user, password);
         if (!passwordOk)
         {
             _logger.LogWarning("Tentativa de login falhou para o email {Email}.", email);
-            return Unauthorized(new { message = "Credenciais inválidas." });
+            return Unauthorized(new { message = InvalidCredentialsMessage });
         }
 
         if (newStoredPassword is not null)
@@ -82,7 +86,7 @@ public class AuthController : ControllerBase
         if (!user.Active)
         {
             _logger.LogWarning("Tentativa de login para usuário inativo {UserId}.", user.Id);
-            return Unauthorized(new { message = "Credenciais inválidas." });
+            return Unauthorized(new { message = InvalidCredentialsMessage });
         }
 
         var token = _jwt.CreateAccessToken(user.Id, user.TokenVersion, out _);
@@ -95,11 +99,11 @@ public class AuthController : ControllerBase
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrEmpty(sub) || !Guid.TryParse(sub, out var userId))
-            return Unauthorized(new { message = "Token inválido." });
+            return Unauthorized(new { message = InvalidTokenMessage });
 
         var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null)
-            return Unauthorized(new { message = "Usuário não encontrado." });
+            return Unauthorized(new { message = UserNotFoundMessage });
 
         var permissionIds = (await EffectivePermissionIds.GetForUserAsync(_db, userId))
             .OrderBy(x => x)
@@ -118,11 +122,11 @@ public class AuthController : ControllerBase
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrEmpty(sub) || !Guid.TryParse(sub, out var userId))
-            return Unauthorized(new { message = "Token inválido." });
+            return Unauthorized(new { message = InvalidTokenMessage });
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null)
-            return Unauthorized(new { message = "Usuário não encontrado." });
+            return Unauthorized(new { message = UserNotFoundMessage });
 
         user.TokenVersion++;
         user.UpdatedAt = DateTime.UtcNow;

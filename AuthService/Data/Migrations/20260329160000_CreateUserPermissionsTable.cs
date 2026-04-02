@@ -8,11 +8,13 @@ namespace AuthService.Data.Migrations
     /// <inheritdoc />
     public partial class CreateUserPermissionsTable : Migration
     {
+        private const string TableName = "UserPermissions";
+
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "UserPermissions",
+                name: TableName,
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
@@ -41,22 +43,22 @@ namespace AuthService.Data.Migrations
 
             migrationBuilder.CreateIndex(
                 name: "IX_UserPermissions_DeletedAt",
-                table: "UserPermissions",
+                table: TableName,
                 column: "DeletedAt");
 
             migrationBuilder.CreateIndex(
                 name: "IX_UserPermissions_PermissionId",
-                table: "UserPermissions",
+                table: TableName,
                 column: "PermissionId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_UserPermissions_UserId",
-                table: "UserPermissions",
+                table: TableName,
                 column: "UserId");
 
             migrationBuilder.CreateIndex(
                 name: "UX_UserPermissions_UserId_PermissionId",
-                table: "UserPermissions",
+                table: TableName,
                 columns: new[] { "UserId", "PermissionId" },
                 unique: true);
         }
@@ -65,7 +67,7 @@ namespace AuthService.Data.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "UserPermissions");
+                name: TableName);
         }
     }
 }
