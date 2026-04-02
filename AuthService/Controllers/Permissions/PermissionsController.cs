@@ -26,10 +26,10 @@ public class PermissionsController : ControllerBase
     public class CreatePermissionRequest
     {
         [Required(ErrorMessage = "SystemId é obrigatório.")]
-        public Guid SystemId { get; set; }
+        public Guid? SystemId { get; set; }
 
         [Required(ErrorMessage = "PermissionTypeId é obrigatório.")]
-        public Guid PermissionTypeId { get; set; }
+        public Guid? PermissionTypeId { get; set; }
 
         [MaxLength(500, ErrorMessage = "Description deve ter no máximo 500 caracteres.")]
         public string? Description { get; set; }
@@ -38,10 +38,10 @@ public class PermissionsController : ControllerBase
     public class UpdatePermissionRequest
     {
         [Required(ErrorMessage = "SystemId é obrigatório.")]
-        public Guid SystemId { get; set; }
+        public Guid? SystemId { get; set; }
 
         [Required(ErrorMessage = "PermissionTypeId é obrigatório.")]
-        public Guid PermissionTypeId { get; set; }
+        public Guid? PermissionTypeId { get; set; }
 
         [MaxLength(500, ErrorMessage = "Description deve ter no máximo 500 caracteres.")]
         public string? Description { get; set; }
@@ -105,13 +105,16 @@ public class PermissionsController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        var systemOk = await SystemExistsAndActiveAsync(request.SystemId);
-        var typeOk = await PermissionTypeExistsAndActiveAsync(request.PermissionTypeId);
+        var systemId = request.SystemId!.Value;
+        var permissionTypeId = request.PermissionTypeId!.Value;
+
+        var systemOk = await SystemExistsAndActiveAsync(systemId);
+        var typeOk = await PermissionTypeExistsAndActiveAsync(permissionTypeId);
         if (!systemOk || !typeOk)
         {
             _logger.LogWarning(
                 "Criação de permissão rejeitada: SystemId {SystemId} ok={SystemOk}, PermissionTypeId {TypeId} ok={TypeOk}.",
-                request.SystemId, systemOk, request.PermissionTypeId, typeOk);
+                systemId, systemOk, permissionTypeId, typeOk);
             return InvalidReferencesResult(systemOk, typeOk);
         }
 
@@ -123,8 +126,8 @@ public class PermissionsController : ControllerBase
         var now = DateTime.UtcNow;
         var entity = new AppPermission
         {
-            SystemId = request.SystemId,
-            PermissionTypeId = request.PermissionTypeId,
+            SystemId = systemId,
+            PermissionTypeId = permissionTypeId,
             Description = description,
             CreatedAt = now,
             UpdatedAt = now,
@@ -139,8 +142,8 @@ public class PermissionsController : ControllerBase
         catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
         {
             _logger.LogWarning(ex, "Violação de FK ao criar permissão.");
-            var s = await SystemExistsAndActiveAsync(request.SystemId);
-            var t = await PermissionTypeExistsAndActiveAsync(request.PermissionTypeId);
+            var s = await SystemExistsAndActiveAsync(systemId);
+            var t = await PermissionTypeExistsAndActiveAsync(permissionTypeId);
             return InvalidReferencesResult(s, t);
         }
         catch (Exception ex)
@@ -192,8 +195,11 @@ public class PermissionsController : ControllerBase
         if (entity is null)
             return NotFound(new { message = "Permissão não encontrada." });
 
-        var systemOk = await SystemExistsAndActiveAsync(request.SystemId);
-        var typeOk = await PermissionTypeExistsAndActiveAsync(request.PermissionTypeId);
+        var systemId = request.SystemId!.Value;
+        var permissionTypeId = request.PermissionTypeId!.Value;
+
+        var systemOk = await SystemExistsAndActiveAsync(systemId);
+        var typeOk = await PermissionTypeExistsAndActiveAsync(permissionTypeId);
         if (!systemOk || !typeOk)
         {
             _logger.LogWarning(
@@ -207,8 +213,8 @@ public class PermissionsController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        entity.SystemId = request.SystemId;
-        entity.PermissionTypeId = request.PermissionTypeId;
+        entity.SystemId = systemId;
+        entity.PermissionTypeId = permissionTypeId;
         entity.Description = description;
         entity.UpdatedAt = DateTime.UtcNow;
 
@@ -219,8 +225,8 @@ public class PermissionsController : ControllerBase
         catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
         {
             _logger.LogWarning(ex, "Violação de FK ao atualizar permissão {PermissionId}.", id);
-            var s = await SystemExistsAndActiveAsync(request.SystemId);
-            var t = await PermissionTypeExistsAndActiveAsync(request.PermissionTypeId);
+            var s = await SystemExistsAndActiveAsync(systemId);
+            var t = await PermissionTypeExistsAndActiveAsync(permissionTypeId);
             return InvalidReferencesResult(s, t);
         }
         catch (Exception ex)

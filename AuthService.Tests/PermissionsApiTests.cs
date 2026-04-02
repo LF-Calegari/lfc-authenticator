@@ -95,6 +95,16 @@ public class PermissionsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Create_WithoutSystemId_ReturnsBadRequest()
+    {
+        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_MISSING_SYS");
+
+        var response = await _client.PostAsJsonAsync("/api/v1/permissions",
+            new { permissionTypeId = typeId, description = "sem sistema" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Create_WithInvalidPermissionTypeId_ReturnsBadRequest()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_INV_T");
@@ -197,6 +207,20 @@ public class PermissionsApiTests : IAsyncLifetime
 
         var put = await _client.PutAsJsonAsync($"/api/v1/permissions/{dto.Id}",
             PermUpdateBody(Guid.NewGuid(), typeId), TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
+    }
+
+    [Fact]
+    public async Task Update_WithoutPermissionTypeId_ReturnsBadRequest()
+    {
+        var sysId = await CreateSystemAsync("PERM_SYS_MISSING_TYPE");
+        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_MISSING_TYPE");
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+
+        var put = await _client.PutAsJsonAsync($"/api/v1/permissions/{dto.Id}",
+            new { systemId = sysId, description = "sem tipo" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
     }
 
