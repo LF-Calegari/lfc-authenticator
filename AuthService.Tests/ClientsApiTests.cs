@@ -1,0 +1,241 @@
+using System.Net;
+using System.Net.Http.Json;
+using AuthService.Data;
+using AuthService.Models;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit;
+
+namespace AuthService.Tests;
+
+public class ClientsApiTests : IAsyncLifetime
+{
+    private WebAppFactory _factory = null!;
+    private HttpClient _client = null!;
+
+    public async Task InitializeAsync()
+    {
+        _factory = new WebAppFactory();
+        _client = await TestApiClient.CreateAuthenticatedAsync(_factory);
+    }
+
+    public Task DisposeAsync()
+    {
+        _client.Dispose();
+        _factory.Dispose();
+        return Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task CreatePfClient_ThenGetById_ReturnsCreated()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000000),
+            fullName = "Cliente PF Teste"
+        }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+
+        var dto = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+        Assert.Equal("PF", dto.Type);
+        Assert.Equal(GenerateCpf(100000000), dto.Cpf);
+        Assert.Equal("Cliente PF Teste", dto.FullName);
+        Assert.Null(dto.Cnpj);
+        Assert.Null(dto.CorporateName);
+
+        var get = await _client.GetAsync($"/api/v1/clients/{dto.Id}");
+        Assert.Equal(HttpStatusCode.OK, get.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreatePjClient_WithInvalidCnpj_ReturnsBadRequest()
+    {
+        var response = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PJ",
+            cnpj = "12345678000100",
+            corporateName = "Empresa Inválida"
+        }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreatePfClient_DuplicateCpf_ReturnsConflict()
+    {
+        await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = "52998224725",
+            fullName = "Cliente 1"
+        }, TestApiClient.JsonOptions);
+
+        var second = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = "52998224725",
+            fullName = "Cliente 2"
+        }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateClient_ChangingType_ReturnsBadRequest()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000001),
+            fullName = "Cliente PF"
+        }, TestApiClient.JsonOptions);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        var update = await _client.PutAsJsonAsync($"/api/v1/clients/{created.Id}", new
+        {
+            type = "PJ",
+            cnpj = "11222333000181",
+            corporateName = "Empresa X"
+        }, TestApiClient.JsonOptions);
+
+        Assert.Equal(HttpStatusCode.BadRequest, update.StatusCode);
+    }
+
+    [Fact]
+    public async Task AddExtraEmails_MaxThree_ReturnsBadRequestOnFourth()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000002),
+            fullName = "Cliente Email"
+        }, TestApiClient.JsonOptions);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        for (var i = 1; i <= 3; i++)
+        {
+            var add = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/emails",
+                new { email = $"extra{i}@example.com" }, TestApiClient.JsonOptions);
+            Assert.Equal(HttpStatusCode.OK, add.StatusCode);
+        }
+
+        var fourth = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/emails",
+            new { email = "extra4@example.com" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, fourth.StatusCode);
+    }
+
+    [Fact]
+    public async Task AddExtraEmail_UsedAsUsername_ReturnsConflict()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000003),
+            fullName = "Cliente Username"
+        }, TestApiClient.JsonOptions);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        var add = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/emails",
+            new { email = IntegrationBootstrapSeeder.Email }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.Conflict, add.StatusCode);
+    }
+
+    [Fact]
+    public async Task RemoveExtraEmail_WhenUsedAsUsername_ReturnsBadRequest()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000004),
+            fullName = "Cliente Remoção"
+        }, TestApiClient.JsonOptions);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        Guid contactId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = new ClientEmail
+            {
+                ClientId = created.Id,
+                Email = IntegrationBootstrapSeeder.Email,
+                CreatedAt = DateTime.UtcNow
+            };
+            db.ClientEmails.Add(row);
+            await db.SaveChangesAsync();
+            contactId = row.Id;
+        }
+
+        var remove = await _client.DeleteAsync($"/api/v1/clients/{created.Id}/emails/{contactId}");
+        Assert.Equal(HttpStatusCode.BadRequest, remove.StatusCode);
+    }
+
+    [Fact]
+    public async Task AddMobile_InvalidFormat_ReturnsBadRequest()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000005),
+            fullName = "Cliente Fone"
+        }, TestApiClient.JsonOptions);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        var add = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/mobiles",
+            new { number = "18999999999" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, add.StatusCode);
+    }
+
+    [Fact]
+    public async Task AddMobile_MaxThree_ReturnsBadRequestOnFourth()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(100000006),
+            fullName = "Cliente Limite Fone"
+        }, TestApiClient.JsonOptions);
+        var created = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(created);
+
+        for (var i = 1; i <= 3; i++)
+        {
+            var add = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/mobiles",
+                new { number = $"+55189999999{i:00}" }, TestApiClient.JsonOptions);
+            Assert.Equal(HttpStatusCode.OK, add.StatusCode);
+        }
+
+        var fourth = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/mobiles",
+            new { number = "+5518999999999" }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, fourth.StatusCode);
+    }
+
+    private sealed record ClientDto(
+        Guid Id,
+        string Type,
+        string? Cpf,
+        string? FullName,
+        string? Cnpj,
+        string? CorporateName);
+
+    private static string GenerateCpf(int baseDigits)
+    {
+        var nine = (baseDigits % 1_000_000_000).ToString("D9");
+        var d1 = CheckDigit(nine, 10);
+        var d2 = CheckDigit(nine + d1, 11);
+        return nine + d1 + d2;
+    }
+
+    private static int CheckDigit(string input, int startWeight)
+    {
+        var sum = 0;
+        for (var i = 0; i < input.Length; i++)
+            sum += (input[i] - '0') * (startWeight - i);
+        var result = (sum * 10) % 11;
+        return result == 10 ? 0 : result;
+    }
+}

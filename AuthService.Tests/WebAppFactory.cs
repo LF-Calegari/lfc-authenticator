@@ -63,6 +63,7 @@ public class WebAppFactory : WebApplicationFactory<Program>
         OfficialCatalogSeeder.EnsureCatalogAsync(db).GetAwaiter().GetResult();
         DefaultSystemUserSeeder.EnsureDefaultUserAsync(db).GetAwaiter().GetResult();
         IntegrationBootstrapSeeder.EnsureBootstrapUserAsync(db).GetAwaiter().GetResult();
+        LegacyUsersClientSeeder.EnsureLegacyUsersHaveClientAsync(db).GetAwaiter().GetResult();
         return host;
     }
 

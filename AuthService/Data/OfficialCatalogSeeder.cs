@@ -8,6 +8,7 @@ public static class OfficialCatalogSeeder
 {
     private static readonly (string Code, string Name)[] Systems =
     [
+        ("clients", "Clients"),
         ("users", "Users"),
         ("systems", "Systems"),
         ("systems-routes", "Systems routes"),

@@ -44,10 +44,11 @@ O Auth Service expõe endpoints para:
 
 Cadastros conceituais:
 
-1. **Sistema** — agrupa recursos lógicos.
-2. **Recurso** — agrupamento dentro de um sistema (evolução futura).
-3. **Rota** — endpoints ou caminhos (hoje modeladas como `systems/routes` ligadas ao sistema).
-4. **Permissão** — ações sobre recursos/rotas.
+1. **Cliente** — entidade de negócio (PF/PJ), com contatos extras e relação com usuários.
+2. **Sistema** — agrupa recursos lógicos.
+3. **Recurso** — agrupamento dentro de um sistema (evolução futura).
+4. **Rota** — endpoints ou caminhos (hoje modeladas como `systems/routes` ligadas ao sistema).
+5. **Permissão** — ações sobre recursos/rotas.
 
 Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 
@@ -254,6 +255,25 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 **POST:** `name`, `email`, `password`, `identity`, `active` (opcional, padrão `true`). **PUT** usuário: `name`, `email`, `identity`, `active` (sem senha). Email normalizado (ex.: minúsculas).
 
 **GET** `/api/v1/users/{id}` retorna também os vínculos ativos **`roles`** (lista com `id` inteiro, `userId`, `roleId`, auditoria e `deletedAt`) e **`permissions`** (lista com `id` GUID, `userId`, `permissionId`, auditoria e `deletedAt`). Listagens **`GET /api/v1/users`** e respostas de criação/atualização devolvem `roles` e `permissions` como arrays vazios.
+
+### Clientes — `/api/v1/clients`
+
+| Método | Endpoint | Auth | Permissão |
+|--------|----------|------|-----------|
+| `POST` | `/api/v1/clients` | Sim | `perm:Clients.Create` |
+| `GET` | `/api/v1/clients` | Sim | `perm:Clients.Read` |
+| `GET` | `/api/v1/clients/{id}` | Sim | `perm:Clients.Read` |
+| `PUT` | `/api/v1/clients/{id}` | Sim | `perm:Clients.Update` |
+| `DELETE` | `/api/v1/clients/{id}` | Sim | `perm:Clients.Delete` |
+| `POST` | `/api/v1/clients/{id}/restore` | Sim | `perm:Clients.Restore` |
+| `POST` | `/api/v1/clients/{id}/emails` | Sim | `perm:Clients.Update` |
+| `DELETE` | `/api/v1/clients/{id}/emails/{emailId}` | Sim | `perm:Clients.Update` |
+| `POST` | `/api/v1/clients/{id}/mobiles` | Sim | `perm:Clients.Update` |
+| `DELETE` | `/api/v1/clients/{id}/mobiles/{phoneId}` | Sim | `perm:Clients.Update` |
+| `POST` | `/api/v1/clients/{id}/phones` | Sim | `perm:Clients.Update` |
+| `DELETE` | `/api/v1/clients/{id}/phones/{phoneId}` | Sim | `perm:Clients.Update` |
+
+Regras de negócio principais: `type` imutável (`PF`/`PJ`), validação de CPF/CNPJ por tipo, unicidade global de CPF/CNPJ, máximo de 3 emails extras, 3 celulares e 3 telefones por cliente, bloqueio para remoção de email extra que esteja sendo usado como username.
 
 ### Tipos de token — `/api/v1/tokens/types`
 

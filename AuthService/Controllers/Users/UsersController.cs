@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using AuthService.Auth;
 using AuthService.Data;
+using AuthService.Models;
 using AuthService.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -40,6 +41,8 @@ public class UsersController : ControllerBase
         [Required]
         public int Identity { get; set; }
 
+        public Guid? ClientId { get; set; }
+
         public bool Active { get; set; } = true;
     }
 
@@ -56,6 +59,8 @@ public class UsersController : ControllerBase
 
         [Required]
         public int Identity { get; set; }
+
+        public Guid? ClientId { get; set; }
 
         [Required]
         public bool Active { get; set; }
@@ -88,6 +93,7 @@ public class UsersController : ControllerBase
         Guid Id,
         string Name,
         string Email,
+        Guid? ClientId,
         int Identity,
         bool Active,
         DateTime CreatedAt,
@@ -104,6 +110,7 @@ public class UsersController : ControllerBase
             u.Id,
             u.Name,
             u.Email,
+            u.ClientId,
             u.Identity,
             u.Active,
             u.CreatedAt,
@@ -205,12 +212,35 @@ public class UsersController : ControllerBase
         if (await EmailExistsNormalizedAsync(_db, email))
             return EmailConflictResult();
 
+        Guid? clientId = request.ClientId;
+        if (clientId.HasValue)
+        {
+            var existsClient = await _db.Clients.AnyAsync(c => c.Id == clientId.Value);
+            if (!existsClient)
+                return BadRequest(new { message = "ClientId informado não existe." });
+        }
+        else
+        {
+            var usedCpfs = await _db.Clients
+                .IgnoreQueryFilters()
+                .Where(c => c.Cpf != null)
+                .Select(c => c.Cpf!)
+                .ToHashSetAsync();
+            var generatedClient = LegacyClientFactory.BuildPfClientForUser(
+                new UserEntity { Name = name },
+                usedCpfs,
+                usedCpfs.Count + 1);
+            _db.Clients.Add(generatedClient);
+            clientId = generatedClient.Id;
+        }
+
         var now = DateTime.UtcNow;
         var user = new UserEntity
         {
             Name = name,
             Email = email,
             Password = UserPasswordHasher.HashPlainPassword(password),
+            ClientId = clientId,
             Identity = request.Identity,
             Active = request.Active,
             CreatedAt = now,
@@ -300,8 +330,16 @@ public class UsersController : ControllerBase
         if (await EmailExistsNormalizedAsync(_db, email, id))
             return new ConflictObjectResult(new { message = "Já existe outro usuário com este Email." });
 
+        if (request.ClientId.HasValue)
+        {
+            var existsClient = await _db.Clients.AnyAsync(c => c.Id == request.ClientId.Value);
+            if (!existsClient)
+                return BadRequest(new { message = "ClientId informado não existe." });
+        }
+
         user.Name = name;
         user.Email = email;
+        user.ClientId = request.ClientId;
         user.Identity = request.Identity;
         user.Active = request.Active;
         user.UpdatedAt = DateTime.UtcNow;

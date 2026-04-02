@@ -7,6 +7,7 @@ internal static class PermissionCatalog
     {
         systemCode = resourcePascal switch
         {
+            "Clients" => "clients",
             "Users" => "users",
             "Systems" => "systems",
             "SystemsRoutes" => "systems-routes",
