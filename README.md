@@ -80,7 +80,7 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 2. Subir API + SQL: `docker compose up -d --build`
 3. Aplicar migrations (primeira vez ou após alteração do modelo):  
    `docker compose --profile migrate run --rm migrate`
-4. API no host: **http://localhost:8080** (mapeamento `8080:5042`; dentro do container a app escuta na porta **5042**).
+4. API no host: **https://localhost:8080** (mapeamento `8080:5042`; Kestrel usa certificado de desenvolvimento gerado na imagem Docker — o navegador pode alertar até você confiar no certificado ou usar `-k` no `curl`).
 
 ### Opção B — `dotnet run` no host
 
@@ -327,7 +327,7 @@ Corpo: `systemId`, `permissionTypeId`, `description` (opcional). Restauração e
 
 ## Exemplos de uso
 
-Substitua a base pela URL da sua instância (`http://localhost:5052`, `http://localhost:8080`, etc.).
+Substitua a base pela URL da sua instância (`http://localhost:5052`, `https://localhost:8080` no Compose, etc.).
 
 **Login**
 
@@ -387,7 +387,7 @@ O arquivo **`docker-compose.yml`** está na **raiz** do repositório.
 | Serviço | Função |
 |---------|--------|
 | `db` | SQL Server 2022; porta **1433** no host; volume `mssql_data`. |
-| `app` | API com `dotnet watch`, volume `./AuthService:/app`, porta **8080→5042**. |
+| `app` | API com `dotnet watch`, volume `./AuthService:/app`, porta **8080→5042** (HTTPS no container). |
 | `migrate` (profile `migrate`) | `dotnet ef database update` contra o `db`. |
 | `test` (profile `test`) | Executa `dotnet test` com `AUTH_SERVICE_TEST_SQL_BASE` apontando para `db`. |
 
