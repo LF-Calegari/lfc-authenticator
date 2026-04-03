@@ -72,6 +72,7 @@ services:
       - .env
     environment:
       AUTH_SERVICE_TEST_SQL_BASE: "Server=db,1433;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+      INTEGRATION_BOOTSTRAP_PASSWORD: "${INTEGRATION_BOOTSTRAP_PASSWORD:-SenhaSegura1!}"
     volumes:
       - .:/workspace
     working_dir: /workspace
