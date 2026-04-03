@@ -8,10 +8,22 @@ namespace AuthService.Data;
 public static class IntegrationBootstrapSeeder
 {
     public const string Email = "integration.bootstrap@test";
-    public const string Password = "SenhaSegura1!";
+
+    private const string CredentialEnvVar = "INTEGRATION_BOOTSTRAP_PASSWORD";
+
+    /// <summary>Resolve a credencial do usuário bootstrap a partir da variável de ambiente.</summary>
+    public static string ResolveCredential()
+    {
+        var value = Environment.GetEnvironmentVariable(CredentialEnvVar);
+        if (string.IsNullOrWhiteSpace(value))
+            throw new InvalidOperationException(
+                $"A variável de ambiente '{CredentialEnvVar}' é obrigatória para o bootstrap seeder.");
+        return value;
+    }
 
     public static async Task EnsureBootstrapUserAsync(AppDbContext db, CancellationToken cancellationToken = default)
     {
+        var credential = ResolveCredential();
         var normalizedEmail = Email.Trim().ToLowerInvariant();
         var existing = await db.Users.IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.Email == normalizedEmail, cancellationToken);
@@ -25,7 +37,7 @@ public static class IntegrationBootstrapSeeder
             {
                 Name = "Integration Bootstrap",
                 Email = normalizedEmail,
-                Password = UserPasswordHasher.HashPlainPassword(Password),
+                Password = UserPasswordHasher.HashPlainPassword(credential),
                 Identity = 0,
                 Active = true,
                 TokenVersion = 0,
@@ -39,7 +51,7 @@ public static class IntegrationBootstrapSeeder
         else
         {
             user = existing;
-            var (_, newHash) = UserPasswordHasher.Verify(user, Password);
+            var (_, newHash) = UserPasswordHasher.Verify(user, credential);
             if (newHash is not null)
             {
                 user.Password = newHash;
