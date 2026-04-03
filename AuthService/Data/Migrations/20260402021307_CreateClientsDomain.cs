@@ -12,12 +12,13 @@ namespace AuthService.Data.Migrations
         private const string ClientsTable = "Clients";
         private const string ClientEmailsTable = "ClientEmails";
         private const string ClientPhonesTable = "ClientPhones";
+        private const string ClientIdColumn = "ClientId";
 
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<Guid>(
-                name: "ClientId",
+                name: ClientIdColumn,
                 table: UsersTable,
                 type: "uniqueidentifier",
                 nullable: true);
@@ -85,7 +86,7 @@ namespace AuthService.Data.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_Users_ClientId",
                 table: UsersTable,
-                column: "ClientId");
+                column: ClientIdColumn);
 
             migrationBuilder.CreateIndex(
                 name: "UX_ClientEmails_ClientId_Email",
@@ -121,7 +122,7 @@ namespace AuthService.Data.Migrations
             migrationBuilder.AddForeignKey(
                 name: "FK_Users_Clients_ClientId",
                 table: UsersTable,
-                column: "ClientId",
+                column: ClientIdColumn,
                 principalTable: ClientsTable,
                 principalColumn: "Id",
                 onDelete: ReferentialAction.Restrict);
@@ -148,7 +149,7 @@ namespace AuthService.Data.Migrations
                 table: UsersTable);
 
             migrationBuilder.DropColumn(
-                name: "ClientId",
+                name: ClientIdColumn,
                 table: UsersTable);
         }
     }
