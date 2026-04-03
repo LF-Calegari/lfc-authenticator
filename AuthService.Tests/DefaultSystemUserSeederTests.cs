@@ -32,7 +32,8 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var normalized = DefaultSystemUserSeeder.Email.Trim().ToLowerInvariant();
         var row = await db.Users.AsNoTracking().IgnoreQueryFilters().FirstAsync(u => u.Email == normalized);
-        Assert.NotEqual(DefaultSystemUserSeeder.Password, row.Password);
+        var credential = DefaultSystemUserSeeder.ResolveCredential();
+        Assert.NotEqual(credential, row.Password);
         Assert.True(row.Password.Length > 80, "Esperado hash PBKDF2 na coluna Password, não texto plano.");
     }
 
@@ -40,7 +41,7 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     public async Task DefaultUser_ExistsAfterBootstrap_CanLoginWithSeededCredentials()
     {
         var response = await _client.PostAsJsonAsync("/api/v1/auth/login",
-            new { email = DefaultSystemUserSeeder.Email, password = DefaultSystemUserSeeder.Password },
+            new { email = DefaultSystemUserSeeder.Email, password = DefaultSystemUserSeeder.ResolveCredential() },
             TestApiClient.JsonOptions);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -65,6 +66,29 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
             var normalized = DefaultSystemUserSeeder.Email.Trim().ToLowerInvariant();
             var count = await db.Users.IgnoreQueryFilters().CountAsync(u => u.Email == normalized);
             Assert.Equal(1, count);
+        }
+    }
+
+    [Fact]
+    public void ResolveCredential_WhenEnvVarIsSet_ReturnsValue()
+    {
+        var credential = DefaultSystemUserSeeder.ResolveCredential();
+        Assert.False(string.IsNullOrWhiteSpace(credential));
+    }
+
+    [Fact]
+    public void ResolveCredential_WhenEnvVarIsMissing_ThrowsInvalidOperationException()
+    {
+        var original = Environment.GetEnvironmentVariable("DEFAULT_SYSTEM_USER_PASSWORD");
+        try
+        {
+            Environment.SetEnvironmentVariable("DEFAULT_SYSTEM_USER_PASSWORD", null);
+            var ex = Assert.Throws<InvalidOperationException>(() => DefaultSystemUserSeeder.ResolveCredential());
+            Assert.Contains("DEFAULT_SYSTEM_USER_PASSWORD", ex.Message);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DEFAULT_SYSTEM_USER_PASSWORD", original);
         }
     }
 

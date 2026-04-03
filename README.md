@@ -102,6 +102,7 @@ Todas as rotas da API REST ficam sob o prefixo **`/api/v1`** (ex.: `GET http://l
 | `ASPNETCORE_ENVIRONMENT` | `Development`, `Production` ou `Testing`. Em **Testing**, não há redirecionamento HTTPS e o seed do catálogo no `Program` é omitido (testes fazem seed no *factory*). |
 | `Auth:Jwt:Secret` | Segredo HMAC do JWT; **mínimo 32 caracteres**. Em produção, use segredo forte e armazenamento seguro — **não** commite valores reais. |
 | `Auth:Jwt:ExpirationMinutes` | Validade do access token em minutos. |
+| `DEFAULT_SYSTEM_USER_PASSWORD` | Credencial do usuário padrão do sistema (`root@email.com.br`). **Obrigatória** em Development e Production; fail-fast se ausente. No Docker Compose o default é `toor`. |
 | `AUTH_SERVICE_TEST_SQL_BASE` | Obrigatória para **testes de integração**: connection string **sem** `Database` / `Initial Catalog`. |
 
 Exemplo de override no shell (Linux):
@@ -119,7 +120,7 @@ export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 2. **Pipeline HTTP** — em ambientes diferentes de **Testing**, `UseHttpsRedirection`. **Swagger** e **Swagger UI** são registrados **antes** de autenticação/autorização, ficando **anônimos**.
 3. **`UseAuthentication`** / **`UseAuthorization`** — JWT *handler* valida cabeçalho `Authorization: Bearer …`, *claims* e coerência com o usuário no banco (`TokenVersion`, ativo).
 4. **`MapGroup("/api/v1").MapControllers()`** — todas as rotas de API ficam versionadas em `/api/v1`.
-5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante sistemas, tipos e permissões oficiais no banco; em seguida `DefaultSystemUserSeeder.EnsureDefaultUserAsync` garante o usuário padrão do sistema (e-mail `root@email.com.br`, senha inicial **em texto** apenas na constante `DefaultSystemUserSeeder.Password` usada na *seed*; no banco persiste-se **somente o hash** PBKDF2) com vínculos às permissões do catálogo, de forma idempotente. **Em produção, troque a senha imediatamente após o primeiro acesso.**
+5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante sistemas, tipos e permissões oficiais no banco; em seguida `DefaultSystemUserSeeder.EnsureDefaultUserAsync` garante o usuário padrão do sistema (e-mail `root@email.com.br`) com vínculos às permissões do catálogo, de forma idempotente. A credencial é lida da variável de ambiente `DEFAULT_SYSTEM_USER_PASSWORD` (fail-fast se ausente); no banco persiste-se **somente o hash** PBKDF2. **Em produção, defina um valor forte e troque a senha imediatamente após o primeiro acesso.**
 
 ---
 

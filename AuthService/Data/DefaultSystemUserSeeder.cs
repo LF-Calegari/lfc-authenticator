@@ -8,10 +8,22 @@ namespace AuthService.Data;
 public static class DefaultSystemUserSeeder
 {
     public const string Email = "root@email.com.br";
-    public const string Password = "toor";
+
+    private const string CredentialEnvVar = "DEFAULT_SYSTEM_USER_PASSWORD";
+
+    /// <summary>Resolve a credencial do usuário padrão a partir da variável de ambiente.</summary>
+    public static string ResolveCredential()
+    {
+        var value = Environment.GetEnvironmentVariable(CredentialEnvVar);
+        if (string.IsNullOrWhiteSpace(value))
+            throw new InvalidOperationException(
+                $"A variável de ambiente '{CredentialEnvVar}' é obrigatória para o seed do usuário padrão.");
+        return value;
+    }
 
     public static async Task EnsureDefaultUserAsync(AppDbContext db, CancellationToken cancellationToken = default)
     {
+        var credential = ResolveCredential();
         var normalizedEmail = Email.Trim().ToLowerInvariant();
         var existing = await db.Users.IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.Email == normalizedEmail, cancellationToken);
@@ -25,7 +37,7 @@ public static class DefaultSystemUserSeeder
             {
                 Name = "Usuário padrão do sistema",
                 Email = normalizedEmail,
-                Password = UserPasswordHasher.HashPlainPassword(Password),
+                Password = UserPasswordHasher.HashPlainPassword(credential),
                 Identity = 0,
                 Active = true,
                 TokenVersion = 0,
@@ -39,7 +51,7 @@ public static class DefaultSystemUserSeeder
         else
         {
             user = existing;
-            var (_, newHash) = UserPasswordHasher.Verify(user, Password);
+            var (_, newHash) = UserPasswordHasher.Verify(user, credential);
             if (newHash is not null)
             {
                 user.Password = newHash;
