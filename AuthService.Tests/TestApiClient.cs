@@ -24,7 +24,7 @@ internal static class TestApiClient
     {
         var client = factory.CreateApiClient();
         var login = await client.PostAsJsonAsync("/api/v1/auth/login",
-            new { email = IntegrationBootstrapSeeder.Email, password = IntegrationBootstrapSeeder.Password },
+            new { email = IntegrationBootstrapSeeder.Email, password = IntegrationBootstrapSeeder.ResolveCredential() },
             JsonOptions);
         login.EnsureSuccessStatusCode();
         var dto = await login.Content.ReadFromJsonAsync<LoginDto>(JsonOptions);

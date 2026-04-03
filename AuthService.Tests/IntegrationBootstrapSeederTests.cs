@@ -7,7 +7,7 @@ using Xunit;
 
 namespace AuthService.Tests;
 
-public class DefaultSystemUserSeederTests : IAsyncLifetime
+public class IntegrationBootstrapSeederTests : IAsyncLifetime
 {
     private WebAppFactory _factory = null!;
     private HttpClient _client = null!;
@@ -26,22 +26,22 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DefaultUser_StoredPassword_IsNotPlaintext()
+    public async Task BootstrapUser_StoredPassword_IsNotPlaintext()
     {
         await using var scope = _factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var normalized = DefaultSystemUserSeeder.Email.Trim().ToLowerInvariant();
+        var normalized = IntegrationBootstrapSeeder.Email.Trim().ToLowerInvariant();
         var row = await db.Users.AsNoTracking().IgnoreQueryFilters().FirstAsync(u => u.Email == normalized);
-        var credential = DefaultSystemUserSeeder.ResolveCredential();
+        var credential = IntegrationBootstrapSeeder.ResolveCredential();
         Assert.NotEqual(credential, row.Password);
         Assert.True(row.Password.Length > 80, "Esperado hash PBKDF2 na coluna Password, não texto plano.");
     }
 
     [Fact]
-    public async Task DefaultUser_ExistsAfterBootstrap_CanLoginWithSeededCredentials()
+    public async Task BootstrapUser_CanLoginWithExternalizedCredential()
     {
         var response = await _client.PostAsJsonAsync("/api/v1/auth/login",
-            new { email = DefaultSystemUserSeeder.Email, password = DefaultSystemUserSeeder.ResolveCredential() },
+            new { email = IntegrationBootstrapSeeder.Email, password = IntegrationBootstrapSeeder.ResolveCredential() },
             TestApiClient.JsonOptions);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -51,19 +51,19 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task EnsureDefaultUserAsync_Idempotent_DoesNotDuplicateUser()
+    public async Task EnsureBootstrapUserAsync_Idempotent_DoesNotDuplicateUser()
     {
         await using (var scope = _factory.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            await DefaultSystemUserSeeder.EnsureDefaultUserAsync(db);
-            await DefaultSystemUserSeeder.EnsureDefaultUserAsync(db);
+            await IntegrationBootstrapSeeder.EnsureBootstrapUserAsync(db);
+            await IntegrationBootstrapSeeder.EnsureBootstrapUserAsync(db);
         }
 
         await using (var scope = _factory.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var normalized = DefaultSystemUserSeeder.Email.Trim().ToLowerInvariant();
+            var normalized = IntegrationBootstrapSeeder.Email.Trim().ToLowerInvariant();
             var count = await db.Users.IgnoreQueryFilters().CountAsync(u => u.Email == normalized);
             Assert.Equal(1, count);
         }
@@ -72,23 +72,23 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     [Fact]
     public void ResolveCredential_WhenEnvVarIsSet_ReturnsValue()
     {
-        var credential = DefaultSystemUserSeeder.ResolveCredential();
+        var credential = IntegrationBootstrapSeeder.ResolveCredential();
         Assert.False(string.IsNullOrWhiteSpace(credential));
     }
 
     [Fact]
     public void ResolveCredential_WhenEnvVarIsMissing_ThrowsInvalidOperationException()
     {
-        var original = Environment.GetEnvironmentVariable("DEFAULT_SYSTEM_USER_PASSWORD");
+        var original = Environment.GetEnvironmentVariable("INTEGRATION_BOOTSTRAP_PASSWORD");
         try
         {
-            Environment.SetEnvironmentVariable("DEFAULT_SYSTEM_USER_PASSWORD", null);
-            var ex = Assert.Throws<InvalidOperationException>(() => DefaultSystemUserSeeder.ResolveCredential());
-            Assert.Contains("DEFAULT_SYSTEM_USER_PASSWORD", ex.Message);
+            Environment.SetEnvironmentVariable("INTEGRATION_BOOTSTRAP_PASSWORD", null);
+            var ex = Assert.Throws<InvalidOperationException>(() => IntegrationBootstrapSeeder.ResolveCredential());
+            Assert.Contains("INTEGRATION_BOOTSTRAP_PASSWORD", ex.Message);
         }
         finally
         {
-            Environment.SetEnvironmentVariable("DEFAULT_SYSTEM_USER_PASSWORD", original);
+            Environment.SetEnvironmentVariable("INTEGRATION_BOOTSTRAP_PASSWORD", original);
         }
     }
 

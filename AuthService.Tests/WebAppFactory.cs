@@ -21,8 +21,20 @@ public class WebAppFactory : WebApplicationFactory<Program>
     private readonly string _appConnectionString;
     private bool _disposed;
 
+    private const string BootstrapCredentialEnvVar = "INTEGRATION_BOOTSTRAP_PASSWORD";
+    private const string BootstrapCredentialDefault = "SenhaSegura1!";
+
+    private const string DefaultUserCredentialEnvVar = "DEFAULT_SYSTEM_USER_PASSWORD";
+    private const string DefaultUserCredentialDefault = "toor";
+
     public WebAppFactory()
     {
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(BootstrapCredentialEnvVar)))
+            Environment.SetEnvironmentVariable(BootstrapCredentialEnvVar, BootstrapCredentialDefault);
+
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(DefaultUserCredentialEnvVar)))
+            Environment.SetEnvironmentVariable(DefaultUserCredentialEnvVar, DefaultUserCredentialDefault);
+
         var baseConnection = Environment.GetEnvironmentVariable(TestSqlBaseEnv)?.Trim();
         if (string.IsNullOrEmpty(baseConnection))
         {
