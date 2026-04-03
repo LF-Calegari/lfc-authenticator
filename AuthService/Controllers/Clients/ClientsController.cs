@@ -5,8 +5,8 @@ using AuthService.Data;
 using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using static AuthService.Helpers.DbExceptionHelper;
 
 namespace AuthService.Controllers.Clients;
 
@@ -78,26 +78,6 @@ public class ClientsController : ControllerBase
         IReadOnlyList<ClientEmailResponse> ExtraEmails,
         IReadOnlyList<ClientPhoneResponse> MobilePhones,
         IReadOnlyList<ClientPhoneResponse> LandlinePhones);
-
-    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-        {
-            if (e is SqlException sql)
-                return sql.Number is 2601 or 2627;
-        }
-
-        var text = string.Join(" ", GetExceptionMessages(ex));
-        return text.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("duplicate key", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static IEnumerable<string> GetExceptionMessages(Exception ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-            yield return e.Message;
-    }
 
     [HttpPost]
     [Authorize(Policy = PermissionPolicies.ClientsCreate)]

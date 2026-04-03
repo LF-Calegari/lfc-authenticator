@@ -5,14 +5,14 @@ using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using static AuthService.Helpers.DbExceptionHelper;
 
 namespace AuthService.Controllers.Roles;
 
 [ApiController]
 [Route("roles")]
-public class RolesController : ControllerBase
+public partial class RolesController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly ILogger<RolesController> _logger;
@@ -75,28 +75,8 @@ public class RolesController : ControllerBase
             modelState.AddModelError(nameof(CreateRoleRequest.Code), "Code deve ter no máximo 50 caracteres.");
     }
 
-    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-        {
-            if (e is SqlException sql)
-                return sql.Number is 2601 or 2627;
-        }
-
-        var text = string.Join(" ", GetExceptionMessages(ex));
-        return text.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("duplicate key", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static IEnumerable<string> GetExceptionMessages(Exception ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-            yield return e.Message;
-    }
-
-    private static IActionResult UniqueConflictResult() =>
-        new ConflictObjectResult(new { message = "Já existe um role com este Code." });
+    private static ConflictObjectResult UniqueConflictResult() =>
+        new(new { message = "Já existe um role com este Code." });
 
     [HttpPost]
     [Authorize(Policy = PermissionPolicies.RolesCreate)]
@@ -139,7 +119,7 @@ public class RolesController : ControllerBase
             return UniqueConflictResult();
         }
 
-        _logger.LogInformation("Role criado: {RoleId}, Code {Code}.", entity.Id, code);
+        LogRoleCreated(entity.Id, code);
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
     }
 
@@ -208,7 +188,7 @@ public class RolesController : ControllerBase
             return new ConflictObjectResult(new { message = "Já existe outro role com este Code." });
         }
 
-        _logger.LogInformation("Role atualizado: {RoleId}.", id);
+        LogRoleUpdated(id);
         return Ok(ToResponse(entity));
     }
 
@@ -224,7 +204,7 @@ public class RolesController : ControllerBase
         entity.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Role excluído (soft): {RoleId}.", id);
+        LogRoleDeleted(id);
         return NoContent();
     }
 
@@ -243,7 +223,19 @@ public class RolesController : ControllerBase
         entity.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Role restaurado: {RoleId}.", id);
+        LogRoleRestored(id);
         return Ok(new { message = "Role restaurado com sucesso." });
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Role criado: {RoleId}, Code {Code}.")]
+    private partial void LogRoleCreated(Guid roleId, string code);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Role atualizado: {RoleId}.")]
+    private partial void LogRoleUpdated(Guid roleId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Role excluído (soft): {RoleId}.")]
+    private partial void LogRoleDeleted(Guid roleId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Role restaurado: {RoleId}.")]
+    private partial void LogRoleRestored(Guid roleId);
 }

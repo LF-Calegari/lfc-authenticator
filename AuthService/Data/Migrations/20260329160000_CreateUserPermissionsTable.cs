@@ -9,6 +9,7 @@ namespace AuthService.Data.Migrations
     public partial class CreateUserPermissionsTable : Migration
     {
         private const string TableName = "UserPermissions";
+        private static readonly string[] CompositeIndexColumns = ["UserId", "PermissionId"];
 
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -59,7 +60,7 @@ namespace AuthService.Data.Migrations
             migrationBuilder.CreateIndex(
                 name: "UX_UserPermissions_UserId_PermissionId",
                 table: TableName,
-                columns: new[] { "UserId", "PermissionId" },
+                columns: CompositeIndexColumns,
                 unique: true);
         }
 

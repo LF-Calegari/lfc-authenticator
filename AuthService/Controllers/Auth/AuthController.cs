@@ -11,7 +11,7 @@ namespace AuthService.Controllers.Auth;
 
 [ApiController]
 [Route("auth")]
-public class AuthController : ControllerBase
+public partial class AuthController : ControllerBase
 {
     private const string InvalidCredentialsMessage = "Credenciais inválidas.";
     private const string InvalidTokenMessage = "Token inválido.";
@@ -132,7 +132,10 @@ public class AuthController : ControllerBase
         user.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Logout concluído para o usuário {UserId}.", userId);
+        LogLogoutCompleted(userId);
         return Ok(new { message = "Sessão encerrada." });
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Logout concluído para o usuário {UserId}.")]
+    private partial void LogLogoutCompleted(Guid userId);
 }

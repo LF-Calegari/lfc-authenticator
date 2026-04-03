@@ -5,14 +5,14 @@ using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using static AuthService.Helpers.DbExceptionHelper;
 
 namespace AuthService.Controllers.Permissions;
 
 [ApiController]
 [Route("permissions")]
-public class PermissionsController : ControllerBase
+public partial class PermissionsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly ILogger<PermissionsController> _logger;
@@ -66,17 +66,6 @@ public class PermissionsController : ControllerBase
             modelState.AddModelError(descriptionPropertyKey, "Description deve ter no máximo 500 caracteres.");
     }
 
-    private static bool IsForeignKeyViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-        {
-            if (e is SqlException sql)
-                return sql.Number == 547;
-        }
-
-        return false;
-    }
-
     private async Task<bool> SystemExistsAndActiveAsync(Guid systemId) =>
         systemId != Guid.Empty && await _db.Systems.AnyAsync(s => s.Id == systemId);
 
@@ -89,7 +78,7 @@ public class PermissionsController : ControllerBase
             _db.Systems.Any(s => s.Id == p.SystemId)
             && _db.PermissionTypes.Any(t => t.Id == p.PermissionTypeId));
 
-    private IActionResult InvalidReferencesResult(bool systemOk, bool typeOk)
+    private ActionResult InvalidReferencesResult(bool systemOk, bool typeOk)
     {
         if (!systemOk)
             ModelState.AddModelError(nameof(CreatePermissionRequest.SystemId), "SystemId inválido ou sistema inativo.");
@@ -147,7 +136,7 @@ public class PermissionsController : ControllerBase
             return InvalidReferencesResult(s, t);
         }
 
-        _logger.LogInformation("Permissão criada: {PermissionId}.", entity.Id);
+        LogPermissionCreated(entity.Id);
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
     }
 
@@ -225,7 +214,7 @@ public class PermissionsController : ControllerBase
             return InvalidReferencesResult(s, t);
         }
 
-        _logger.LogInformation("Permissão atualizada: {PermissionId}.", id);
+        LogPermissionUpdated(id);
         return Ok(ToResponse(entity));
     }
 
@@ -241,7 +230,7 @@ public class PermissionsController : ControllerBase
         entity.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Permissão excluída (soft): {PermissionId}.", id);
+        LogPermissionDeleted(id);
         return NoContent();
     }
 
@@ -268,7 +257,19 @@ public class PermissionsController : ControllerBase
         entity.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Permissão restaurada: {PermissionId}.", id);
+        LogPermissionRestored(id);
         return Ok(new { message = "Permissão restaurada com sucesso." });
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Permissão criada: {PermissionId}.")]
+    private partial void LogPermissionCreated(Guid permissionId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Permissão atualizada: {PermissionId}.")]
+    private partial void LogPermissionUpdated(Guid permissionId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Permissão excluída (soft): {PermissionId}.")]
+    private partial void LogPermissionDeleted(Guid permissionId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Permissão restaurada: {PermissionId}.")]
+    private partial void LogPermissionRestored(Guid permissionId);
 }

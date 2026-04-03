@@ -5,8 +5,8 @@ using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using static AuthService.Helpers.DbExceptionHelper;
 
 namespace AuthService.Controllers.Systems;
 
@@ -84,28 +84,8 @@ public class SystemsController : ControllerBase
             modelState.AddModelError(nameof(CreateSystemRequest.Description), "Description deve ter no máximo 500 caracteres.");
     }
 
-    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-        {
-            if (e is SqlException sql)
-                return sql.Number is 2601 or 2627;
-        }
-
-        var text = string.Join(" ", GetExceptionMessages(ex));
-        return text.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("duplicate key", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static IEnumerable<string> GetExceptionMessages(Exception ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-            yield return e.Message;
-    }
-
-    private static IActionResult UniqueConflictResult() =>
-        new ConflictObjectResult(new { message = "Já existe um sistema com este Code." });
+    private static ConflictObjectResult UniqueConflictResult() =>
+        new(new { message = "Já existe um sistema com este Code." });
 
     [HttpPost]
     [Authorize(Policy = PermissionPolicies.SystemsCreate)]
