@@ -6,8 +6,8 @@ using AuthService.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using static AuthService.Helpers.DbExceptionHelper;
 using UserEntity = AuthService.Models.User;
 
 namespace AuthService.Controllers.Users;
@@ -161,28 +161,8 @@ public class UsersController : ControllerBase
             modelState.AddModelError(nameof(UpdateUserRequest.Email), "Email deve ter no máximo 320 caracteres.");
     }
 
-    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-        {
-            if (e is SqlException sql)
-                return sql.Number is 2601 or 2627;
-        }
-
-        var text = string.Join(" ", GetExceptionMessages(ex));
-        return text.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("duplicate key", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static IEnumerable<string> GetExceptionMessages(Exception ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-            yield return e.Message;
-    }
-
-    private static IActionResult EmailConflictResult() =>
-        new ConflictObjectResult(new { message = "Já existe um usuário com este Email." });
+    private static ConflictObjectResult EmailConflictResult() =>
+        new(new { message = "Já existe um usuário com este Email." });
 
     /// <summary>
     /// Compara por igualdade na coluna (sem função na coluna) para permitir uso do índice único em Email.

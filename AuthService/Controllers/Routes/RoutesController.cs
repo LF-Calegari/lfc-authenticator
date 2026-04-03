@@ -5,8 +5,8 @@ using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using static AuthService.Helpers.DbExceptionHelper;
 
 namespace AuthService.Controllers.Routes;
 
@@ -91,39 +91,8 @@ public class RoutesController : ControllerBase
             modelState.AddModelError(nameof(CreateRouteRequest.Description), "Description deve ter no máximo 500 caracteres.");
     }
 
-    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-        {
-            if (e is SqlException sql)
-                return sql.Number is 2601 or 2627;
-        }
-
-        var text = string.Join(" ", GetExceptionMessages(ex));
-        return text.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("duplicate key", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsForeignKeyViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-        {
-            if (e is SqlException sql)
-                return sql.Number == 547;
-        }
-
-        return false;
-    }
-
-    private static IEnumerable<string> GetExceptionMessages(Exception ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-            yield return e.Message;
-    }
-
-    private static IActionResult CodeConflictResult() =>
-        new ConflictObjectResult(new { message = "Já existe uma route com este Code." });
+    private static ConflictObjectResult CodeConflictResult() =>
+        new(new { message = "Já existe uma route com este Code." });
 
     private async Task<bool> SystemExistsAndActiveAsync(Guid systemId) =>
         systemId != Guid.Empty && await _db.Systems.AnyAsync(s => s.Id == systemId);
@@ -132,7 +101,7 @@ public class RoutesController : ControllerBase
     private IQueryable<AppRoute> ActiveRoutesWithActiveSystem() =>
         _db.Routes.Where(r => _db.Systems.Any(s => s.Id == r.SystemId));
 
-    private IActionResult InvalidSystemIdResult()
+    private ActionResult InvalidSystemIdResult()
     {
         ModelState.AddModelError(nameof(CreateRouteRequest.SystemId), "SystemId inválido ou sistema inativo.");
         return ValidationProblem(ModelState);

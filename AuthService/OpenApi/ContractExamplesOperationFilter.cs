@@ -6,6 +6,8 @@ namespace AuthService.OpenApi;
 
 public sealed class ContractExamplesOperationFilter : IOperationFilter
 {
+    private static readonly string[] ExamplePermissions = ["11111111-1111-1111-1111-111111111111"];
+
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
         AddErrorResponse(operation, "400", "Requisicao invalida.", new { message = "Payload invalido." });
@@ -39,7 +41,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
                 name = "User Name",
                 email = "user@example.com",
                 identity = 1,
-                permissions = new[] { "11111111-1111-1111-1111-111111111111" }
+                permissions = ExamplePermissions
             });
             return;
         }
