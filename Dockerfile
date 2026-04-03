@@ -11,9 +11,16 @@ ENV ASPNETCORE_Kestrel__Certificates__Default__Password="AuthDockerDevOnly"
 ENV ASPNETCORE_Kestrel__Certificates__Default__Path="/https/aspnetapp.pfx"
 ENV ASPNETCORE_URLS="https://0.0.0.0:5042"
 
+# Executa como usuário não-root para hardening do container (Sonar docker:S6471).
+# A imagem base já fornece o usuário "ubuntu" (UID/GID 1000), compatível com
+# volumes montados do host na maioria das distros Linux.
+RUN chown ubuntu:ubuntu /app && chown -R ubuntu:ubuntu /https
+
+USER ubuntu
+
 # Ferramenta EF Core disponível globalmente no container
 RUN dotnet tool install --global dotnet-ef --version 10.0.5
-ENV PATH="${PATH}:/root/.dotnet/tools"
+ENV PATH="${PATH}:/home/ubuntu/.dotnet/tools"
 
 # (Opcional) melhora estabilidade de file-watch em volume Docker
 ENV DOTNET_USE_POLLING_FILE_WATCHER=1
