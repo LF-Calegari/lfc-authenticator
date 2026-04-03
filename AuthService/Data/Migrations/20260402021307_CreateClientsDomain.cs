@@ -13,6 +13,7 @@ namespace AuthService.Data.Migrations
         private const string ClientEmailsTable = "ClientEmails";
         private const string ClientPhonesTable = "ClientPhones";
         private const string ClientIdColumn = "ClientId";
+        private const string UniqueIdentifierType = "uniqueidentifier";
 
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -20,14 +21,14 @@ namespace AuthService.Data.Migrations
             migrationBuilder.AddColumn<Guid>(
                 name: ClientIdColumn,
                 table: UsersTable,
-                type: "uniqueidentifier",
+                type: UniqueIdentifierType,
                 nullable: true);
 
             migrationBuilder.CreateTable(
                 name: ClientsTable,
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    Id = table.Column<Guid>(type: UniqueIdentifierType, nullable: false),
                     Type = table.Column<string>(type: "nvarchar(2)", maxLength: 2, nullable: false),
                     Cpf = table.Column<string>(type: "nvarchar(11)", maxLength: 11, nullable: true),
                     FullName = table.Column<string>(type: "nvarchar(140)", maxLength: 140, nullable: true),
@@ -46,8 +47,8 @@ namespace AuthService.Data.Migrations
                 name: ClientEmailsTable,
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    ClientId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    Id = table.Column<Guid>(type: UniqueIdentifierType, nullable: false),
+                    ClientId = table.Column<Guid>(type: UniqueIdentifierType, nullable: false),
                     Email = table.Column<string>(type: "nvarchar(320)", maxLength: 320, nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
                 },
@@ -66,8 +67,8 @@ namespace AuthService.Data.Migrations
                 name: ClientPhonesTable,
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    ClientId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    Id = table.Column<Guid>(type: UniqueIdentifierType, nullable: false),
+                    ClientId = table.Column<Guid>(type: UniqueIdentifierType, nullable: false),
                     Type = table.Column<string>(type: "nvarchar(12)", maxLength: 12, nullable: false),
                     Number = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
