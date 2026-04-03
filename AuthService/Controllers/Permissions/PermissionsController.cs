@@ -5,8 +5,8 @@ using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using static AuthService.Helpers.DbExceptionHelper;
 
 namespace AuthService.Controllers.Permissions;
 
@@ -64,17 +64,6 @@ public partial class PermissionsController : ControllerBase
     {
         if (descriptionOrNull is { Length: > 500 })
             modelState.AddModelError(descriptionPropertyKey, "Description deve ter no máximo 500 caracteres.");
-    }
-
-    private static bool IsForeignKeyViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-        {
-            if (e is SqlException sql)
-                return sql.Number == 547;
-        }
-
-        return false;
     }
 
     private async Task<bool> SystemExistsAndActiveAsync(Guid systemId) =>

@@ -5,8 +5,8 @@ using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using static AuthService.Helpers.DbExceptionHelper;
 
 namespace AuthService.Controllers.Routes;
 
@@ -89,37 +89,6 @@ public class RoutesController : ControllerBase
 
         if (descriptionOrNull is { Length: > 500 })
             modelState.AddModelError(nameof(CreateRouteRequest.Description), "Description deve ter no máximo 500 caracteres.");
-    }
-
-    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-        {
-            if (e is SqlException sql)
-                return sql.Number is 2601 or 2627;
-        }
-
-        var text = string.Join(" ", GetExceptionMessages(ex));
-        return text.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("duplicate key", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsForeignKeyViolation(DbUpdateException ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-        {
-            if (e is SqlException sql)
-                return sql.Number == 547;
-        }
-
-        return false;
-    }
-
-    private static IEnumerable<string> GetExceptionMessages(Exception ex)
-    {
-        for (Exception? e = ex; e != null; e = e.InnerException)
-            yield return e.Message;
     }
 
     private static ConflictObjectResult CodeConflictResult() =>
