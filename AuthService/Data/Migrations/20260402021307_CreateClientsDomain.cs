@@ -14,6 +14,7 @@ namespace AuthService.Data.Migrations
         private const string ClientPhonesTable = "ClientPhones";
         private const string ClientIdColumn = "ClientId";
         private const string UniqueIdentifierType = "uniqueidentifier";
+        private const string DateTime2Type = "datetime2";
 
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -34,9 +35,9 @@ namespace AuthService.Data.Migrations
                     FullName = table.Column<string>(type: "nvarchar(140)", maxLength: 140, nullable: true),
                     Cnpj = table.Column<string>(type: "nvarchar(14)", maxLength: 14, nullable: true),
                     CorporateName = table.Column<string>(type: "nvarchar(180)", maxLength: 180, nullable: true),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    DeletedAt = table.Column<DateTime>(type: "datetime2", nullable: true)
+                    CreatedAt = table.Column<DateTime>(type: DateTime2Type, nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: DateTime2Type, nullable: false),
+                    DeletedAt = table.Column<DateTime>(type: DateTime2Type, nullable: true)
                 },
                 constraints: table =>
                 {
@@ -50,7 +51,7 @@ namespace AuthService.Data.Migrations
                     Id = table.Column<Guid>(type: UniqueIdentifierType, nullable: false),
                     ClientId = table.Column<Guid>(type: UniqueIdentifierType, nullable: false),
                     Email = table.Column<string>(type: "nvarchar(320)", maxLength: 320, nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
+                    CreatedAt = table.Column<DateTime>(type: DateTime2Type, nullable: false)
                 },
                 constraints: table =>
                 {
@@ -71,7 +72,7 @@ namespace AuthService.Data.Migrations
                     ClientId = table.Column<Guid>(type: UniqueIdentifierType, nullable: false),
                     Type = table.Column<string>(type: "nvarchar(12)", maxLength: 12, nullable: false),
                     Number = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
+                    CreatedAt = table.Column<DateTime>(type: DateTime2Type, nullable: false)
                 },
                 constraints: table =>
                 {
