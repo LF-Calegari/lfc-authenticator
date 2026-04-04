@@ -394,7 +394,7 @@ public class ClientsController : ControllerBase
             phones);
     }
 
-    private (string Type, string? Cpf, string? FullName, string? Cnpj, string? CorporateName) NormalizeRequest(
+    private static (string Type, string? Cpf, string? FullName, string? Cnpj, string? CorporateName) NormalizeRequest(
         string type,
         string? cpf,
         string? fullName,
@@ -416,32 +416,37 @@ public class ClientsController : ControllerBase
             ModelState.AddModelError(nameof(CreateClientRequest.Type), "Type deve ser PF ou PJ.");
 
         if (type == "PF")
-        {
-            if (cpf is null || !IsValidCpf(cpf))
-                ModelState.AddModelError(nameof(CreateClientRequest.Cpf), "CPF inválido para cliente PF.");
-            if (string.IsNullOrWhiteSpace(fullName))
-                ModelState.AddModelError(nameof(CreateClientRequest.FullName), "FullName é obrigatório para cliente PF.");
-            if (cnpj is not null)
-                ModelState.AddModelError(nameof(CreateClientRequest.Cnpj), "CNPJ não deve ser informado para cliente PF.");
-            if (!string.IsNullOrWhiteSpace(corporateName))
-                ModelState.AddModelError(nameof(CreateClientRequest.CorporateName),
-                    "CorporateName não deve ser informado para cliente PF.");
-        }
-
-        if (type == "PJ")
-        {
-            if (cnpj is null || !IsValidCnpj(cnpj))
-                ModelState.AddModelError(nameof(CreateClientRequest.Cnpj), "CNPJ inválido para cliente PJ.");
-            if (string.IsNullOrWhiteSpace(corporateName))
-                ModelState.AddModelError(nameof(CreateClientRequest.CorporateName),
-                    "CorporateName é obrigatório para cliente PJ.");
-            if (cpf is not null)
-                ModelState.AddModelError(nameof(CreateClientRequest.Cpf), "CPF não deve ser informado para cliente PJ.");
-            if (!string.IsNullOrWhiteSpace(fullName))
-                ModelState.AddModelError(nameof(CreateClientRequest.FullName), "FullName não deve ser informado para cliente PJ.");
-        }
+            ValidatePfClient(cpf, fullName, cnpj, corporateName);
+        else if (type == "PJ")
+            ValidatePjClient(cpf, fullName, cnpj, corporateName);
 
         return ModelState.IsValid;
+    }
+
+    private void ValidatePfClient(string? cpf, string? fullName, string? cnpj, string? corporateName)
+    {
+        if (cpf is null || !IsValidCpf(cpf))
+            ModelState.AddModelError(nameof(CreateClientRequest.Cpf), "CPF inválido para cliente PF.");
+        if (string.IsNullOrWhiteSpace(fullName))
+            ModelState.AddModelError(nameof(CreateClientRequest.FullName), "FullName é obrigatório para cliente PF.");
+        if (cnpj is not null)
+            ModelState.AddModelError(nameof(CreateClientRequest.Cnpj), "CNPJ não deve ser informado para cliente PF.");
+        if (!string.IsNullOrWhiteSpace(corporateName))
+            ModelState.AddModelError(nameof(CreateClientRequest.CorporateName),
+                "CorporateName não deve ser informado para cliente PF.");
+    }
+
+    private void ValidatePjClient(string? cpf, string? fullName, string? cnpj, string? corporateName)
+    {
+        if (cnpj is null || !IsValidCnpj(cnpj))
+            ModelState.AddModelError(nameof(CreateClientRequest.Cnpj), "CNPJ inválido para cliente PJ.");
+        if (string.IsNullOrWhiteSpace(corporateName))
+            ModelState.AddModelError(nameof(CreateClientRequest.CorporateName),
+                "CorporateName é obrigatório para cliente PJ.");
+        if (cpf is not null)
+            ModelState.AddModelError(nameof(CreateClientRequest.Cpf), "CPF não deve ser informado para cliente PJ.");
+        if (!string.IsNullOrWhiteSpace(fullName))
+            ModelState.AddModelError(nameof(CreateClientRequest.FullName), "FullName não deve ser informado para cliente PJ.");
     }
 
     private static string? NormalizeDigits(string? value)
