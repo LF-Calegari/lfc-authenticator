@@ -15,6 +15,7 @@ namespace AuthService.Controllers.Clients;
 public class ClientsController : ControllerBase
 {
     private const string ClientWithCpfAlreadyExistsMessage = "Já existe cliente com este CPF.";
+    private const string ClientWithCnpjAlreadyExistsMessage = "Já existe cliente com este CNPJ.";
     private static readonly EmailAddressAttribute EmailValidator = new();
     private static readonly Regex PhoneRegex = new(
         @"^\+[1-9]\d{11,14}$",
@@ -95,7 +96,7 @@ public class ClientsController : ControllerBase
             return Conflict(new { message = ClientWithCpfAlreadyExistsMessage });
 
         if (normalized.Cnpj is not null && await _db.Clients.IgnoreQueryFilters().AnyAsync(c => c.Cnpj == normalized.Cnpj))
-            return Conflict(new { message = "Já existe cliente com este CNPJ." });
+            return Conflict(new { message = ClientWithCnpjAlreadyExistsMessage });
 
         var now = DateTime.UtcNow;
         var entity = new Client
@@ -120,7 +121,7 @@ public class ClientsController : ControllerBase
                 return Conflict(new { message = ClientWithCpfAlreadyExistsMessage });
 
             if (normalized.Cnpj is not null)
-                return Conflict(new { message = "Já existe cliente com este CNPJ." });
+                return Conflict(new { message = ClientWithCnpjAlreadyExistsMessage });
 
             throw;
         }
@@ -179,7 +180,7 @@ public class ClientsController : ControllerBase
 
         if (normalized.Cnpj is not null &&
             await _db.Clients.IgnoreQueryFilters().AnyAsync(c => c.Id != id && c.Cnpj == normalized.Cnpj))
-            return Conflict(new { message = "Já existe cliente com este CNPJ." });
+            return Conflict(new { message = ClientWithCnpjAlreadyExistsMessage });
 
         client.Cpf = normalized.Cpf;
         client.FullName = normalized.FullName;
@@ -196,7 +197,7 @@ public class ClientsController : ControllerBase
                 return Conflict(new { message = ClientWithCpfAlreadyExistsMessage });
 
             if (normalized.Cnpj is not null)
-                return Conflict(new { message = "Já existe cliente com este CNPJ." });
+                return Conflict(new { message = ClientWithCnpjAlreadyExistsMessage });
 
             throw;
         }
