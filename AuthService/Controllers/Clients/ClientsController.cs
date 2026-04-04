@@ -14,6 +14,7 @@ namespace AuthService.Controllers.Clients;
 [Route("clients")]
 public class ClientsController : ControllerBase
 {
+    private const string ClientWithCpfAlreadyExistsMessage = "Já existe cliente com este CPF.";
     private static readonly EmailAddressAttribute EmailValidator = new();
     private static readonly Regex PhoneRegex = new(
         @"^\+[1-9]\d{11,14}$",
@@ -91,7 +92,7 @@ public class ClientsController : ControllerBase
             return ValidationProblem(ModelState);
 
         if (normalized.Cpf is not null && await _db.Clients.IgnoreQueryFilters().AnyAsync(c => c.Cpf == normalized.Cpf))
-            return Conflict(new { message = "Já existe cliente com este CPF." });
+            return Conflict(new { message = ClientWithCpfAlreadyExistsMessage });
 
         if (normalized.Cnpj is not null && await _db.Clients.IgnoreQueryFilters().AnyAsync(c => c.Cnpj == normalized.Cnpj))
             return Conflict(new { message = "Já existe cliente com este CNPJ." });
@@ -116,7 +117,7 @@ public class ClientsController : ControllerBase
         catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
         {
             if (normalized.Cpf is not null)
-                return Conflict(new { message = "Já existe cliente com este CPF." });
+                return Conflict(new { message = ClientWithCpfAlreadyExistsMessage });
 
             if (normalized.Cnpj is not null)
                 return Conflict(new { message = "Já existe cliente com este CNPJ." });
@@ -174,7 +175,7 @@ public class ClientsController : ControllerBase
 
         if (normalized.Cpf is not null &&
             await _db.Clients.IgnoreQueryFilters().AnyAsync(c => c.Id != id && c.Cpf == normalized.Cpf))
-            return Conflict(new { message = "Já existe cliente com este CPF." });
+            return Conflict(new { message = ClientWithCpfAlreadyExistsMessage });
 
         if (normalized.Cnpj is not null &&
             await _db.Clients.IgnoreQueryFilters().AnyAsync(c => c.Id != id && c.Cnpj == normalized.Cnpj))
@@ -192,7 +193,7 @@ public class ClientsController : ControllerBase
         catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
         {
             if (normalized.Cpf is not null)
-                return Conflict(new { message = "Já existe cliente com este CPF." });
+                return Conflict(new { message = ClientWithCpfAlreadyExistsMessage });
 
             if (normalized.Cnpj is not null)
                 return Conflict(new { message = "Já existe cliente com este CNPJ." });
@@ -495,7 +496,7 @@ public class ClientsController : ControllerBase
         return mod < 2 ? 0 : 11 - mod;
     }
 
-    private static int CheckDigit(string input, IReadOnlyList<int> weights)
+    private static int CheckDigit(string input, int[] weights)
     {
         var sum = 0;
         for (var i = 0; i < input.Length; i++)
