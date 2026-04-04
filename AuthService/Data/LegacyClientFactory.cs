@@ -21,7 +21,7 @@ internal static class LegacyClientFactory
         };
     }
 
-    private static string GenerateUniqueCpf(ISet<string> usedCpfs, int seed)
+    private static string GenerateUniqueCpf(HashSet<string> usedCpfs, int seed)
     {
         var counter = Math.Max(seed, 1);
         while (true)
