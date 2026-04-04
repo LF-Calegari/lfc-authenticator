@@ -466,7 +466,7 @@ public class ClientsApiTests : IAsyncLifetime
         return twelve + d1 + d2;
     }
 
-    private static int CheckDigitCnpj(string input, IReadOnlyList<int> weights)
+    private static int CheckDigitCnpj(string input, int[] weights)
     {
         var sum = 0;
         for (var i = 0; i < input.Length; i++)
