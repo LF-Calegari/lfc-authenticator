@@ -394,7 +394,7 @@ public class ClientsController : ControllerBase
             phones);
     }
 
-    private (string Type, string? Cpf, string? FullName, string? Cnpj, string? CorporateName) NormalizeRequest(
+    private static (string Type, string? Cpf, string? FullName, string? Cnpj, string? CorporateName) NormalizeRequest(
         string type,
         string? cpf,
         string? fullName,
