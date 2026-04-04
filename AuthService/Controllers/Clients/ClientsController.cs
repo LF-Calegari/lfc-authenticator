@@ -48,8 +48,6 @@ public class ClientsController : ControllerBase
         public string? CorporateName { get; set; }
     }
 
-    public class UpdateClientRequest : CreateClientRequest;
-
     public sealed class AddEmailRequest
     {
         [Required]
@@ -159,7 +157,7 @@ public class ClientsController : ControllerBase
 
     [HttpPut("{id:guid}")]
     [Authorize(Policy = PermissionPolicies.ClientsUpdate)]
-    public async Task<IActionResult> UpdateById(Guid id, [FromBody] UpdateClientRequest request)
+    public async Task<IActionResult> UpdateById(Guid id, [FromBody] CreateClientRequest request)
     {
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
