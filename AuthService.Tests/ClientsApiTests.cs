@@ -9,6 +9,8 @@ namespace AuthService.Tests;
 
 public class ClientsApiTests : IAsyncLifetime
 {
+    private static readonly int[] CnpjWeights1 = { 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2 };
+    private static readonly int[] CnpjWeights2 = { 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2 };
     private WebAppFactory _factory = null!;
     private HttpClient _client = null!;
 
@@ -459,12 +461,12 @@ public class ClientsApiTests : IAsyncLifetime
     private static string GenerateCnpj(int baseDigits)
     {
         var twelve = (baseDigits % 100_000_000).ToString("D8") + "0001";
-        var d1 = CheckDigitCnpj(twelve, new[] { 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2 });
-        var d2 = CheckDigitCnpj(twelve + d1, new[] { 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2 });
+        var d1 = CheckDigitCnpj(twelve, CnpjWeights1);
+        var d2 = CheckDigitCnpj(twelve + d1, CnpjWeights2);
         return twelve + d1 + d2;
     }
 
-    private static int CheckDigitCnpj(string input, IReadOnlyList<int> weights)
+    private static int CheckDigitCnpj(string input, int[] weights)
     {
         var sum = 0;
         for (var i = 0; i < input.Length; i++)
