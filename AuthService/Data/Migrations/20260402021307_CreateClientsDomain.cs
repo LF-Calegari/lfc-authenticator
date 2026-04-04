@@ -16,6 +16,7 @@ namespace AuthService.Data.Migrations
         private const string UniqueIdentifierType = "uniqueidentifier";
         private const string DateTime2Type = "datetime2";
         private static readonly string[] ClientEmailsUniqueIndexColumns = { "ClientId", "Email" };
+        private static readonly string[] ClientPhonesUniqueIndexColumns = { "ClientId", "Type", "Number" };
 
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -100,7 +101,7 @@ namespace AuthService.Data.Migrations
             migrationBuilder.CreateIndex(
                 name: "UX_ClientPhones_ClientId_Type_Number",
                 table: ClientPhonesTable,
-                columns: new[] { "ClientId", "Type", "Number" },
+                columns: ClientPhonesUniqueIndexColumns,
                 unique: true);
 
             migrationBuilder.CreateIndex(
