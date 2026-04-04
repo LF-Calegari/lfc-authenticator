@@ -495,7 +495,7 @@ public class ClientsController : ControllerBase
         return mod < 2 ? 0 : 11 - mod;
     }
 
-    private static int CheckDigit(string input, IReadOnlyList<int> weights)
+    private static int CheckDigit(string input, int[] weights)
     {
         var sum = 0;
         for (var i = 0; i < input.Length; i++)
