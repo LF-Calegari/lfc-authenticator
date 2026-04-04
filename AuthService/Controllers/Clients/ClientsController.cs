@@ -16,6 +16,7 @@ public class ClientsController : ControllerBase
 {
     private const string ClientWithCpfAlreadyExistsMessage = "Já existe cliente com este CPF.";
     private const string ClientWithCnpjAlreadyExistsMessage = "Já existe cliente com este CNPJ.";
+    private const string ClientNotFoundMessage = "Cliente não encontrado.";
     private static readonly EmailAddressAttribute EmailValidator = new();
     private static readonly Regex PhoneRegex = new(
         @"^\+[1-9]\d{11,14}$",
@@ -151,7 +152,7 @@ public class ClientsController : ControllerBase
     {
         var client = await _db.Clients.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id);
         if (client is null)
-            return NotFound(new { message = "Cliente não encontrado." });
+            return NotFound(new { message = ClientNotFoundMessage });
 
         return Ok(await BuildResponseAsync(client));
     }
@@ -165,7 +166,7 @@ public class ClientsController : ControllerBase
 
         var client = await _db.Clients.FirstOrDefaultAsync(c => c.Id == id);
         if (client is null)
-            return NotFound(new { message = "Cliente não encontrado." });
+            return NotFound(new { message = ClientNotFoundMessage });
 
         var normalized = NormalizeRequest(request.Type, request.Cpf, request.FullName, request.Cnpj, request.CorporateName);
         if (!string.Equals(client.Type, normalized.Type, StringComparison.Ordinal))
@@ -211,7 +212,7 @@ public class ClientsController : ControllerBase
     {
         var client = await _db.Clients.FirstOrDefaultAsync(c => c.Id == id);
         if (client is null)
-            return NotFound(new { message = "Cliente não encontrado." });
+            return NotFound(new { message = ClientNotFoundMessage });
 
         client.DeletedAt = DateTime.UtcNow;
         client.UpdatedAt = DateTime.UtcNow;
@@ -244,7 +245,7 @@ public class ClientsController : ControllerBase
 
         var client = await _db.Clients.FirstOrDefaultAsync(c => c.Id == id);
         if (client is null)
-            return NotFound(new { message = "Cliente não encontrado." });
+            return NotFound(new { message = ClientNotFoundMessage });
 
         var email = request.Email.Trim().ToLowerInvariant();
         if (!EmailValidator.IsValid(email))
@@ -317,7 +318,7 @@ public class ClientsController : ControllerBase
 
         var client = await _db.Clients.FirstOrDefaultAsync(c => c.Id == clientId);
         if (client is null)
-            return NotFound(new { message = "Cliente não encontrado." });
+            return NotFound(new { message = ClientNotFoundMessage });
 
         var normalizedNumber = request.Number.Trim();
         if (!PhoneRegex.IsMatch(normalizedNumber))
