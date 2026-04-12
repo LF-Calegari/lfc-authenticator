@@ -15,6 +15,7 @@ internal static class PermissionCatalog
             "Permissions" => "permissions",
             "PermissionsTypes" => "permissions-types",
             "Roles" => "roles",
+            "Kurtto" => "kurtto",
             _ => ""
         };
 

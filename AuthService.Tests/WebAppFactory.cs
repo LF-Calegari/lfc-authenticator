@@ -73,6 +73,7 @@ public class WebAppFactory : WebApplicationFactory<Program>
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         db.Database.Migrate();
         OfficialCatalogSeeder.EnsureCatalogAsync(db).GetAwaiter().GetResult();
+        KurttoAccessSeeder.EnsureKurttoAccessAsync(db).GetAwaiter().GetResult();
         DefaultSystemUserSeeder.EnsureDefaultUserAsync(db).GetAwaiter().GetResult();
         IntegrationBootstrapSeeder.EnsureBootstrapUserAsync(db).GetAwaiter().GetResult();
         LegacyUsersClientSeeder.EnsureLegacyUsersHaveClientAsync(db).GetAwaiter().GetResult();
