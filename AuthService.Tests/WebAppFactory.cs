@@ -21,19 +21,23 @@ public class WebAppFactory : WebApplicationFactory<Program>
     private readonly string _appConnectionString;
     private bool _disposed;
 
-    private const string BootstrapCredentialEnvVar = "INTEGRATION_BOOTSTRAP_PASSWORD";
-    private const string BootstrapCredentialDefault = "SenhaSegura1!";
-
     private const string DefaultUserCredentialEnvVar = "DEFAULT_SYSTEM_USER_PASSWORD";
     private const string DefaultUserCredentialDefault = "toor";
+    private const string AdminUserCredentialEnvVar = "ADMIN_SYSTEM_USER_PASSWORD";
+    private const string AdminUserCredentialDefault = "admin";
+    private const string StandardUserCredentialEnvVar = "DEFAULT_USER_PASSWORD";
+    private const string StandardUserCredentialDefault = "default";
 
     public WebAppFactory()
     {
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(BootstrapCredentialEnvVar)))
-            Environment.SetEnvironmentVariable(BootstrapCredentialEnvVar, BootstrapCredentialDefault);
-
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(DefaultUserCredentialEnvVar)))
             Environment.SetEnvironmentVariable(DefaultUserCredentialEnvVar, DefaultUserCredentialDefault);
+
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(AdminUserCredentialEnvVar)))
+            Environment.SetEnvironmentVariable(AdminUserCredentialEnvVar, AdminUserCredentialDefault);
+
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(StandardUserCredentialEnvVar)))
+            Environment.SetEnvironmentVariable(StandardUserCredentialEnvVar, StandardUserCredentialDefault);
 
         var baseConnection = Environment.GetEnvironmentVariable(TestSqlBaseEnv)?.Trim();
         if (string.IsNullOrEmpty(baseConnection))
@@ -75,7 +79,6 @@ public class WebAppFactory : WebApplicationFactory<Program>
         OfficialCatalogSeeder.EnsureCatalogAsync(db).GetAwaiter().GetResult();
         KurttoAccessSeeder.EnsureKurttoAccessAsync(db).GetAwaiter().GetResult();
         DefaultSystemUserSeeder.EnsureDefaultUserAsync(db).GetAwaiter().GetResult();
-        IntegrationBootstrapSeeder.EnsureBootstrapUserAsync(db).GetAwaiter().GetResult();
         LegacyUsersClientSeeder.EnsureLegacyUsersHaveClientAsync(db).GetAwaiter().GetResult();
         return host;
     }

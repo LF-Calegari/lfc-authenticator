@@ -388,19 +388,19 @@ public class UsersApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GetById_BootstrapUser_ReturnsNonEmptyPermissions_FromSeeder()
+    public async Task GetById_RootUser_ReturnsNonEmptyPermissions_FromSeeder()
     {
-        Guid bootstrapId;
+        Guid rootId;
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            bootstrapId = await db.Users
-                .Where(u => u.Email == IntegrationBootstrapSeeder.Email)
+            rootId = await db.Users
+                .Where(u => u.Email == DefaultSystemUserSeeder.RootEmail)
                 .Select(u => u.Id)
                 .SingleAsync();
         }
 
-        var getResp = await _client.GetAsync($"/api/v1/users/{bootstrapId}");
+        var getResp = await _client.GetAsync($"/api/v1/users/{rootId}");
         getResp.EnsureSuccessStatusCode();
         var detail = await getResp.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
         Assert.NotNull(detail);
