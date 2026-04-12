@@ -11,11 +11,15 @@ public static class DefaultSystemUserSeeder
     private const string AdminCredentialEnvVar = "ADMIN_SYSTEM_USER_PASSWORD";
     private const string DefaultCredentialEnvVar = "DEFAULT_USER_PASSWORD";
 
-    private static readonly (string Name, string Email, string CredentialEnvVar)[] SystemUsers =
+    public const string RootRoleCode = "root";
+    public const string AdminRoleCode = "admin";
+    public const string DefaultRoleCode = "default";
+
+    private static readonly (string Name, string Email, string CredentialEnvVar, string RoleCode, string RoleName)[] SystemUsers =
     [
-        ("Root do sistema", RootEmail, RootCredentialEnvVar),
-        ("Admin do sistema", AdminEmail, AdminCredentialEnvVar),
-        ("Usuário default do sistema", DefaultEmail, DefaultCredentialEnvVar)
+        ("Root do sistema", RootEmail, RootCredentialEnvVar, RootRoleCode, "Root"),
+        ("Admin do sistema", AdminEmail, AdminCredentialEnvVar, AdminRoleCode, "Admin"),
+        ("Usuário default do sistema", DefaultEmail, DefaultCredentialEnvVar, DefaultRoleCode, "Default")
     ];
 
     private static string ResolveCredentialByEnv(string credentialEnvVar)
@@ -35,13 +39,15 @@ public static class DefaultSystemUserSeeder
 
     public static async Task EnsureSystemUsersAsync(AppDbContext db, CancellationToken cancellationToken = default)
     {
-        foreach (var (name, email, credentialEnvVar) in SystemUsers)
+        foreach (var (name, email, credentialEnvVar, roleCode, roleName) in SystemUsers)
         {
-            await SeederHelper.EnsureUserWithAllPermissionsAsync(
+            await SeederHelper.EnsureUserAssignedToRoleWithAllPermissionsAsync(
                 db,
                 email,
                 ResolveCredentialByEnv(credentialEnvVar),
                 name,
+                roleCode,
+                roleName,
                 cancellationToken);
         }
     }

@@ -89,6 +89,31 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SystemUsers_AreLinkedToRoles_AndHaveNoDirectPermissions()
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var users = await db.Users.AsNoTracking()
+            .Where(u =>
+                u.Email == DefaultSystemUserSeeder.RootEmail ||
+                u.Email == DefaultSystemUserSeeder.AdminEmail ||
+                u.Email == DefaultSystemUserSeeder.DefaultEmail)
+            .ToListAsync();
+
+        Assert.Equal(3, users.Count);
+
+        foreach (var user in users)
+        {
+            var rolesCount = await db.UserRoles.AsNoTracking().CountAsync(ur => ur.UserId == user.Id);
+            Assert.Equal(1, rolesCount);
+
+            var directPermissions = await db.UserPermissions.AsNoTracking().CountAsync(up => up.UserId == user.Id);
+            Assert.Equal(0, directPermissions);
+        }
+    }
+
+    [Fact]
     public void ResolveCredential_WhenEnvVarIsSet_ReturnsValue()
     {
         var credential = DefaultSystemUserSeeder.ResolveCredential();

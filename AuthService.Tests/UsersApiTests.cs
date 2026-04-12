@@ -388,7 +388,7 @@ public class UsersApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GetById_RootUser_ReturnsNonEmptyPermissions_FromSeeder()
+    public async Task GetById_RootUser_ReturnsRoleLink_AndNoDirectPermissions_FromSeeder()
     {
         Guid rootId;
         using (var scope = _factory.Services.CreateScope())
@@ -404,8 +404,8 @@ public class UsersApiTests : IAsyncLifetime
         getResp.EnsureSuccessStatusCode();
         var detail = await getResp.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
         Assert.NotNull(detail);
-        Assert.NotEmpty(detail.Permissions);
-        Assert.Empty(detail.Roles);
+        Assert.Single(detail.Roles);
+        Assert.Empty(detail.Permissions);
     }
 
     [Fact]
