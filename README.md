@@ -67,7 +67,7 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 |------|----------------|
 | SDK .NET | **10.x** (alvo `net10.0`) |
 | Banco | **Microsoft SQL Server** (local, Docker ou remoto) |
-| Docker (opcional) | Docker Engine + Compose v2 |
+| Docker (opcional) | Docker Engine + Compose v2; **rede externa obrigatória** em ambiente integrado, **no máximo 30 IPs** úteis na sub-rede (ex.: `/27`); **mesma rede** que os demais serviços do ecossistema (padrão `lfc_platform_network`). |
 | Ferramenta EF (migrations) | `dotnet-ef` (global ou via `dotnet tool restore` no projeto) |
 
 ---
@@ -76,11 +76,12 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 
 ### Opção A — Docker Compose (recomendado para ambiente integrado)
 
-1. Na **raiz** do repositório: `cp .env.example .env` e ajuste `MSSQL_SA_PASSWORD` (deve atender à política da Microsoft: maiúsculas, minúsculas, números e símbolos).
-2. Subir API + SQL: `docker compose up -d --build`
-3. Aplicar migrations (primeira vez ou após alteração do modelo):  
+1. **Rede Docker:** crie a rede externa **uma vez** (a mesma usada pelos outros serviços do ecossistema, ex.: Kurtto) — veja [Docker Compose — Rede externa](#rede-externa).
+2. Na **raiz** do repositório: `cp .env.example .env` e ajuste `MSSQL_SA_PASSWORD` (deve atender à política da Microsoft: maiúsculas, minúsculas, números e símbolos).
+3. Subir API + SQL: `docker compose up -d --build`
+4. Aplicar migrations (primeira vez ou após alteração do modelo):  
    `docker compose --profile migrate run --rm migrate`
-4. API no host: **https://localhost:8080** (mapeamento `8080:5042`; Kestrel usa certificado de desenvolvimento gerado na imagem Docker — o navegador pode alertar até você confiar no certificado ou usar `-k` no `curl`).
+5. API no host: **https://localhost:8080** (mapeamento `8080:5042`; Kestrel usa certificado de desenvolvimento gerado na imagem Docker — o navegador pode alertar até você confiar no certificado ou usar `-k` no `curl`).
 
 ### Opção B — `dotnet run` no host
 
@@ -384,6 +385,23 @@ Mensagens de autenticação e de regra de negócio costumam vir como JSON com pr
 ## Docker Compose
 
 O arquivo **`docker-compose.yml`** está na **raiz** do repositório.
+
+Este serviço faz parte de um **sistema maior**: em Docker, ele deve usar a **mesma rede externa** que os demais projetos (por exemplo, **Kurtto Service**) para que os containers se comuniquem por nome de host interno.
+
+### Rede externa
+
+É **obrigatória** uma rede Docker externa com **no máximo 30 IPs** disponíveis para containers (exemplo de dimensionamento: sub-rede **`/27`**, com 30 endereços úteis).
+
+Antes de subir os serviços, garanta que a rede externa exista:
+
+```bash
+docker network create \
+  --driver bridge \
+  --subnet 172.30.0.0/27 \
+  lfc_platform_network
+```
+
+> A stack usa a rede externa `lfc_platform_network` por padrão. Se precisar usar outro nome, defina `EXTERNAL_NETWORK_NAME` no ambiente antes de executar o Compose.
 
 | Serviço | Função |
 |---------|--------|
