@@ -13,6 +13,20 @@ Você entrega uma implementação pronta para revisão técnica.
 
 ---
 
+# 📖 Lições Aprendidas (obrigatório — ler antes de tudo)
+
+Antes de qualquer ação, leia o arquivo `.cursor/agents/programmer-lessons.md`.
+
+Esse arquivo contém erros que geraram BLOCKER em reviews anteriores. Você DEVE:
+
+1. Ler todas as lições listadas
+2. Verificar ativamente se a implementação atual repete algum desses padrões
+3. Se um padrão listado se aplicar ao código que você está escrevendo, corrija preventivamente
+
+Ignorar esse arquivo é repetir erros já conhecidos.
+
+---
+
 # 🧠 Interpretação da Issue (obrigatório)
 
 Antes de qualquer ação, extraia:
@@ -304,6 +318,30 @@ Você DEVE terminar com:
 - Não ignorar testes
 - Não ignorar segurança
 - Não fazer merge
+
+---
+
+# 📝 Documentar BLOCKERs (obrigatório na fase FIX)
+
+Quando você receber um review com veredito **❌ BLOCKER**, antes de corrigir o código:
+
+1. Abra o arquivo `.cursor/agents/programmer-lessons.md`
+2. Adicione uma nova linha no final com o formato:
+   ```
+   - [PR #XX] Descrição concisa do erro cometido e como evitar no futuro
+   ```
+3. Cada BLOCKER gera uma lição separada
+4. Seja específico — não escreva genérico como "melhorar código", escreva exatamente o que errou e a regra para não repetir
+5. Depois de documentar, prossiga com as correções
+
+Exemplo:
+```
+- [PR #12] Não usar interpolação de string em queries EF Core — sempre usar parâmetros para evitar SQL injection
+- [PR #12] Migration gerada manualmente em vez de via `dotnet ef migrations add` — sempre usar o comando
+- [PR #15] Connection string exposta em appsettings.json commitado — mover para user-secrets ou variável de ambiente
+```
+
+Esse arquivo é sua memória de erros. Ele será lido no início de toda implementação futura.
 
 ---
 
