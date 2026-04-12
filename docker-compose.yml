@@ -16,6 +16,8 @@ services:
       # Sobrescreve appsettings.Development.json com a mesma senha do SQL (variável do .env).
       ConnectionStrings__DefaultConnection: "Server=db,1433;Database=AuthServiceDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
       DEFAULT_SYSTEM_USER_PASSWORD: "${DEFAULT_SYSTEM_USER_PASSWORD:-toor}"
+      ADMIN_SYSTEM_USER_PASSWORD: "${ADMIN_SYSTEM_USER_PASSWORD:-admin}"
+      DEFAULT_USER_PASSWORD: "${DEFAULT_USER_PASSWORD:-default}"
     ports:
       - "8080:5042"
     volumes:
@@ -74,8 +76,9 @@ services:
       - .env
     environment:
       AUTH_SERVICE_TEST_SQL_BASE: "Server=db,1433;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
-      INTEGRATION_BOOTSTRAP_PASSWORD: "${INTEGRATION_BOOTSTRAP_PASSWORD:-SenhaSegura1!}"
       DEFAULT_SYSTEM_USER_PASSWORD: "${DEFAULT_SYSTEM_USER_PASSWORD:-toor}"
+      ADMIN_SYSTEM_USER_PASSWORD: "${ADMIN_SYSTEM_USER_PASSWORD:-admin}"
+      DEFAULT_USER_PASSWORD: "${DEFAULT_USER_PASSWORD:-default}"
     volumes:
       - .:/workspace
     working_dir: /workspace

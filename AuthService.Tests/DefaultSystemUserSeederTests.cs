@@ -26,11 +26,11 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DefaultUser_StoredPassword_IsNotPlaintext()
+    public async Task RootUser_StoredPassword_IsNotPlaintext()
     {
         await using var scope = _factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var normalized = DefaultSystemUserSeeder.Email.Trim().ToLowerInvariant();
+        var normalized = DefaultSystemUserSeeder.RootEmail.Trim().ToLowerInvariant();
         var row = await db.Users.AsNoTracking().IgnoreQueryFilters().FirstAsync(u => u.Email == normalized);
         var credential = DefaultSystemUserSeeder.ResolveCredential();
         Assert.NotEqual(credential, row.Password);
@@ -38,20 +38,30 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DefaultUser_ExistsAfterBootstrap_CanLoginWithSeededCredentials()
+    public async Task SystemUsers_ExistAfterBootstrap_CanLoginWithSeededCredentials()
     {
-        var response = await _client.PostAsJsonAsync("/api/v1/auth/login",
-            new { email = DefaultSystemUserSeeder.Email, password = DefaultSystemUserSeeder.ResolveCredential() },
-            TestApiClient.JsonOptions);
+        var cases = new[]
+        {
+            new { Email = DefaultSystemUserSeeder.RootEmail, Password = DefaultSystemUserSeeder.ResolveCredential() },
+            new { Email = DefaultSystemUserSeeder.AdminEmail, Password = ResolveFromEnv("ADMIN_SYSTEM_USER_PASSWORD") },
+            new { Email = DefaultSystemUserSeeder.DefaultEmail, Password = ResolveFromEnv("DEFAULT_USER_PASSWORD") }
+        };
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<LoginTokenDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(body);
-        Assert.False(string.IsNullOrWhiteSpace(body.Token));
+        foreach (var c in cases)
+        {
+            var response = await _client.PostAsJsonAsync("/api/v1/auth/login",
+                new { email = c.Email, password = c.Password },
+                TestApiClient.JsonOptions);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<LoginTokenDto>(TestApiClient.JsonOptions);
+            Assert.NotNull(body);
+            Assert.False(string.IsNullOrWhiteSpace(body.Token));
+        }
     }
 
     [Fact]
-    public async Task EnsureDefaultUserAsync_Idempotent_DoesNotDuplicateUser()
+    public async Task EnsureDefaultUserAsync_Idempotent_DoesNotDuplicateSystemUsers()
     {
         await using (var scope = _factory.Services.CreateAsyncScope())
         {
@@ -63,9 +73,43 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
         await using (var scope = _factory.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var normalized = DefaultSystemUserSeeder.Email.Trim().ToLowerInvariant();
-            var count = await db.Users.IgnoreQueryFilters().CountAsync(u => u.Email == normalized);
-            Assert.Equal(1, count);
+            var emails = new[]
+            {
+                DefaultSystemUserSeeder.RootEmail.Trim().ToLowerInvariant(),
+                DefaultSystemUserSeeder.AdminEmail.Trim().ToLowerInvariant(),
+                DefaultSystemUserSeeder.DefaultEmail.Trim().ToLowerInvariant()
+            };
+
+            foreach (var email in emails)
+            {
+                var count = await db.Users.IgnoreQueryFilters().CountAsync(u => u.Email == email);
+                Assert.Equal(1, count);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SystemUsers_AreLinkedToRoles_AndHaveNoDirectPermissions()
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var users = await db.Users.AsNoTracking()
+            .Where(u =>
+                u.Email == DefaultSystemUserSeeder.RootEmail ||
+                u.Email == DefaultSystemUserSeeder.AdminEmail ||
+                u.Email == DefaultSystemUserSeeder.DefaultEmail)
+            .ToListAsync();
+
+        Assert.Equal(3, users.Count);
+
+        foreach (var user in users)
+        {
+            var rolesCount = await db.UserRoles.AsNoTracking().CountAsync(ur => ur.UserId == user.Id);
+            Assert.Equal(1, rolesCount);
+
+            var directPermissions = await db.UserPermissions.AsNoTracking().CountAsync(up => up.UserId == user.Id);
+            Assert.Equal(0, directPermissions);
         }
     }
 
@@ -95,5 +139,12 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     private sealed class LoginTokenDto
     {
         public string Token { get; set; } = string.Empty;
+    }
+
+    private static string ResolveFromEnv(string variableName)
+    {
+        var value = Environment.GetEnvironmentVariable(variableName);
+        Assert.False(string.IsNullOrWhiteSpace(value));
+        return value!;
     }
 }

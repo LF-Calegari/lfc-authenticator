@@ -23,7 +23,7 @@ public class KurttoAccessSeederTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AfterBootstrap_KurttoSystem_RoutesAndAdminRoleExist()
+    public async Task AfterBootstrap_KurttoSystemAndRoutesExist()
     {
         await using var scope = _factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -44,19 +44,10 @@ public class KurttoAccessSeederTests : IAsyncLifetime
         var permCount = await db.Permissions.AsNoTracking()
             .CountAsync(p => p.SystemId == systemId);
         Assert.Equal(5, permCount);
-
-        var roleId = await db.Roles.AsNoTracking()
-            .Where(r => r.Code == KurttoAccessSeeder.KurttoAdminRoleCode)
-            .Select(r => r.Id)
-            .SingleAsync();
-
-        var rpCount = await db.RolePermissions.AsNoTracking()
-            .CountAsync(rp => rp.RoleId == roleId);
-        Assert.Equal(5, rpCount);
     }
 
     [Fact]
-    public async Task EnsureKurttoAccessAsync_Idempotent_DoesNotDuplicateRoutesOrRolePermissions()
+    public async Task EnsureKurttoAccessAsync_Idempotent_DoesNotDuplicateRoutes()
     {
         await using (var scope = _factory.Services.CreateAsyncScope())
         {
@@ -77,19 +68,6 @@ public class KurttoAccessSeederTests : IAsyncLifetime
             .CountAsync(r => r.SystemId == systemId);
 
         Assert.Equal(KurttoAccessSeeder.KurttoAuthenticatedRouteCodes.Count, routes);
-
-        var roleId = await db2.Roles.IgnoreQueryFilters()
-            .Where(r => r.Code == KurttoAccessSeeder.KurttoAdminRoleCode)
-            .Select(r => r.Id)
-            .SingleAsync();
-
-        var distinctRp = await db2.RolePermissions.IgnoreQueryFilters()
-            .Where(rp => rp.RoleId == roleId)
-            .Select(rp => rp.PermissionId)
-            .Distinct()
-            .CountAsync();
-
-        Assert.Equal(5, distinctRp);
     }
 
     [Fact]
@@ -139,44 +117,4 @@ public class KurttoAccessSeederTests : IAsyncLifetime
         }
     }
 
-    [Fact]
-    public async Task EnsureKurttoAccessAsync_WhenKurttoPermissionsMissing_ThrowsInvalidOperationException()
-    {
-        var baseConnection = Environment.GetEnvironmentVariable("AUTH_SERVICE_TEST_SQL_BASE")?.Trim();
-        Assert.False(string.IsNullOrEmpty(baseConnection));
-
-        var databaseName = "auth_svc_kurtto_seed_noperm_" + Guid.NewGuid().ToString("N");
-        var masterConnectionString = SqlServerTestDb.BuildMasterConnectionString(baseConnection);
-        var appConnectionString = SqlServerTestDb.BuildDatabaseConnectionString(baseConnection, databaseName);
-
-        SqlServerTestDb.CreateDatabase(masterConnectionString, databaseName);
-        try
-        {
-            var options = new DbContextOptionsBuilder<AppDbContext>()
-                .UseSqlServer(appConnectionString)
-                .Options;
-
-            await using var db = new AppDbContext(options);
-            await db.Database.MigrateAsync();
-            await OfficialCatalogSeeder.EnsureCatalogAsync(db);
-
-            var kurttoSystemId = await db.Systems.AsNoTracking()
-                .Where(s => s.Code == "kurtto")
-                .Select(s => s.Id)
-                .SingleAsync();
-
-            var kurttoPerms = await db.Permissions.Where(p => p.SystemId == kurttoSystemId).ToListAsync();
-            db.Permissions.RemoveRange(kurttoPerms);
-            await db.SaveChangesAsync();
-
-            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                KurttoAccessSeeder.EnsureKurttoAccessAsync(db));
-
-            Assert.Contains("permissão", ex.Message, StringComparison.OrdinalIgnoreCase);
-        }
-        finally
-        {
-            SqlServerTestDb.DropDatabase(masterConnectionString, databaseName);
-        }
-    }
 }

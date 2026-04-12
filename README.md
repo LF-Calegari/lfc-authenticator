@@ -103,7 +103,9 @@ Todas as rotas da API REST ficam sob o prefixo **`/api/v1`** (ex.: `GET http://l
 | `ASPNETCORE_ENVIRONMENT` | `Development`, `Production` ou `Testing`. Em **Testing**, não há redirecionamento HTTPS e o seed do catálogo no `Program` é omitido (testes fazem seed no *factory*). |
 | `Auth:Jwt:Secret` | Segredo HMAC do JWT; **mínimo 32 caracteres**. Em produção, use segredo forte e armazenamento seguro — **não** commite valores reais. |
 | `Auth:Jwt:ExpirationMinutes` | Validade do access token em minutos. |
-| `DEFAULT_SYSTEM_USER_PASSWORD` | Credencial do usuário padrão do sistema (`root@email.com.br`). **Obrigatória** em Development e Production; fail-fast se ausente. No Docker Compose o default é `toor`. |
+| `DEFAULT_SYSTEM_USER_PASSWORD` | Credencial do usuário `root@email.com.br`. **Obrigatória** em Development e Production; fail-fast se ausente. No Docker Compose o default é `toor`. |
+| `ADMIN_SYSTEM_USER_PASSWORD` | Credencial do usuário `admin@email.com.br`. **Obrigatória** em Development e Production; fail-fast se ausente. No Docker Compose o default é `admin`. |
+| `DEFAULT_USER_PASSWORD` | Credencial do usuário `default@email.com.br`. **Obrigatória** em Development e Production; fail-fast se ausente. No Docker Compose o default é `default`. |
 | `AUTH_SERVICE_TEST_SQL_BASE` | Obrigatória para **testes de integração**: connection string **sem** `Database` / `Initial Catalog`. |
 
 Exemplo de override no shell (Linux):
@@ -121,16 +123,15 @@ export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 2. **Pipeline HTTP** — em ambientes diferentes de **Testing**, `UseHttpsRedirection`. **Swagger** e **Swagger UI** são registrados **antes** de autenticação/autorização, ficando **anônimos**.
 3. **`UseAuthentication`** / **`UseAuthorization`** — JWT *handler* valida cabeçalho `Authorization: Bearer …`, *claims* e coerência com o usuário no banco (`TokenVersion`, ativo).
 4. **`MapGroup("/api/v1").MapControllers()`** — todas as rotas de API ficam versionadas em `/api/v1`.
-5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante o catálogo oficial com apenas os sistemas `authenticator` e `kurtto`, além dos tipos e permissões no banco; em seguida `KurttoAccessSeeder.EnsureKurttoAccessAsync` garante rotas e papel do Kurtto (ver [Seed do sistema Kurtto](#seed-do-sistema-kurtto-lfc-kurtto)); depois `DefaultSystemUserSeeder.EnsureDefaultUserAsync` garante o usuário padrão do sistema (e-mail `root@email.com.br`) com vínculos às permissões do catálogo, de forma idempotente. A credencial é lida da variável de ambiente `DEFAULT_SYSTEM_USER_PASSWORD` (fail-fast se ausente); no banco persiste-se **somente o hash** PBKDF2. **Em produção, defina um valor forte e troque a senha imediatamente após o primeiro acesso.**
+5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante o catálogo oficial com apenas os sistemas `authenticator` e `kurtto`, além dos tipos e permissões no banco; em seguida `KurttoAccessSeeder.EnsureKurttoAccessAsync` garante rotas do Kurtto (ver [Seed do sistema Kurtto](#seed-do-sistema-kurtto-lfc-kurtto)); depois `DefaultSystemUserSeeder.EnsureDefaultUserAsync` garante os usuários base `root@email.com.br`, `admin@email.com.br` e `default@email.com.br`, cria as roles `root`, `admin` e `default`, associa as permissões às roles e vincula cada usuário à sua role de forma idempotente. As credenciais são lidas das variáveis de ambiente `DEFAULT_SYSTEM_USER_PASSWORD`, `ADMIN_SYSTEM_USER_PASSWORD` e `DEFAULT_USER_PASSWORD` (fail-fast se ausentes); no banco persiste-se **somente o hash** PBKDF2. **Em produção, defina valores fortes e troque as senhas imediatamente após o primeiro acesso.**
 
 ### Seed do sistema Kurtto (`lfc-kurtto`)
 
 O repositório **[lfc-kurtto](https://github.com/LF-Calegari/lfc-kurtto)** expõe a API sob `/api/v1`. Hoje, as operações que exigem credencial usam o header **`X-Admin-Secret`** (variável `ADMIN_API_SECRET` no Kurtto), não JWT do auth-service. O seed deste serviço prepara o cadastro para alinhar **permissões `perm:Kurtto.*`** e **rotas** no banco quando um *gateway* ou o próprio Kurtto passar a validar JWT.
 
-Execução: automática após o catálogo oficial (`KurttoAccessSeeder.EnsureKurttoAccessAsync` em `Program.cs` e no *factory* de testes). É **idempotente** (reexecução não duplica rotas nem vínculos do papel).
+Execução: automática após o catálogo oficial (`KurttoAccessSeeder.EnsureKurttoAccessAsync` em `Program.cs` e no *factory* de testes). É **idempotente** (reexecução não duplica rotas).
 
 - **Sistema** `kurtto` (código `kurtto`) e permissões oficiais `create` / `read` / `update` / `delete` / `restore` (políticas `perm:Kurtto.Create`, …, `perm:Kurtto.Restore`).
-- **Papel** `kurtto-admin` com todas as permissões do sistema Kurtto (operadores com esse papel recebem o conjunto completo via `RolePermissions`).
 - **Rotas cadastradas** (`Routes.Code`), espelhando as superfícies que checam admin no Kurtto (`src/controllers/UrlController.ts`, `requireAdminOperation` de `src/utils/adminAuth.ts`):
 
 | `Routes.Code` | Superfície Kurtto | Política JWT alvo (auth-service) |
@@ -150,7 +151,7 @@ AuthService/
 ├── Controllers/          # Endpoints REST por agregado (Auth, Systems, Users, …)
 ├── Auth/                 # JWT, handler Bearer, políticas perm:*, permissões efetivas
 ├── Security/             # Hash e verificação de senha (ASP.NET Identity PasswordHasher / PBKDF2)
-├── Data/                 # AppDbContext, migrations, seeders (catálogo oficial, usuário padrão, bootstrap de testes)
+├── Data/                 # AppDbContext, migrations, seeders (catálogo oficial e usuários base)
 ├── Models/               # Entidades EF Core
 ├── OpenApi/              # Filtros Swagger (prefixo /api/v1 nos paths do documento)
 └── Program.cs            # Composição, pipeline, mapa de rotas
@@ -477,7 +478,7 @@ dotnet ef migrations add NomeDescritivoDaMigration \
 dotnet test AuthService.Tests/AuthService.Tests.csproj --filter "FullyQualifiedName~UnitTests"
 ```
 
-- Utilizam **SQL Server real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa seeders de catálogo, seed Kurtto (`KurttoAccessSeeder`), usuário padrão e bootstrap de integração, e remove o banco ao final.
+- Utilizam **SQL Server real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa seeders de catálogo, seed Kurtto (`KurttoAccessSeeder`) e usuários base (`root/admin/default`), e remove o banco ao final.
 - **Obrigatório** definir `AUTH_SERVICE_TEST_SQL_BASE` **sem** catálogo inicial:
 
 ```bash

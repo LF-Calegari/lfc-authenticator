@@ -5,13 +5,11 @@ using Microsoft.EntityFrameworkCore;
 namespace AuthService.Data;
 
 /// <summary>
-/// Seed idempotente do sistema Kurtto (lfc-kurtto): rotas da API versionada e papel com permissões do catálogo oficial.
+/// Seed idempotente do sistema Kurtto (lfc-kurtto): rotas da API versionada no catálogo oficial.
 /// Executar após <see cref="OfficialCatalogSeeder"/>.
 /// </summary>
 public static class KurttoAccessSeeder
 {
-    public const string KurttoAdminRoleCode = "kurtto-admin";
-
     /// <summary>
     /// Contrato com <c>requireAdminOperation</c> em <c>lfc-kurtto</c> (<c>src/controllers/UrlController.ts</c>).
     /// Cobertura 100% das superfícies que exigem <c>X-Admin-Secret</c> na API versionada.
@@ -77,68 +75,6 @@ public static class KurttoAccessSeeder
                 Name = def.Name,
                 Code = def.Code,
                 Description = $"{def.Description} Política alvo: {def.TargetPermissionPolicy}.",
-                CreatedAt = utc,
-                UpdatedAt = utc,
-                DeletedAt = null
-            });
-        }
-
-        await db.SaveChangesAsync(cancellationToken);
-
-        var role = await db.Roles.IgnoreQueryFilters()
-            .FirstOrDefaultAsync(r => r.Code == KurttoAdminRoleCode, cancellationToken);
-
-        if (role is null)
-        {
-            role = new AppRole
-            {
-                Name = "Kurtto Admin",
-                Code = KurttoAdminRoleCode,
-                CreatedAt = utc,
-                UpdatedAt = utc,
-                DeletedAt = null
-            };
-            db.Roles.Add(role);
-            await db.SaveChangesAsync(cancellationToken);
-        }
-        else if (role.DeletedAt is not null)
-        {
-            role.DeletedAt = null;
-            role.UpdatedAt = utc;
-            await db.SaveChangesAsync(cancellationToken);
-        }
-
-        var kurttoPermissionIds = await db.Permissions.AsNoTracking()
-            .Where(p => p.SystemId == systemId.Value)
-            .Select(p => p.Id)
-            .ToListAsync(cancellationToken);
-
-        if (kurttoPermissionIds.Count == 0)
-            throw new InvalidOperationException("Nenhuma permissão do sistema 'kurtto' encontrada no catálogo.");
-
-        var existingLinks = await db.RolePermissions.IgnoreQueryFilters()
-            .Where(rp => rp.RoleId == role.Id)
-            .ToListAsync(cancellationToken);
-
-        var byPermissionId = existingLinks.ToDictionary(rp => rp.PermissionId);
-
-        foreach (var pid in kurttoPermissionIds)
-        {
-            if (byPermissionId.TryGetValue(pid, out var link))
-            {
-                if (link.DeletedAt is not null)
-                {
-                    link.DeletedAt = null;
-                    link.UpdatedAt = utc;
-                }
-
-                continue;
-            }
-
-            db.RolePermissions.Add(new AppRolePermission
-            {
-                RoleId = role.Id,
-                PermissionId = pid,
                 CreatedAt = utc,
                 UpdatedAt = utc,
                 DeletedAt = null
