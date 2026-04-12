@@ -4,7 +4,7 @@ using Xunit;
 
 namespace AuthService.Tests;
 
-    /// <summary>Valida prefixo global /api/v1 e documentação Swagger em /docs (issue #36).</summary>
+/// <summary>Valida prefixo global /api/v1 e documentação Swagger em /docs (issue #36).</summary>
 public class ApiVersioningAndDocsTests : IAsyncLifetime
 {
     private WebAppFactory _factory = null!;

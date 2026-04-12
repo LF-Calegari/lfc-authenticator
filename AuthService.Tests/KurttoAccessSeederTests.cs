@@ -1,3 +1,4 @@
+using AuthService.Auth;
 using AuthService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -92,15 +93,19 @@ public class KurttoAccessSeederTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Contract_KurttoAuthenticatedRouteCodes_MatchLfcKurttoAdminProtectedSurface()
+    public void Contract_KurttoAuthenticatedRouteCodes_AreDerivedFromAdminRouteDefinitions()
     {
-        var expected = new[]
-        {
-            "KURTTO_V1_URLS_LIST_INCLUDE_DELETED",
-            "KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED",
-            "KURTTO_V1_URLS_PATCH_RESTORE"
-        };
-        Assert.Equal(expected.OrderBy(s => s), KurttoAccessSeeder.KurttoAuthenticatedRouteCodes.OrderBy(s => s));
+        var expected = KurttoAccessSeeder.KurttoAdminRoutes.Select(r => r.Code).OrderBy(c => c);
+        Assert.Equal(expected, KurttoAccessSeeder.KurttoAuthenticatedRouteCodes);
+    }
+
+    [Fact]
+    public void Contract_KurttoAdminRoutes_MapToExpectedPolicies_ForJwtAlignment()
+    {
+        var map = KurttoAccessSeeder.KurttoAdminRoutes.ToDictionary(r => r.Code, r => r.TargetPermissionPolicy);
+        Assert.Equal(PermissionPolicies.KurttoRead, map["KURTTO_V1_URLS_LIST_INCLUDE_DELETED"]);
+        Assert.Equal(PermissionPolicies.KurttoRead, map["KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED"]);
+        Assert.Equal(PermissionPolicies.KurttoRestore, map["KURTTO_V1_URLS_PATCH_RESTORE"]);
     }
 
     [Fact]
@@ -127,6 +132,47 @@ public class KurttoAccessSeederTests : IAsyncLifetime
                 KurttoAccessSeeder.EnsureKurttoAccessAsync(db));
 
             Assert.Contains("kurtto", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            SqlServerTestDb.DropDatabase(masterConnectionString, databaseName);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureKurttoAccessAsync_WhenKurttoPermissionsMissing_ThrowsInvalidOperationException()
+    {
+        var baseConnection = Environment.GetEnvironmentVariable("AUTH_SERVICE_TEST_SQL_BASE")?.Trim();
+        Assert.False(string.IsNullOrEmpty(baseConnection));
+
+        var databaseName = "auth_svc_kurtto_seed_noperm_" + Guid.NewGuid().ToString("N");
+        var masterConnectionString = SqlServerTestDb.BuildMasterConnectionString(baseConnection);
+        var appConnectionString = SqlServerTestDb.BuildDatabaseConnectionString(baseConnection, databaseName);
+
+        SqlServerTestDb.CreateDatabase(masterConnectionString, databaseName);
+        try
+        {
+            var options = new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlServer(appConnectionString)
+                .Options;
+
+            await using var db = new AppDbContext(options);
+            await db.Database.MigrateAsync();
+            await OfficialCatalogSeeder.EnsureCatalogAsync(db);
+
+            var kurttoSystemId = await db.Systems.AsNoTracking()
+                .Where(s => s.Code == "kurtto")
+                .Select(s => s.Id)
+                .SingleAsync();
+
+            var kurttoPerms = await db.Permissions.Where(p => p.SystemId == kurttoSystemId).ToListAsync();
+            db.Permissions.RemoveRange(kurttoPerms);
+            await db.SaveChangesAsync();
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                KurttoAccessSeeder.EnsureKurttoAccessAsync(db));
+
+            Assert.Contains("permissão", ex.Message, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

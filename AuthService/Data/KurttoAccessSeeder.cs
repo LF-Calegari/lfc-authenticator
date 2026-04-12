@@ -1,3 +1,4 @@
+using AuthService.Auth;
 using AuthService.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,34 +13,43 @@ public static class KurttoAccessSeeder
     public const string KurttoAdminRoleCode = "kurtto-admin";
 
     /// <summary>
+    /// Contrato com <c>requireAdminOperation</c> em <c>lfc-kurtto</c> (<c>src/controllers/UrlController.ts</c>).
+    /// Cobertura 100% das superfícies que exigem <c>X-Admin-Secret</c> na API versionada.
+    /// </summary>
+    public sealed record KurttoAdminRouteDefinition(
+        string Code,
+        string Name,
+        string Description,
+        string TargetPermissionPolicy);
+
+    private static readonly KurttoAdminRouteDefinition[] AdminRouteDefinitions =
+    [
+        new(
+            "KURTTO_V1_URLS_LIST_INCLUDE_DELETED",
+            "GET /api/v1/urls (include_deleted)",
+            "Lista URLs incluindo soft-deleted; exige X-Admin-Secret no Kurtto.",
+            PermissionPolicies.KurttoRead),
+        new(
+            "KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED",
+            "GET /api/v1/urls/{code} (include_deleted)",
+            "Obtém URL por código incluindo soft-deleted; exige X-Admin-Secret.",
+            PermissionPolicies.KurttoRead),
+        new(
+            "KURTTO_V1_URLS_PATCH_RESTORE",
+            "PATCH /api/v1/urls/{code}/restore",
+            "Reativa URL soft-deleted; exige X-Admin-Secret.",
+            PermissionPolicies.KurttoRestore)
+    ];
+
+    /// <summary>Metadados das rotas seedadas (política JWT alvo quando o Kurtto validar token).</summary>
+    public static IReadOnlyList<KurttoAdminRouteDefinition> KurttoAdminRoutes => AdminRouteDefinitions;
+
+    /// <summary>
     /// Códigos únicos em <see cref="AppRoute.Code"/> para as rotas da API Kurtto sob <c>/api/v1</c>
     /// que exigem credencial (hoje <c>X-Admin-Secret</c> no Kurtto; alinhadas a <c>perm:Kurtto.*</c> quando houver JWT).
     /// </summary>
     public static readonly IReadOnlyList<string> KurttoAuthenticatedRouteCodes =
-    [
-        "KURTTO_V1_URLS_LIST_INCLUDE_DELETED",
-        "KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED",
-        "KURTTO_V1_URLS_PATCH_RESTORE"
-    ];
-
-    private static readonly (string Code, string Name, string Description)[] AuthenticatedRoutes =
-    [
-        (
-            "KURTTO_V1_URLS_LIST_INCLUDE_DELETED",
-            "GET /api/v1/urls (include_deleted)",
-            "Lista URLs incluindo soft-deleted; exige X-Admin-Secret no Kurtto. Permissão alvo: perm:Kurtto.Read."
-        ),
-        (
-            "KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED",
-            "GET /api/v1/urls/{code} (include_deleted)",
-            "Obtém URL por código incluindo soft-deleted; exige X-Admin-Secret. Permissão alvo: perm:Kurtto.Read."
-        ),
-        (
-            "KURTTO_V1_URLS_PATCH_RESTORE",
-            "PATCH /api/v1/urls/{code}/restore",
-            "Reativa URL soft-deleted; exige X-Admin-Secret. Permissão alvo: perm:Kurtto.Restore."
-        )
-    ];
+        AdminRouteDefinitions.Select(d => d.Code).OrderBy(c => c).ToArray();
 
     public static async Task EnsureKurttoAccessAsync(AppDbContext db, CancellationToken cancellationToken = default)
     {
@@ -54,19 +64,19 @@ public static class KurttoAccessSeeder
 
         var utc = DateTime.UtcNow;
 
-        foreach (var (code, name, description) in AuthenticatedRoutes)
+        foreach (var def in AdminRouteDefinitions)
         {
             var exists = await db.Routes.IgnoreQueryFilters()
-                .AnyAsync(r => r.Code == code, cancellationToken);
+                .AnyAsync(r => r.Code == def.Code, cancellationToken);
             if (exists)
                 continue;
 
             db.Routes.Add(new AppRoute
             {
                 SystemId = systemId.Value,
-                Name = name,
-                Code = code,
-                Description = description,
+                Name = def.Name,
+                Code = def.Code,
+                Description = $"{def.Description} Política alvo: {def.TargetPermissionPolicy}.",
                 CreatedAt = utc,
                 UpdatedAt = utc,
                 DeletedAt = null
@@ -106,29 +116,33 @@ public static class KurttoAccessSeeder
         if (kurttoPermissionIds.Count == 0)
             throw new InvalidOperationException("Nenhuma permissão do sistema 'kurtto' encontrada no catálogo.");
 
+        var existingLinks = await db.RolePermissions.IgnoreQueryFilters()
+            .Where(rp => rp.RoleId == role.Id)
+            .ToListAsync(cancellationToken);
+
+        var byPermissionId = existingLinks.ToDictionary(rp => rp.PermissionId);
+
         foreach (var pid in kurttoPermissionIds)
         {
-            var existing = await db.RolePermissions.IgnoreQueryFilters()
-                .FirstOrDefaultAsync(
-                    rp => rp.RoleId == role.Id && rp.PermissionId == pid,
-                    cancellationToken);
-
-            if (existing is null)
+            if (byPermissionId.TryGetValue(pid, out var link))
             {
-                db.RolePermissions.Add(new AppRolePermission
+                if (link.DeletedAt is not null)
                 {
-                    RoleId = role.Id,
-                    PermissionId = pid,
-                    CreatedAt = utc,
-                    UpdatedAt = utc,
-                    DeletedAt = null
-                });
+                    link.DeletedAt = null;
+                    link.UpdatedAt = utc;
+                }
+
+                continue;
             }
-            else if (existing.DeletedAt is not null)
+
+            db.RolePermissions.Add(new AppRolePermission
             {
-                existing.DeletedAt = null;
-                existing.UpdatedAt = utc;
-            }
+                RoleId = role.Id,
+                PermissionId = pid,
+                CreatedAt = utc,
+                UpdatedAt = utc,
+                DeletedAt = null
+            });
         }
 
         await db.SaveChangesAsync(cancellationToken);

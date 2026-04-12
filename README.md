@@ -131,15 +131,15 @@ Execução: automática após o catálogo oficial (`KurttoAccessSeeder.EnsureKur
 
 - **Sistema** `kurtto` (código `kurtto`) e permissões oficiais `create` / `read` / `update` / `delete` / `restore` (políticas `perm:Kurtto.Create`, …, `perm:Kurtto.Restore`).
 - **Papel** `kurtto-admin` com todas as permissões do sistema Kurtto (operadores com esse papel recebem o conjunto completo via `RolePermissions`).
-- **Rotas cadastradas** (`Routes.Code`), espelhando as superfícies que checam admin no Kurtto (consulte `UrlController` / `requireAdminOperation` no `lfc-kurtto`):
+- **Rotas cadastradas** (`Routes.Code`), espelhando as superfícies que checam admin no Kurtto (`src/controllers/UrlController.ts`, `requireAdminOperation` de `src/utils/adminAuth.ts`):
 
-| `Routes.Code` | Superfície Kurtto |
-|----------------|-------------------|
-| `KURTTO_V1_URLS_LIST_INCLUDE_DELETED` | `GET /api/v1/urls` com `include_deleted=true` |
-| `KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED` | `GET /api/v1/urls/{code}` com `include_deleted=true` |
-| `KURTTO_V1_URLS_PATCH_RESTORE` | `PATCH /api/v1/urls/{code}/restore` |
+| `Routes.Code` | Superfície Kurtto | Política JWT alvo (auth-service) |
+|----------------|-------------------|----------------------------------|
+| `KURTTO_V1_URLS_LIST_INCLUDE_DELETED` | `GET /api/v1/urls` com `include_deleted=true` | `perm:Kurtto.Read` |
+| `KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED` | `GET /api/v1/urls/{code}` com `include_deleted=true` | `perm:Kurtto.Read` |
+| `KURTTO_V1_URLS_PATCH_RESTORE` | `PATCH /api/v1/urls/{code}/restore` | `perm:Kurtto.Restore` |
 
-Demais endpoints de URLs e os *health checks* (`/api/v1/health`, `/live`, `/ready`) permanecem **anônimos** no Kurtto atual; não fazem parte deste conjunto até haver exigência de JWT nelas.
+**Checklist de auditoria (cobertura das rotas credenciadas no Kurtto):** no repositório `lfc-kurtto`, todas as chamadas a `requireAdminOperation` estão no `UrlController` (listagem e leitura com `include_deleted`, e `restore`). Não há outros controllers com esse *gate* na API `/api/v1`. Os demais endpoints de URLs (`POST`, `PATCH` sem restore, `DELETE`) e os *health checks* (`/api/v1/health`, `/live`, `/ready`) permanecem **anônimos** no Kurtto atual; não entram neste seed até haver exigência explícita de credencial nelas.
 
 ---
 
