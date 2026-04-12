@@ -217,7 +217,7 @@ public class ClientsApiTests : IAsyncLifetime
         Assert.NotNull(created);
 
         var add = await _client.PostAsJsonAsync($"/api/v1/clients/{created.Id}/emails",
-            new { email = IntegrationBootstrapSeeder.Email }, TestApiClient.JsonOptions);
+            new { email = DefaultSystemUserSeeder.RootEmail }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Conflict, add.StatusCode);
     }
 
@@ -261,7 +261,7 @@ public class ClientsApiTests : IAsyncLifetime
             var row = new ClientEmail
             {
                 ClientId = created.Id,
-                Email = IntegrationBootstrapSeeder.Email,
+                Email = DefaultSystemUserSeeder.RootEmail,
                 CreatedAt = DateTime.UtcNow
             };
             db.ClientEmails.Add(row);

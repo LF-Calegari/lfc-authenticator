@@ -19,12 +19,12 @@ internal static class TestApiClient
         public string Token { get; set; } = string.Empty;
     }
 
-    /// <summary>Cliente HTTP com JWT do usuário bootstrap (todas as permissões oficiais).</summary>
+    /// <summary>Cliente HTTP com JWT do usuário root seedado (todas as permissões oficiais).</summary>
     internal static async Task<HttpClient> CreateAuthenticatedAsync(WebAppFactory factory)
     {
         var client = factory.CreateApiClient();
         var login = await client.PostAsJsonAsync("/api/v1/auth/login",
-            new { email = IntegrationBootstrapSeeder.Email, password = IntegrationBootstrapSeeder.ResolveCredential() },
+            new { email = DefaultSystemUserSeeder.RootEmail, password = DefaultSystemUserSeeder.ResolveCredential() },
             JsonOptions);
         login.EnsureSuccessStatusCode();
         var dto = await login.Content.ReadFromJsonAsync<LoginDto>(JsonOptions);
