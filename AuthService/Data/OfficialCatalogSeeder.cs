@@ -15,7 +15,8 @@ public static class OfficialCatalogSeeder
         ("system-tokens-types", "System token types"),
         ("permissions", "Permissions"),
         ("permissions-types", "Permissions types"),
-        ("roles", "Roles")
+        ("roles", "Roles"),
+        ("kurtto", "Kurtto")
     ];
 
     private static readonly (string Code, string Name)[] PermissionTypes =

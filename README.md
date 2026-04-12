@@ -56,7 +56,7 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 
 - JWT com validação de **versão de sessão** (`tokenVersion` no banco + *claim* `tv` no token); **logout** invalida tokens anteriores.
 - Políticas `Authorize` no formato `perm:<Recurso>.<Ação>` (ex.: `perm:Systems.Read`), resolvidas para **GUIDs** de permissão no banco.
-- **Catálogo oficial** de sistemas, tipos de permissão e linhas de permissão criado de forma **idempotente** na subida em **Development** e **Production** (não roda no host em ambiente **Testing**; nos testes, o *factory* aplica o mesmo seed após as migrations).
+- **Catálogo oficial** de sistemas, tipos de permissão e linhas de permissão criado de forma **idempotente** na subida em **Development** e **Production** (não roda no host em ambiente **Testing**; nos testes, o *factory* aplica o mesmo seed após as migrations), incluindo o sistema **Kurtto** e o seed de rotas credenciadas descrito em [Seed do sistema Kurtto](#seed-do-sistema-kurtto-lfc-kurtto).
 - CRUD com *soft delete* e `POST`/`PATCH` de restauração nos recursos documentados na [referência de rotas](#referência-de-rotas).
 
 ---
@@ -121,7 +121,25 @@ export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 2. **Pipeline HTTP** — em ambientes diferentes de **Testing**, `UseHttpsRedirection`. **Swagger** e **Swagger UI** são registrados **antes** de autenticação/autorização, ficando **anônimos**.
 3. **`UseAuthentication`** / **`UseAuthorization`** — JWT *handler* valida cabeçalho `Authorization: Bearer …`, *claims* e coerência com o usuário no banco (`TokenVersion`, ativo).
 4. **`MapGroup("/api/v1").MapControllers()`** — todas as rotas de API ficam versionadas em `/api/v1`.
-5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante sistemas, tipos e permissões oficiais no banco; em seguida `DefaultSystemUserSeeder.EnsureDefaultUserAsync` garante o usuário padrão do sistema (e-mail `root@email.com.br`) com vínculos às permissões do catálogo, de forma idempotente. A credencial é lida da variável de ambiente `DEFAULT_SYSTEM_USER_PASSWORD` (fail-fast se ausente); no banco persiste-se **somente o hash** PBKDF2. **Em produção, defina um valor forte e troque a senha imediatamente após o primeiro acesso.**
+5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante sistemas, tipos e permissões oficiais no banco; em seguida `KurttoAccessSeeder.EnsureKurttoAccessAsync` garante rotas e papel do Kurtto (ver [Seed do sistema Kurtto](#seed-do-sistema-kurtto-lfc-kurtto)); depois `DefaultSystemUserSeeder.EnsureDefaultUserAsync` garante o usuário padrão do sistema (e-mail `root@email.com.br`) com vínculos às permissões do catálogo, de forma idempotente. A credencial é lida da variável de ambiente `DEFAULT_SYSTEM_USER_PASSWORD` (fail-fast se ausente); no banco persiste-se **somente o hash** PBKDF2. **Em produção, defina um valor forte e troque a senha imediatamente após o primeiro acesso.**
+
+### Seed do sistema Kurtto (`lfc-kurtto`)
+
+O repositório **[lfc-kurtto](https://github.com/LF-Calegari/lfc-kurtto)** expõe a API sob `/api/v1`. Hoje, as operações que exigem credencial usam o header **`X-Admin-Secret`** (variável `ADMIN_API_SECRET` no Kurtto), não JWT do auth-service. O seed deste serviço prepara o cadastro para alinhar **permissões `perm:Kurtto.*`** e **rotas** no banco quando um *gateway* ou o próprio Kurtto passar a validar JWT.
+
+Execução: automática após o catálogo oficial (`KurttoAccessSeeder.EnsureKurttoAccessAsync` em `Program.cs` e no *factory* de testes). É **idempotente** (reexecução não duplica rotas nem vínculos do papel).
+
+- **Sistema** `kurtto` (código `kurtto`) e permissões oficiais `create` / `read` / `update` / `delete` / `restore` (políticas `perm:Kurtto.Create`, …, `perm:Kurtto.Restore`).
+- **Papel** `kurtto-admin` com todas as permissões do sistema Kurtto (operadores com esse papel recebem o conjunto completo via `RolePermissions`).
+- **Rotas cadastradas** (`Routes.Code`), espelhando as superfícies que checam admin no Kurtto (consulte `UrlController` / `requireAdminOperation` no `lfc-kurtto`):
+
+| `Routes.Code` | Superfície Kurtto |
+|----------------|-------------------|
+| `KURTTO_V1_URLS_LIST_INCLUDE_DELETED` | `GET /api/v1/urls` com `include_deleted=true` |
+| `KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED` | `GET /api/v1/urls/{code}` com `include_deleted=true` |
+| `KURTTO_V1_URLS_PATCH_RESTORE` | `PATCH /api/v1/urls/{code}/restore` |
+
+Demais endpoints de URLs e os *health checks* (`/api/v1/health`, `/live`, `/ready`) permanecem **anônimos** no Kurtto atual; não fazem parte deste conjunto até haver exigência de JWT nelas.
 
 ---
 
@@ -459,7 +477,7 @@ dotnet ef migrations add NomeDescritivoDaMigration \
 dotnet test AuthService.Tests/AuthService.Tests.csproj --filter "FullyQualifiedName~UnitTests"
 ```
 
-- Utilizam **SQL Server real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa seeders de catálogo e usuário bootstrap, e remove o banco ao final.
+- Utilizam **SQL Server real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa seeders de catálogo, seed Kurtto (`KurttoAccessSeeder`), usuário padrão e bootstrap de integração, e remove o banco ao final.
 - **Obrigatório** definir `AUTH_SERVICE_TEST_SQL_BASE` **sem** catálogo inicial:
 
 ```bash
