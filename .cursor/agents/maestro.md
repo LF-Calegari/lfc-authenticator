@@ -31,7 +31,7 @@ Aguarde a resposta antes de qualquer ação.
 # 📋 Contexto Fixo
 
 - REPO: LF-Calegari/lfc-authenticator
-- WORKSPACE: /home/calegari/Documentos/Projetos/LF Calegari Sistemas/authenticator-service
+- WORKSPACE: /home/calegari/Documentos/Projetos/LF Calegari Sistemas/auth-service
 - BASE_BRANCH: development
 
 ---
