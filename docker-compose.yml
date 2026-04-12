@@ -1,4 +1,5 @@
 # Raiz do repositório. Requer arquivo .env (veja .env.example).
+# Rede padrão: externa compartilhada com os demais serviços do ecossistema (ex.: Kurtto); criar antes com `docker network create` (ver README).
 # Uso: docker compose up -d
 # Migrações (primeira vez / após mudar migrations): docker compose --profile migrate run --rm migrate
 # Testes de integração (SQL real): docker compose --profile test run --rm test
@@ -85,3 +86,8 @@ services:
 
 volumes:
   mssql_data:
+
+networks:
+  default:
+    external: true
+    name: ${EXTERNAL_NETWORK_NAME:-lfc_platform_network}

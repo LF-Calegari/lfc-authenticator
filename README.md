@@ -56,7 +56,7 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 
 - JWT com validação de **versão de sessão** (`tokenVersion` no banco + *claim* `tv` no token); **logout** invalida tokens anteriores.
 - Políticas `Authorize` no formato `perm:<Recurso>.<Ação>` (ex.: `perm:Systems.Read`), resolvidas para **GUIDs** de permissão no banco.
-- **Catálogo oficial** de sistemas, tipos de permissão e linhas de permissão criado de forma **idempotente** na subida em **Development** e **Production** (não roda no host em ambiente **Testing**; nos testes, o *factory* aplica o mesmo seed após as migrations).
+- **Catálogo oficial** de sistemas, tipos de permissão e linhas de permissão criado de forma **idempotente** na subida em **Development** e **Production** (não roda no host em ambiente **Testing**; nos testes, o *factory* aplica o mesmo seed após as migrations), incluindo o sistema **Kurtto** e o seed de rotas credenciadas descrito em [Seed do sistema Kurtto](#seed-do-sistema-kurtto-lfc-kurtto).
 - CRUD com *soft delete* e `POST`/`PATCH` de restauração nos recursos documentados na [referência de rotas](#referência-de-rotas).
 
 ---
@@ -67,7 +67,7 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 |------|----------------|
 | SDK .NET | **10.x** (alvo `net10.0`) |
 | Banco | **Microsoft SQL Server** (local, Docker ou remoto) |
-| Docker (opcional) | Docker Engine + Compose v2 |
+| Docker (opcional) | Docker Engine + Compose v2; **rede externa obrigatória** em ambiente integrado, **no máximo 30 IPs** úteis na sub-rede (ex.: `/27`); **mesma rede** que os demais serviços do ecossistema (padrão `lfc_platform_network`). |
 | Ferramenta EF (migrations) | `dotnet-ef` (global ou via `dotnet tool restore` no projeto) |
 
 ---
@@ -76,11 +76,12 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 
 ### Opção A — Docker Compose (recomendado para ambiente integrado)
 
-1. Na **raiz** do repositório: `cp .env.example .env` e ajuste `MSSQL_SA_PASSWORD` (deve atender à política da Microsoft: maiúsculas, minúsculas, números e símbolos).
-2. Subir API + SQL: `docker compose up -d --build`
-3. Aplicar migrations (primeira vez ou após alteração do modelo):  
+1. **Rede Docker:** crie a rede externa **uma vez** (a mesma usada pelos outros serviços do ecossistema, ex.: Kurtto) — veja [Docker Compose — Rede externa](#rede-externa).
+2. Na **raiz** do repositório: `cp .env.example .env` e ajuste `MSSQL_SA_PASSWORD` (deve atender à política da Microsoft: maiúsculas, minúsculas, números e símbolos).
+3. Subir API + SQL: `docker compose up -d --build`
+4. Aplicar migrations (primeira vez ou após alteração do modelo):  
    `docker compose --profile migrate run --rm migrate`
-4. API no host: **https://localhost:8080** (mapeamento `8080:5042`; Kestrel usa certificado de desenvolvimento gerado na imagem Docker — o navegador pode alertar até você confiar no certificado ou usar `-k` no `curl`).
+5. API no host: **https://localhost:8080** (mapeamento `8080:5042`; Kestrel usa certificado de desenvolvimento gerado na imagem Docker — o navegador pode alertar até você confiar no certificado ou usar `-k` no `curl`).
 
 ### Opção B — `dotnet run` no host
 
@@ -120,7 +121,25 @@ export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 2. **Pipeline HTTP** — em ambientes diferentes de **Testing**, `UseHttpsRedirection`. **Swagger** e **Swagger UI** são registrados **antes** de autenticação/autorização, ficando **anônimos**.
 3. **`UseAuthentication`** / **`UseAuthorization`** — JWT *handler* valida cabeçalho `Authorization: Bearer …`, *claims* e coerência com o usuário no banco (`TokenVersion`, ativo).
 4. **`MapGroup("/api/v1").MapControllers()`** — todas as rotas de API ficam versionadas em `/api/v1`.
-5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante sistemas, tipos e permissões oficiais no banco; em seguida `DefaultSystemUserSeeder.EnsureDefaultUserAsync` garante o usuário padrão do sistema (e-mail `root@email.com.br`) com vínculos às permissões do catálogo, de forma idempotente. A credencial é lida da variável de ambiente `DEFAULT_SYSTEM_USER_PASSWORD` (fail-fast se ausente); no banco persiste-se **somente o hash** PBKDF2. **Em produção, defina um valor forte e troque a senha imediatamente após o primeiro acesso.**
+5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante sistemas, tipos e permissões oficiais no banco; em seguida `KurttoAccessSeeder.EnsureKurttoAccessAsync` garante rotas e papel do Kurtto (ver [Seed do sistema Kurtto](#seed-do-sistema-kurtto-lfc-kurtto)); depois `DefaultSystemUserSeeder.EnsureDefaultUserAsync` garante o usuário padrão do sistema (e-mail `root@email.com.br`) com vínculos às permissões do catálogo, de forma idempotente. A credencial é lida da variável de ambiente `DEFAULT_SYSTEM_USER_PASSWORD` (fail-fast se ausente); no banco persiste-se **somente o hash** PBKDF2. **Em produção, defina um valor forte e troque a senha imediatamente após o primeiro acesso.**
+
+### Seed do sistema Kurtto (`lfc-kurtto`)
+
+O repositório **[lfc-kurtto](https://github.com/LF-Calegari/lfc-kurtto)** expõe a API sob `/api/v1`. Hoje, as operações que exigem credencial usam o header **`X-Admin-Secret`** (variável `ADMIN_API_SECRET` no Kurtto), não JWT do auth-service. O seed deste serviço prepara o cadastro para alinhar **permissões `perm:Kurtto.*`** e **rotas** no banco quando um *gateway* ou o próprio Kurtto passar a validar JWT.
+
+Execução: automática após o catálogo oficial (`KurttoAccessSeeder.EnsureKurttoAccessAsync` em `Program.cs` e no *factory* de testes). É **idempotente** (reexecução não duplica rotas nem vínculos do papel).
+
+- **Sistema** `kurtto` (código `kurtto`) e permissões oficiais `create` / `read` / `update` / `delete` / `restore` (políticas `perm:Kurtto.Create`, …, `perm:Kurtto.Restore`).
+- **Papel** `kurtto-admin` com todas as permissões do sistema Kurtto (operadores com esse papel recebem o conjunto completo via `RolePermissions`).
+- **Rotas cadastradas** (`Routes.Code`), espelhando as superfícies que checam admin no Kurtto (`src/controllers/UrlController.ts`, `requireAdminOperation` de `src/utils/adminAuth.ts`):
+
+| `Routes.Code` | Superfície Kurtto | Política JWT alvo (auth-service) |
+|----------------|-------------------|----------------------------------|
+| `KURTTO_V1_URLS_LIST_INCLUDE_DELETED` | `GET /api/v1/urls` com `include_deleted=true` | `perm:Kurtto.Read` |
+| `KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED` | `GET /api/v1/urls/{code}` com `include_deleted=true` | `perm:Kurtto.Read` |
+| `KURTTO_V1_URLS_PATCH_RESTORE` | `PATCH /api/v1/urls/{code}/restore` | `perm:Kurtto.Restore` |
+
+**Checklist de auditoria (cobertura das rotas credenciadas no Kurtto):** no repositório `lfc-kurtto`, todas as chamadas a `requireAdminOperation` estão no `UrlController` (listagem e leitura com `include_deleted`, e `restore`). Não há outros controllers com esse *gate* na API `/api/v1`. Os demais endpoints de URLs (`POST`, `PATCH` sem restore, `DELETE`) e os *health checks* (`/api/v1/health`, `/live`, `/ready`) permanecem **anônimos** no Kurtto atual; não entram neste seed até haver exigência explícita de credencial nelas.
 
 ---
 
@@ -385,6 +404,23 @@ Mensagens de autenticação e de regra de negócio costumam vir como JSON com pr
 
 O arquivo **`docker-compose.yml`** está na **raiz** do repositório.
 
+Este serviço faz parte de um **sistema maior**: em Docker, ele deve usar a **mesma rede externa** que os demais projetos (por exemplo, **Kurtto Service**) para que os containers se comuniquem por nome de host interno.
+
+### Rede externa
+
+É **obrigatória** uma rede Docker externa com **no máximo 30 IPs** disponíveis para containers (exemplo de dimensionamento: sub-rede **`/27`**, com 30 endereços úteis).
+
+Antes de subir os serviços, garanta que a rede externa exista:
+
+```bash
+docker network create \
+  --driver bridge \
+  --subnet 172.30.0.0/27 \
+  lfc_platform_network
+```
+
+> A stack usa a rede externa `lfc_platform_network` por padrão. Se precisar usar outro nome, defina `EXTERNAL_NETWORK_NAME` no ambiente antes de executar o Compose.
+
 | Serviço | Função |
 |---------|--------|
 | `db` | SQL Server 2022; porta **1433** no host; volume `mssql_data`. |
@@ -441,7 +477,7 @@ dotnet ef migrations add NomeDescritivoDaMigration \
 dotnet test AuthService.Tests/AuthService.Tests.csproj --filter "FullyQualifiedName~UnitTests"
 ```
 
-- Utilizam **SQL Server real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa seeders de catálogo e usuário bootstrap, e remove o banco ao final.
+- Utilizam **SQL Server real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa seeders de catálogo, seed Kurtto (`KurttoAccessSeeder`), usuário padrão e bootstrap de integração, e remove o banco ao final.
 - **Obrigatório** definir `AUTH_SERVICE_TEST_SQL_BASE` **sem** catálogo inicial:
 
 ```bash
