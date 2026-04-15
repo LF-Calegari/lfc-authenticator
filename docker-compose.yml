@@ -9,6 +9,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: auth-service
     env_file:
       - .env
     environment:
@@ -23,6 +24,8 @@ services:
     volumes:
       - ./AuthService:/app
     working_dir: /app
+    networks:
+      - default
     depends_on:
       db:
         condition: service_healthy
@@ -38,6 +41,8 @@ services:
       - "1433:1433"
     volumes:
       - mssql_data:/var/opt/mssql
+    networks:
+      - default
     healthcheck:
       test:
         [
@@ -62,6 +67,8 @@ services:
     volumes:
       - ./AuthService:/app
     working_dir: /app
+    networks:
+      - default
     depends_on:
       db:
         condition: service_healthy
@@ -82,6 +89,8 @@ services:
     volumes:
       - .:/workspace
     working_dir: /workspace
+    networks:
+      - default
     depends_on:
       db:
         condition: service_healthy

@@ -48,6 +48,7 @@ public class AuthApiTests : IAsyncLifetime
         public string Email { get; set; } = string.Empty;
         public int Identity { get; set; }
         public List<Guid>? Permissions { get; set; }
+        public List<string>? RouteCodes { get; set; }
     }
 
     [Fact]
@@ -159,6 +160,28 @@ public class AuthApiTests : IAsyncLifetime
         Assert.NotNull(body);
         Assert.Equal("v.user@example.com", body.Email);
         Assert.NotNull(body.Permissions);
+        Assert.NotNull(body.RouteCodes);
+    }
+
+    [Fact]
+    public async Task VerifyToken_RootUser_ReturnsKurttoRouteCodes()
+    {
+        var response = await _admin.GetAsync("/api/v1/auth/verify-token");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<VerifyDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(body);
+        Assert.NotNull(body.RouteCodes);
+
+        var expected = new[]
+        {
+            "KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED",
+            "KURTTO_V1_URLS_LIST_INCLUDE_DELETED",
+            "KURTTO_V1_URLS_PATCH_RESTORE"
+        };
+
+        foreach (var code in expected)
+            Assert.Contains(code, body.RouteCodes);
     }
 
     [Fact]
