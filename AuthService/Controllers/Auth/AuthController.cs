@@ -47,7 +47,8 @@ public partial class AuthController : ControllerBase
         string Name,
         string Email,
         int Identity,
-        IReadOnlyList<Guid> Permissions);
+        IReadOnlyList<Guid> Permissions,
+        IReadOnlyList<string> RouteCodes);
 
     [HttpPost("login")]
     [AllowAnonymous]
@@ -108,12 +109,15 @@ public partial class AuthController : ControllerBase
         var permissionIds = (await EffectivePermissionIds.GetForUserAsync(_db, userId))
             .OrderBy(x => x)
             .ToList();
+        var routeCodes = await ResolveRouteCodesAsync(permissionIds, HttpContext.RequestAborted);
         return Ok(new VerifyTokenResponse(
             user.Id,
             user.Name,
             user.Email,
             user.Identity,
-            permissionIds));
+            permissionIds,
+            routeCodes)
+        );
     }
 
     [HttpGet("logout")]
@@ -138,4 +142,54 @@ public partial class AuthController : ControllerBase
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Logout concluído para o usuário {UserId}.")]
     private partial void LogLogoutCompleted(Guid userId);
+
+    private async Task<IReadOnlyList<string>> ResolveRouteCodesAsync(
+        IReadOnlyCollection<Guid> permissionIds,
+        CancellationToken cancellationToken)
+    {
+        if (permissionIds.Count == 0)
+            return Array.Empty<string>();
+
+        var kurttoPermissionTypes = await _db.Permissions.AsNoTracking()
+            .Where(p => permissionIds.Contains(p.Id))
+            .Join(
+                _db.Systems.AsNoTracking(),
+                p => p.SystemId,
+                s => s.Id,
+                (p, s) => new { p.PermissionTypeId, SystemCode = s.Code })
+            .Where(x => x.SystemCode == "kurtto")
+            .Join(
+                _db.PermissionTypes.AsNoTracking(),
+                x => x.PermissionTypeId,
+                t => t.Id,
+                (_, t) => t.Code)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var allowedPolicies = kurttoPermissionTypes
+            .Select(MapKurttoPermissionTypeToPolicy)
+            .Where(policy => policy is not null)
+            .Cast<string>()
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (allowedPolicies.Count == 0)
+            return Array.Empty<string>();
+
+        return KurttoAccessSeeder.KurttoAdminRoutes
+            .Where(route => allowedPolicies.Contains(route.TargetPermissionPolicy))
+            .Select(route => route.Code)
+            .OrderBy(code => code)
+            .ToArray();
+    }
+
+    private static string? MapKurttoPermissionTypeToPolicy(string permissionTypeCode) =>
+        permissionTypeCode switch
+        {
+            "create" => PermissionPolicies.KurttoCreate,
+            "read" => PermissionPolicies.KurttoRead,
+            "update" => PermissionPolicies.KurttoUpdate,
+            "delete" => PermissionPolicies.KurttoDelete,
+            "restore" => PermissionPolicies.KurttoRestore,
+            _ => null
+        };
 }
