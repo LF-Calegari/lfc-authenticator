@@ -9,6 +9,12 @@ namespace AuthService.Data.Migrations
     /// <inheritdoc />
     public partial class InitialPostgreSQLBaseline : Migration
     {
+        private static readonly string[] ClientEmailsUniqueIndexColumns = { "ClientId", "Email" };
+        private static readonly string[] ClientPhonesUniqueIndexColumns = { "ClientId", "Type", "Number" };
+        private static readonly string[] RolePermissionsUniqueIndexColumns = { "RoleId", "PermissionId" };
+        private static readonly string[] UserPermissionsUniqueIndexColumns = { "UserId", "PermissionId" };
+        private static readonly string[] UserRolesUniqueIndexColumns = { "UserId", "RoleId" };
+
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
@@ -307,13 +313,13 @@ namespace AuthService.Data.Migrations
             migrationBuilder.CreateIndex(
                 name: "UX_ClientEmails_ClientId_Email",
                 table: "ClientEmails",
-                columns: new[] { "ClientId", "Email" },
+                columns: ClientEmailsUniqueIndexColumns,
                 unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "UX_ClientPhones_ClientId_Type_Number",
                 table: "ClientPhones",
-                columns: new[] { "ClientId", "Type", "Number" },
+                columns: ClientPhonesUniqueIndexColumns,
                 unique: true);
 
             migrationBuilder.CreateIndex(
@@ -379,7 +385,7 @@ namespace AuthService.Data.Migrations
             migrationBuilder.CreateIndex(
                 name: "UX_RolePermissions_RoleId_PermissionId",
                 table: "RolePermissions",
-                columns: new[] { "RoleId", "PermissionId" },
+                columns: RolePermissionsUniqueIndexColumns,
                 unique: true);
 
             migrationBuilder.CreateIndex(
@@ -449,7 +455,7 @@ namespace AuthService.Data.Migrations
             migrationBuilder.CreateIndex(
                 name: "UX_UserPermissions_UserId_PermissionId",
                 table: "UserPermissions",
-                columns: new[] { "UserId", "PermissionId" },
+                columns: UserPermissionsUniqueIndexColumns,
                 unique: true);
 
             migrationBuilder.CreateIndex(
@@ -465,7 +471,7 @@ namespace AuthService.Data.Migrations
             migrationBuilder.CreateIndex(
                 name: "UX_UserRoles_UserId_RoleId",
                 table: "UserRoles",
-                columns: new[] { "UserId", "RoleId" },
+                columns: UserRolesUniqueIndexColumns,
                 unique: true);
 
             migrationBuilder.CreateIndex(

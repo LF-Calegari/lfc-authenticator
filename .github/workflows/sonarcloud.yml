@@ -58,11 +58,9 @@ jobs:
             /d:sonar.token="$SONAR_TOKEN" \
             /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" \
             /d:sonar.cpd.exclusions="**/AuthService/Data/Migrations/**" \
-            /d:sonar.issue.ignore.multicriteria=e1,e2 \
+            /d:sonar.issue.ignore.multicriteria=e1 \
             /d:sonar.issue.ignore.multicriteria.e1.ruleKey=csharpsquid:S1192 \
-            /d:sonar.issue.ignore.multicriteria.e1.resourceKey='**/AuthService/Data/Migrations/**' \
-            /d:sonar.issue.ignore.multicriteria.e2.ruleKey=external_roslyn:CA1861 \
-            /d:sonar.issue.ignore.multicriteria.e2.resourceKey='**/AuthService/Data/Migrations/**'
+            /d:sonar.issue.ignore.multicriteria.e1.resourceKey='**/AuthService/Data/Migrations/**'
 
       - name: Build
         run: dotnet build AuthService/AuthService.csproj --no-restore --configuration Release
