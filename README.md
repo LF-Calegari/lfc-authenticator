@@ -66,7 +66,7 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 | Item | Versão / notas |
 |------|----------------|
 | SDK .NET | **10.x** (alvo `net10.0`) |
-| Banco | **PostgreSQL** (local, Docker ou remoto; desenvolvimento testado com **16** no Compose) |
+| Banco | **PostgreSQL** (local, Docker ou remoto; desenvolvimento testado com **18** no Compose) |
 | Docker (opcional) | Docker Engine + Compose v2; **rede externa obrigatória** em ambiente integrado, **no máximo 30 IPs** úteis na sub-rede (ex.: `/27`); **mesma rede** que os demais serviços do ecossistema (padrão `lfc_platform_network`). |
 | Ferramenta EF (migrations) | `dotnet-ef` (global ou via `dotnet tool restore` no projeto) |
 
@@ -424,7 +424,7 @@ docker network create \
 
 | Serviço | Função |
 |---------|--------|
-| `db` | PostgreSQL **16** (Alpine); porta **5432** no host; volume `pg_data`. |
+| `db` | PostgreSQL **18** (`postgres:18-alpine`); porta **5432** no host; volume `pg_data`. |
 | `app` | API com `dotnet watch`, volume `./AuthService:/app`, porta **8080→5042** (HTTPS no container). |
 | `migrate` (profile `migrate`) | `dotnet ef database update` contra o `db`. |
 | `test` (profile `test`) | Executa `dotnet test` com `AUTH_SERVICE_TEST_PG_BASE` apontando para `db`. |
