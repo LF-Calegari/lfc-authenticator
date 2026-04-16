@@ -433,10 +433,12 @@ docker network create \
 **Migrations:** `docker compose --profile migrate run --rm migrate`  
 **Testes de integração:** `docker compose --profile test run --rm test`
 
+> O profile `migrate` apaga `obj/` e `bin/` em `./AuthService` antes do `dotnet restore`, para não reutilizar um `project.assets.json` gerado noutro ambiente (ex.: Windows no host), o que pode causar `FileNotFoundException` ao carregar `Microsoft.EntityFrameworkCore.Design.dll` dentro do container Linux.
+
 Com o `app` em execução, migrations manuais no container:
 
 ```bash
-docker compose exec app sh -c "dotnet restore && dotnet tool restore && dotnet ef database update"
+docker compose exec app sh -c "rm -rf obj bin && dotnet restore && dotnet tool restore && dotnet ef database update"
 ```
 
 String típica **na rede do Compose** (servidor `db`):

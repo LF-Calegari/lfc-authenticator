@@ -69,7 +69,8 @@ services:
       db:
         condition: service_healthy
     # dotnet-tools.json no volume faz o SDK exigir tool restore antes de `dotnet ef`.
-    command: ["sh", "-c", "dotnet restore && dotnet tool restore && dotnet ef database update"]
+    # Remove obj/bin do volume: project.assets.json gerado no host pode apontar para pacotes inexistentes no Linux (FileNotFound Design.dll).
+    command: ["sh", "-c", "rm -rf obj bin && dotnet restore && dotnet tool restore && dotnet ef database update"]
 
   # Testes de integração: monta a raiz do repo; PostgreSQL em db:5432 na rede do compose.
   test:
