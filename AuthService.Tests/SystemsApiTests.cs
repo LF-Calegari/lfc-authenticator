@@ -8,7 +8,7 @@ using Xunit;
 namespace AuthService.Tests;
 
 /// <summary>
-/// Cada teste usa um <see cref="WebAppFactory"/> novo → um banco SQL Server dedicado (criado no ctor, drop no Dispose).
+/// Cada teste usa um <see cref="WebAppFactory"/> novo → um banco PostgreSQL dedicado (criado no ctor, drop no Dispose).
 /// </summary>
 public class SystemsApiTests : IAsyncLifetime
 {
