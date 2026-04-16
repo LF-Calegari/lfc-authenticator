@@ -35,12 +35,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasIndex(c => c.Cpf)
                 .IsUnique()
                 .HasDatabaseName("UX_Clients_Cpf")
-                .HasFilter("[Cpf] IS NOT NULL");
+                .HasFilter("\"Cpf\" IS NOT NULL");
 
             entity.HasIndex(c => c.Cnpj)
                 .IsUnique()
                 .HasDatabaseName("UX_Clients_Cnpj")
-                .HasFilter("[Cnpj] IS NOT NULL");
+                .HasFilter("\"Cnpj\" IS NOT NULL");
         });
 
         modelBuilder.Entity<User>(entity =>

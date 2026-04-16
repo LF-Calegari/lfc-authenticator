@@ -28,11 +28,12 @@ public class DbExceptionHelperUnitTests
     }
 
     [Fact]
-    public void IsForeignKeyViolation_WithoutSqlException_ReturnsFalse()
+    public void IsForeignKeyViolation_WithoutPostgresException_ReturnsFalse()
     {
-        var inner = new Exception("FK error without SqlException");
+        var inner = new Exception("FK error without PostgresException");
         var dbEx = new DbUpdateException("Save failed", inner);
 
         Assert.False(DbExceptionHelper.IsForeignKeyViolation(dbEx));
     }
+
 }

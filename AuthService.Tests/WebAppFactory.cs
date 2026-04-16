@@ -9,12 +9,12 @@ using Microsoft.Extensions.Hosting;
 namespace AuthService.Tests;
 
 /// <summary>
-/// Sobe a API com SQL Server real: cria um banco com nome único e remove ao descartar o factory.
+/// Sobe a API com PostgreSQL real: cria um banco com nome único e remove ao descartar o factory.
 /// Um factory por teste permite paralelismo sem colisão (cada um usa seu próprio database).
 /// </summary>
 public class WebAppFactory : WebApplicationFactory<Program>
 {
-    private const string TestSqlBaseEnv = "AUTH_SERVICE_TEST_SQL_BASE";
+    private const string TestPgBaseEnv = "AUTH_SERVICE_TEST_PG_BASE";
 
     private readonly string _databaseName;
     private readonly string _masterConnectionString;
@@ -30,29 +30,29 @@ public class WebAppFactory : WebApplicationFactory<Program>
 
     public WebAppFactory()
     {
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(DefaultUserCredentialEnvVar)))
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(DefaultUserCredentialEnvVar)))
             Environment.SetEnvironmentVariable(DefaultUserCredentialEnvVar, DefaultUserCredentialDefault);
 
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(AdminUserCredentialEnvVar)))
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(AdminUserCredentialEnvVar)))
             Environment.SetEnvironmentVariable(AdminUserCredentialEnvVar, AdminUserCredentialDefault);
 
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(StandardUserCredentialEnvVar)))
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(StandardUserCredentialEnvVar)))
             Environment.SetEnvironmentVariable(StandardUserCredentialEnvVar, StandardUserCredentialDefault);
 
-        var baseConnection = Environment.GetEnvironmentVariable(TestSqlBaseEnv)?.Trim();
+        var baseConnection = Environment.GetEnvironmentVariable(TestPgBaseEnv)?.Trim();
         if (string.IsNullOrEmpty(baseConnection))
         {
             throw new InvalidOperationException(
-                $"Defina a variável de ambiente {TestSqlBaseEnv} com a connection string do SQL Server " +
-                "(sem Initial Catalog / Database), por exemplo: " +
-                "Server=127.0.0.1,1433;User Id=sa;Password=...;TrustServerCertificate=True");
+                $"Defina a variável de ambiente {TestPgBaseEnv} com a connection string do PostgreSQL " +
+                "sem Database (usa-se o banco de manutenção internamente), por exemplo: " +
+                "Host=127.0.0.1;Port=5432;Username=auth;Password=...");
         }
 
         _databaseName = "auth_svc_it_" + Guid.NewGuid().ToString("N");
-        _masterConnectionString = SqlServerTestDb.BuildMasterConnectionString(baseConnection);
-        _appConnectionString = SqlServerTestDb.BuildDatabaseConnectionString(baseConnection, _databaseName);
+        _masterConnectionString = PostgreSqlTestDb.BuildAdminConnectionString(baseConnection);
+        _appConnectionString = PostgreSqlTestDb.BuildDatabaseConnectionString(baseConnection, _databaseName);
 
-        SqlServerTestDb.CreateDatabase(_masterConnectionString, _databaseName);
+        PostgreSqlTestDb.CreateDatabase(_masterConnectionString, _databaseName);
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -104,11 +104,11 @@ public class WebAppFactory : WebApplicationFactory<Program>
             {
                 try
                 {
-                    SqlServerTestDb.DropDatabase(_masterConnectionString, _databaseName);
+                    PostgreSqlTestDb.DropDatabase(_masterConnectionString, _databaseName);
                 }
                 catch
                 {
-                    // Não oculta falhas do teste; drop pode falhar se o SQL não estiver acessível.
+                    // Não oculta falhas do teste; drop pode falhar se o PostgreSQL não estiver acessível.
                 }
             }
 

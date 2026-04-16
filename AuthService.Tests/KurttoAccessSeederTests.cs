@@ -89,18 +89,18 @@ public class KurttoAccessSeederTests : IAsyncLifetime
     [Fact]
     public async Task EnsureKurttoAccessAsync_WhenKurttoSystemMissing_ThrowsInvalidOperationException()
     {
-        var baseConnection = Environment.GetEnvironmentVariable("AUTH_SERVICE_TEST_SQL_BASE")?.Trim();
+        var baseConnection = Environment.GetEnvironmentVariable("AUTH_SERVICE_TEST_PG_BASE")?.Trim();
         Assert.False(string.IsNullOrEmpty(baseConnection));
 
         var databaseName = "auth_svc_kurtto_seed_err_" + Guid.NewGuid().ToString("N");
-        var masterConnectionString = SqlServerTestDb.BuildMasterConnectionString(baseConnection);
-        var appConnectionString = SqlServerTestDb.BuildDatabaseConnectionString(baseConnection, databaseName);
+        var masterConnectionString = PostgreSqlTestDb.BuildAdminConnectionString(baseConnection);
+        var appConnectionString = PostgreSqlTestDb.BuildDatabaseConnectionString(baseConnection, databaseName);
 
-        SqlServerTestDb.CreateDatabase(masterConnectionString, databaseName);
+        PostgreSqlTestDb.CreateDatabase(masterConnectionString, databaseName);
         try
         {
             var options = new DbContextOptionsBuilder<AppDbContext>()
-                .UseSqlServer(appConnectionString)
+                .UseNpgsql(appConnectionString)
                 .Options;
 
             await using var db = new AppDbContext(options);
@@ -113,7 +113,7 @@ public class KurttoAccessSeederTests : IAsyncLifetime
         }
         finally
         {
-            SqlServerTestDb.DropDatabase(masterConnectionString, databaseName);
+            PostgreSqlTestDb.DropDatabase(masterConnectionString, databaseName);
         }
     }
 

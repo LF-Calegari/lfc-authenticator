@@ -1,6 +1,6 @@
 # Auth Service (lfc-authenticator)
 
-API REST em **ASP.NET Core** para **autenticação JWT**, **autorização baseada em permissões** persistidas em **SQL Server** e **cadastros** correlatos (sistemas, rotas, tipos de permissão, permissões, papéis e vínculos). O serviço centraliza o catálogo oficial de permissões e padroniza o que cada usuário pode fazer nos demais sistemas do ecossistema.
+API REST em **ASP.NET Core** para **autenticação JWT**, **autorização baseada em permissões** persistidas em **PostgreSQL** e **cadastros** correlatos (sistemas, rotas, tipos de permissão, permissões, papéis e vínculos). O serviço centraliza o catálogo oficial de permissões e padroniza o que cada usuário pode fazer nos demais sistemas do ecossistema.
 
 > Atualização de contrato (issue #36): as rotas oficiais públicas são prefixadas por `/api/v1`.
 
@@ -66,7 +66,7 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 | Item | Versão / notas |
 |------|----------------|
 | SDK .NET | **10.x** (alvo `net10.0`) |
-| Banco | **Microsoft SQL Server** (local, Docker ou remoto) |
+| Banco | **PostgreSQL** (local, Docker ou remoto; desenvolvimento testado com **16** no Compose) |
 | Docker (opcional) | Docker Engine + Compose v2; **rede externa obrigatória** em ambiente integrado, **no máximo 30 IPs** úteis na sub-rede (ex.: `/27`); **mesma rede** que os demais serviços do ecossistema (padrão `lfc_platform_network`). |
 | Ferramenta EF (migrations) | `dotnet-ef` (global ou via `dotnet tool restore` no projeto) |
 
@@ -77,16 +77,16 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 ### Opção A — Docker Compose (recomendado para ambiente integrado)
 
 1. **Rede Docker:** crie a rede externa **uma vez** (a mesma usada pelos outros serviços do ecossistema, ex.: Kurtto) — veja [Docker Compose — Rede externa](#rede-externa).
-2. Na **raiz** do repositório: `cp .env.example .env` e ajuste `MSSQL_SA_PASSWORD` (deve atender à política da Microsoft: maiúsculas, minúsculas, números e símbolos).
-3. Subir API + SQL: `docker compose up -d --build`
+2. Na **raiz** do repositório: `cp .env.example .env` e ajuste `POSTGRES_PASSWORD` (use uma senha forte em produção).
+3. Subir API + PostgreSQL: `docker compose up -d --build`
 4. Aplicar migrations (primeira vez ou após alteração do modelo):  
    `docker compose --profile migrate run --rm migrate`
 5. API no host: **https://localhost:8080** (mapeamento `8080:5042`; Kestrel usa certificado de desenvolvimento gerado na imagem Docker — o navegador pode alertar até você confiar no certificado ou usar `-k` no `curl`).
 
 ### Opção B — `dotnet run` no host
 
-1. SQL Server acessível (ex.: `localhost:1433` se usar o container só do `db`).
-2. Ajuste `ConnectionStrings:DefaultConnection` em `AuthService/appsettings.Development.json` ou sobrescreva via variável de ambiente (veja tabela abaixo). A senha deve ser a **mesma** configurada no SQL (ex.: a do `.env` se o banco for o do Compose).
+1. PostgreSQL acessível (ex.: `localhost:5432` se usar o container só do `db`).
+2. Ajuste `ConnectionStrings:DefaultConnection` em `AuthService/appsettings.Development.json` ou sobrescreva via variável de ambiente (veja tabela abaixo). A senha deve ser a **mesma** configurada no PostgreSQL (ex.: a do `.env` se o banco for o do Compose).
 3. Aplicar migrations no banco alvo (veja [Migrations](#migrations-ef-core)).
 4. Na pasta `AuthService`: `dotnet run`  
    URLs padrão do perfil HTTP: **http://localhost:5052** (veja `Properties/launchSettings.json`).
@@ -99,19 +99,19 @@ Todas as rotas da API REST ficam sob o prefixo **`/api/v1`** (ex.: `GET http://l
 
 | Origem | Descrição |
 |--------|-----------|
-| `ConnectionStrings:DefaultConnection` | Connection string do SQL Server **com** banco (ex.: `Database=AuthServiceDb`). No Compose: `ConnectionStrings__DefaultConnection`. |
+| `ConnectionStrings:DefaultConnection` | Connection string **Npgsql** com banco (ex.: `Database=AuthServiceDb`). No Compose: `ConnectionStrings__DefaultConnection`. |
 | `ASPNETCORE_ENVIRONMENT` | `Development`, `Production` ou `Testing`. Em **Testing**, não há redirecionamento HTTPS e o seed do catálogo no `Program` é omitido (testes fazem seed no *factory*). |
 | `Auth:Jwt:Secret` | Segredo HMAC do JWT; **mínimo 32 caracteres**. Em produção, use segredo forte e armazenamento seguro — **não** commite valores reais. |
 | `Auth:Jwt:ExpirationMinutes` | Validade do access token em minutos. |
 | `DEFAULT_SYSTEM_USER_PASSWORD` | Credencial do usuário `root@email.com.br`. **Obrigatória** em Development e Production; fail-fast se ausente. No Docker Compose o default é `toor`. |
 | `ADMIN_SYSTEM_USER_PASSWORD` | Credencial do usuário `admin@email.com.br`. **Obrigatória** em Development e Production; fail-fast se ausente. No Docker Compose o default é `admin`. |
 | `DEFAULT_USER_PASSWORD` | Credencial do usuário `default@email.com.br`. **Obrigatória** em Development e Production; fail-fast se ausente. No Docker Compose o default é `default`. |
-| `AUTH_SERVICE_TEST_SQL_BASE` | Obrigatória para **testes de integração**: connection string **sem** `Database` / `Initial Catalog`. |
+| `AUTH_SERVICE_TEST_PG_BASE` | Obrigatória para **testes de integração**: connection string **sem** `Database` (o teste cria um banco dedicado por execução). |
 
 Exemplo de override no shell (Linux):
 
 ```bash
-export ConnectionStrings__DefaultConnection="Server=127.0.0.1,1433;Database=AuthServiceDb;User Id=sa;Password=SuaSenha;TrustServerCertificate=True"
+export ConnectionStrings__DefaultConnection="Host=127.0.0.1;Port=5432;Database=AuthServiceDb;Username=auth;Password=SuaSenha"
 export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 ```
 
@@ -119,7 +119,7 @@ export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 
 ## Fluxo de inicialização da aplicação
 
-1. **`WebApplication.CreateBuilder`** — registra `AppDbContext` (SQL Server), opções JWT, serviços de autenticação/autorização customizados, controllers e Swagger.
+1. **`WebApplication.CreateBuilder`** — registra `AppDbContext` (PostgreSQL via **Npgsql** / `UseNpgsql`), opções JWT, serviços de autenticação/autorização customizados, controllers e Swagger.
 2. **Pipeline HTTP** — em ambientes diferentes de **Testing**, `UseHttpsRedirection`. **Swagger** e **Swagger UI** são registrados **antes** de autenticação/autorização, ficando **anônimos**.
 3. **`UseAuthentication`** / **`UseAuthorization`** — JWT *handler* valida cabeçalho `Authorization: Bearer …`, *claims* e coerência com o usuário no banco (`TokenVersion`, ativo).
 4. **`MapGroup("/api/v1").MapControllers()`** — todas as rotas de API ficam versionadas em `/api/v1`.
@@ -424,10 +424,10 @@ docker network create \
 
 | Serviço | Função |
 |---------|--------|
-| `db` | SQL Server 2022; porta **1433** no host; volume `mssql_data`. |
+| `db` | PostgreSQL **16** (Alpine); porta **5432** no host; volume `pg_data`. |
 | `app` | API com `dotnet watch`, volume `./AuthService:/app`, porta **8080→5042** (HTTPS no container). |
 | `migrate` (profile `migrate`) | `dotnet ef database update` contra o `db`. |
-| `test` (profile `test`) | Executa `dotnet test` com `AUTH_SERVICE_TEST_SQL_BASE` apontando para `db`. |
+| `test` (profile `test`) | Executa `dotnet test` com `AUTH_SERVICE_TEST_PG_BASE` apontando para `db`. |
 
 **Subir stack:** `docker compose up -d --build`  
 **Migrations:** `docker compose --profile migrate run --rm migrate`  
@@ -441,11 +441,15 @@ docker compose exec app sh -c "dotnet restore && dotnet tool restore && dotnet e
 
 String típica **na rede do Compose** (servidor `db`):
 
-`Server=db,1433;Database=AuthServiceDb;User Id=sa;Password=<sua senha>;TrustServerCertificate=True`
+`Host=db;Port=5432;Database=AuthServiceDb;Username=auth;Password=<sua senha>`
 
 ---
 
 ## Migrations (EF Core)
+
+### Histórico: SQL Server → PostgreSQL
+
+As migrations antigas (provider SQL Server) foram substituídas por um **baseline único** para PostgreSQL (`InitialPostgreSQLBaseline`), gerado com `dotnet ef migrations add`. Ambientes que já tinham o schema no SQL Server devem tratar **cutover de dados** separadamente (export/import ou ETL); este repositório não mantém mais migrations incrementais para SQL Server.
 
 Na pasta do projeto web (ou raiz com caminhos ajustados):
 
@@ -471,18 +475,18 @@ dotnet ef migrations add NomeDescritivoDaMigration \
 - Projeto: **`AuthService.Tests`**
 - Há dois tipos de suíte:
   - **Unitária**: valida componentes isolados (sem banco/infra externa).
-  - **Integração**: usa SQL Server real e sobe a aplicação completa em memória.
+  - **Integração**: usa PostgreSQL real e sobe a aplicação completa em memória.
 - Para executar apenas testes unitários:
 
 ```bash
 dotnet test AuthService.Tests/AuthService.Tests.csproj --filter "FullyQualifiedName~UnitTests"
 ```
 
-- Utilizam **SQL Server real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa seeders de catálogo, seed Kurtto (`KurttoAccessSeeder`) e usuários base (`root/admin/default`), e remove o banco ao final.
-- **Obrigatório** definir `AUTH_SERVICE_TEST_SQL_BASE` **sem** catálogo inicial:
+- Utilizam **PostgreSQL real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa seeders de catálogo, seed Kurtto (`KurttoAccessSeeder`) e usuários base (`root/admin/default`), e remove o banco ao final.
+- **Obrigatório** definir `AUTH_SERVICE_TEST_PG_BASE` **sem** `Database`:
 
 ```bash
-export AUTH_SERVICE_TEST_SQL_BASE="Server=127.0.0.1,1433;User Id=sa;Password=<MESMA_DO_.env>;TrustServerCertificate=True"
+export AUTH_SERVICE_TEST_PG_BASE="Host=127.0.0.1;Port=5432;Username=auth;Password=<MESMA_DO_.env>"
 dotnet test AuthService.Tests/AuthService.Tests.csproj
 ```
 
@@ -494,12 +498,12 @@ Sem essa variável, o `WebApplicationFactory` falha na construção — comporta
 
 | Sintoma | Verificação sugerida |
 |---------|----------------------|
-| Falha ao conectar ao SQL | Senha/porta/host; `TrustServerCertificate=True` em dev; firewall. |
+| Falha ao conectar ao PostgreSQL | Senha/porta/host; `pg_hba.conf` / rede; firewall. |
 | `dotnet ef` não encontrado | `dotnet tool install --global dotnet-ef` ou `dotnet tool restore` no projeto. |
 | 401 em todas as rotas protegidas | Cabeçalho `Authorization: Bearer`; relógio do cliente; token expirado ou após **logout**. |
 | 403 em recurso específico | Usuário não possui GUID da permissão correspondente à política `perm:…` (vincular via papéis, permissões diretas no usuário ou processos de dados; consulte **`GET /api/v1/users/{id}`** para os vínculos). |
 | 404 em entidade “que existe” | Pode estar *soft-deleted*; usar rota de **restore** quando aplicável. |
-| Docker `app` não sobe | Aguardar healthcheck do `db`; conferir `MSSQL_SA_PASSWORD` no `.env`. |
+| Docker `app` não sobe | Aguardar healthcheck do `db`; conferir `POSTGRES_PASSWORD` no `.env`. |
 | Caminho 404 na API | Prefixo **`/api/v1`** obrigatório em todos os controllers mapeados. |
 
 ---
@@ -546,17 +550,7 @@ docker run --rm -it \
 
 ### Pacotes Entity Framework (exemplos)
 
-**SQL Server** (este repositório):
-
-```bash
-docker run --rm -it \
-  -v "$PWD:/src" \
-  -w /src \
-  mcr.microsoft.com/dotnet/sdk:10.0 \
-  dotnet add package Microsoft.EntityFrameworkCore.SqlServer
-```
-
-**PostgreSQL**
+**PostgreSQL** (este repositório — provider **Npgsql**):
 
 ```bash
 docker run --rm -it \

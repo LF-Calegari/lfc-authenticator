@@ -2,7 +2,7 @@
 # Rede padrão: externa compartilhada com os demais serviços do ecossistema (ex.: Kurtto); criar antes com `docker network create` (ver README).
 # Uso: docker compose up -d
 # Migrações (primeira vez / após mudar migrations): docker compose --profile migrate run --rm migrate
-# Testes de integração (SQL real): docker compose --profile test run --rm test
+# Testes de integração (PostgreSQL real): docker compose --profile test run --rm test
 
 services:
   app:
@@ -14,8 +14,7 @@ services:
       - .env
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      # Sobrescreve appsettings.Development.json com a mesma senha do SQL (variável do .env).
-      ConnectionStrings__DefaultConnection: "Server=db,1433;Database=AuthServiceDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=AuthServiceDb;Username=auth;Password=${POSTGRES_PASSWORD}"
       DEFAULT_SYSTEM_USER_PASSWORD: "${DEFAULT_SYSTEM_USER_PASSWORD:-toor}"
       ADMIN_SYSTEM_USER_PASSWORD: "${ADMIN_SYSTEM_USER_PASSWORD:-admin}"
       DEFAULT_USER_PASSWORD: "${DEFAULT_USER_PASSWORD:-default}"
@@ -31,28 +30,25 @@ services:
         condition: service_healthy
 
   db:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    image: postgres:16-alpine
     env_file:
       - .env
     environment:
-      ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      POSTGRES_USER: auth
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: AuthServiceDb
     ports:
-      - "1433:1433"
+      - "5432:5432"
     volumes:
-      - mssql_data:/var/opt/mssql
+      - pg_data:/var/lib/postgresql/data
     networks:
       - default
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1",
-        ]
+      test: ["CMD-SHELL", "pg_isready -U auth -d AuthServiceDb"]
       interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 10s
 
   # Aplica migrations no AuthServiceDb (usa a mesma imagem do app para ter dotnet-ef no PATH).
   migrate:
@@ -63,7 +59,7 @@ services:
     env_file:
       - .env
     environment:
-      ConnectionStrings__DefaultConnection: "Server=db,1433;Database=AuthServiceDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=AuthServiceDb;Username=auth;Password=${POSTGRES_PASSWORD}"
     volumes:
       - ./AuthService:/app
     working_dir: /app
@@ -75,14 +71,14 @@ services:
     # dotnet-tools.json no volume faz o SDK exigir tool restore antes de `dotnet ef`.
     command: ["sh", "-c", "dotnet restore && dotnet tool restore && dotnet ef database update"]
 
-  # Testes de integração: monta a raiz do repo; SQL em db:1433 na rede do compose.
+  # Testes de integração: monta a raiz do repo; PostgreSQL em db:5432 na rede do compose.
   test:
     profiles: [test]
     image: mcr.microsoft.com/dotnet/sdk:10.0
     env_file:
       - .env
     environment:
-      AUTH_SERVICE_TEST_SQL_BASE: "Server=db,1433;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+      AUTH_SERVICE_TEST_PG_BASE: "Host=db;Port=5432;Username=auth;Password=${POSTGRES_PASSWORD}"
       DEFAULT_SYSTEM_USER_PASSWORD: "${DEFAULT_SYSTEM_USER_PASSWORD:-toor}"
       ADMIN_SYSTEM_USER_PASSWORD: "${ADMIN_SYSTEM_USER_PASSWORD:-admin}"
       DEFAULT_USER_PASSWORD: "${DEFAULT_USER_PASSWORD:-default}"
@@ -97,7 +93,7 @@ services:
     command: ["dotnet", "test", "AuthService.Tests/AuthService.Tests.csproj", "-v", "minimal"]
 
 volumes:
-  mssql_data:
+  pg_data:
 
 networks:
   default:
