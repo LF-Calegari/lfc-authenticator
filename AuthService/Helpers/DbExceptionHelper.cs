@@ -1,16 +1,19 @@
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace AuthService.Helpers;
 
 internal static class DbExceptionHelper
 {
+    private const string UniqueViolationSqlState = "23505";
+    private const string ForeignKeyViolationSqlState = "23503";
+
     internal static bool IsUniqueConstraintViolation(DbUpdateException ex)
     {
         for (Exception? e = ex; e != null; e = e.InnerException)
         {
-            if (e is SqlException sql)
-                return sql.Number is 2601 or 2627;
+            if (e is PostgresException pg && pg.SqlState == UniqueViolationSqlState)
+                return true;
         }
 
         var text = string.Join(" ", GetExceptionMessages(ex));
@@ -23,8 +26,8 @@ internal static class DbExceptionHelper
     {
         for (Exception? e = ex; e != null; e = e.InnerException)
         {
-            if (e is SqlException sql)
-                return sql.Number == 547;
+            if (e is PostgresException pg && pg.SqlState == ForeignKeyViolationSqlState)
+                return true;
         }
 
         return false;

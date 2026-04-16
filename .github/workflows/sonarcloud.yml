@@ -9,18 +9,18 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    env:
-      CI_SQL_SA_PASSWORD: ${{ secrets.MSSQL_SA_PASSWORD }}
     services:
-      mssql:
-        image: mcr.microsoft.com/mssql/server:2022-latest
+      postgres:
+        image: postgres:18-alpine
         env:
-          ACCEPT_EULA: "Y"
-          MSSQL_SA_PASSWORD: ${{ env.CI_SQL_SA_PASSWORD }}
+          POSTGRES_USER: auth
+          # Reutiliza o secret existente do repositório (nome legado MSSQL_SA_PASSWORD).
+          POSTGRES_PASSWORD: ${{ secrets.MSSQL_SA_PASSWORD }}
+          POSTGRES_DB: postgres
         ports:
-          - 1433:1433
+          - 5432:5432
         options: >-
-          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" || exit 1"
+          --health-cmd "pg_isready -U auth -d postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 15
@@ -56,14 +56,18 @@ jobs:
             /o:"$SONAR_ORGANIZATION" \
             /d:sonar.host.url="https://sonarcloud.io" \
             /d:sonar.token="$SONAR_TOKEN" \
-            /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
+            /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" \
+            /d:sonar.cpd.exclusions="**/AuthService/Data/Migrations/**" \
+            /d:sonar.issue.ignore.multicriteria=e1 \
+            /d:sonar.issue.ignore.multicriteria.e1.ruleKey=csharpsquid:S1192 \
+            /d:sonar.issue.ignore.multicriteria.e1.resourceKey='**/AuthService/Data/Migrations/**'
 
       - name: Build
         run: dotnet build AuthService/AuthService.csproj --no-restore --configuration Release
 
       - name: Test with coverage
         env:
-          AUTH_SERVICE_TEST_SQL_BASE: "Server=127.0.0.1,1433;User Id=sa;Password=${{ env.CI_SQL_SA_PASSWORD }};TrustServerCertificate=True"
+          AUTH_SERVICE_TEST_PG_BASE: "Host=127.0.0.1;Port=5432;Username=auth;Password=${{ secrets.MSSQL_SA_PASSWORD }}"
         run: |
           dotnet test AuthService.Tests/AuthService.Tests.csproj \
             --configuration Release \

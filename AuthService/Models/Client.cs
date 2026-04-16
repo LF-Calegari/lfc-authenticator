@@ -4,8 +4,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AuthService.Models;
 
-[Index(nameof(Cpf), IsUnique = true, Name = "UX_Clients_Cpf")]
-[Index(nameof(Cnpj), IsUnique = true, Name = "UX_Clients_Cnpj")]
 [Index(nameof(DeletedAt), Name = "IX_Clients_DeletedAt")]
 [Table("Clients")]
 public class Client : ISoftDelete
