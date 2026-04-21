@@ -17,6 +17,7 @@ namespace AuthService.Controllers.Users;
 public class UsersController : ControllerBase
 {
     private const string UserNotFoundMessage = "Usuário não encontrado.";
+    private const int MaxBatchIds = 100;
 
     private readonly AppDbContext _db;
 
@@ -104,6 +105,11 @@ public class UsersController : ControllerBase
         IReadOnlyList<UserRoleLinkResponse> Roles,
         IReadOnlyList<UserPermissionLinkResponse> Permissions);
 
+    public record UserMinimalResponse(
+        Guid Id,
+        string Name,
+        string Email);
+
     private static UserResponse ToResponse(
         UserEntity u,
         IReadOnlyList<UserRoleLinkResponse>? roles = null,
@@ -163,6 +169,45 @@ public class UsersController : ControllerBase
 
     private static ConflictObjectResult EmailConflictResult() =>
         new(new { message = "Já existe um usuário com este Email." });
+
+    private static bool TryParseBatchIds(
+        IEnumerable<string> rawIds,
+        ModelStateDictionary modelState,
+        out List<Guid> ids)
+    {
+        ids = [];
+        var distinct = new HashSet<Guid>();
+        var segments = rawIds
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .SelectMany(value => value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+            .ToArray();
+
+        if (segments.Length == 0)
+        {
+            modelState.AddModelError("ids", "Informe pelo menos um id em `ids`.");
+            return false;
+        }
+
+        if (segments.Length > MaxBatchIds)
+        {
+            modelState.AddModelError("ids", $"A lista `ids` permite no máximo {MaxBatchIds} itens por requisição.");
+            return false;
+        }
+
+        foreach (var segment in segments)
+        {
+            if (!Guid.TryParse(segment, out var parsed))
+            {
+                modelState.AddModelError("ids", "A lista `ids` deve conter apenas GUIDs válidos.");
+                return false;
+            }
+
+            if (distinct.Add(parsed))
+                ids.Add(parsed);
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// Compara por igualdade na coluna (sem função na coluna) para permitir uso do índice único em Email.
@@ -246,8 +291,30 @@ public class UsersController : ControllerBase
 
     [HttpGet]
     [Authorize(Policy = PermissionPolicies.UsersRead)]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll([FromQuery] string[]? ids = null)
     {
+        if (ids is { Length: > 0 })
+        {
+            if (!TryParseBatchIds(ids, ModelState, out var parsedIds))
+                return ValidationProblem(ModelState);
+
+            var batchUsers = await _db.Users
+                .Where(u => parsedIds.Contains(u.Id))
+                .Select(u => new UserMinimalResponse(
+                    u.Id,
+                    u.Name,
+                    u.Email))
+                .ToListAsync();
+
+            var usersById = batchUsers.ToDictionary(u => u.Id);
+            var ordered = parsedIds
+                .Where(usersById.ContainsKey)
+                .Select(id => usersById[id])
+                .ToList();
+
+            return Ok(ordered);
+        }
+
         var users = await _db.Users
             .OrderBy(u => u.CreatedAt)
             .ToListAsync();
@@ -262,34 +329,7 @@ public class UsersController : ControllerBase
         if (user is null)
             return NotFound(new { message = UserNotFoundMessage });
 
-        var roles = await _db.UserRoles
-            .AsNoTracking()
-            .Where(ur => ur.UserId == id)
-            .OrderBy(ur => ur.Id)
-            .Select(ur => new UserRoleLinkResponse(
-                ur.Id,
-                ur.UserId,
-                ur.RoleId,
-                ur.CreatedAt,
-                ur.UpdatedAt,
-                ur.DeletedAt))
-            .ToListAsync();
-
-        var permissions = await _db.UserPermissions
-            .AsNoTracking()
-            .Where(up => up.UserId == id)
-            .OrderBy(up => up.CreatedAt)
-            .ThenBy(up => up.Id)
-            .Select(up => new UserPermissionLinkResponse(
-                up.Id,
-                up.UserId,
-                up.PermissionId,
-                up.CreatedAt,
-                up.UpdatedAt,
-                up.DeletedAt))
-            .ToListAsync();
-
-        return Ok(ToResponse(user, roles, permissions));
+        return Ok(new UserMinimalResponse(user.Id, user.Name, user.Email));
     }
 
     [HttpPut("{id:guid}")]

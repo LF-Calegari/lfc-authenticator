@@ -99,7 +99,7 @@ Todas as rotas da API REST ficam sob o prefixo **`/api/v1`** (ex.: `GET http://l
 
 | Origem | Descrição |
 |--------|-----------|
-| `ConnectionStrings:DefaultConnection` | Connection string **Npgsql** com banco (ex.: `Database=AuthServiceDb`). No Compose: `ConnectionStrings__DefaultConnection`. |
+| `ConnectionStrings:DefaultConnection` | Connection string **Npgsql** com banco (ex.: `Database=AuthenticatorDb`). No Compose: `ConnectionStrings__DefaultConnection`. |
 | `ASPNETCORE_ENVIRONMENT` | `Development`, `Production` ou `Testing`. Em **Testing**, não há redirecionamento HTTPS e o seed do catálogo no `Program` é omitido (testes fazem seed no *factory*). |
 | `Auth:Jwt:Secret` | Segredo HMAC do JWT; **mínimo 32 caracteres**. Em produção, use segredo forte e armazenamento seguro — **não** commite valores reais. |
 | `Auth:Jwt:ExpirationMinutes` | Validade do access token em minutos. |
@@ -111,7 +111,7 @@ Todas as rotas da API REST ficam sob o prefixo **`/api/v1`** (ex.: `GET http://l
 Exemplo de override no shell (Linux):
 
 ```bash
-export ConnectionStrings__DefaultConnection="Host=127.0.0.1;Port=5432;Database=AuthServiceDb;Username=auth;Password=SuaSenha"
+export ConnectionStrings__DefaultConnection="Host=127.0.0.1;Port=5432;Database=AuthenticatorDb;Username=auth;Password=SuaSenha"
 export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 ```
 
@@ -433,15 +433,17 @@ docker network create \
 **Migrations:** `docker compose --profile migrate run --rm migrate`  
 **Testes de integração:** `docker compose --profile test run --rm test`
 
+> O profile `migrate` apaga `obj/` e `bin/` em `./AuthService` antes do `dotnet restore`, para não reutilizar um `project.assets.json` gerado noutro ambiente (ex.: Windows no host), o que pode causar `FileNotFoundException` ao carregar `Microsoft.EntityFrameworkCore.Design.dll` dentro do container Linux.
+
 Com o `app` em execução, migrations manuais no container:
 
 ```bash
-docker compose exec app sh -c "dotnet restore && dotnet tool restore && dotnet ef database update"
+docker compose exec app sh -c "rm -rf obj bin && dotnet restore && dotnet tool restore && dotnet ef database update"
 ```
 
 String típica **na rede do Compose** (servidor `db`):
 
-`Host=db;Port=5432;Database=AuthServiceDb;Username=auth;Password=<sua senha>`
+`Host=db;Port=5432;Database=AuthenticatorDb;Username=auth;Password=<sua senha>`
 
 ---
 
