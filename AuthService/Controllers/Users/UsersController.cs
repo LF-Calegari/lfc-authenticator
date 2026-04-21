@@ -178,6 +178,7 @@ public class UsersController : ControllerBase
         ids = [];
         var distinct = new HashSet<Guid>();
         var segments = rawIds
+            .Where(value => !string.IsNullOrWhiteSpace(value))
             .SelectMany(value => value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
             .ToArray();
 

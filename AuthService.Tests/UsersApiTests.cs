@@ -381,6 +381,23 @@ public class UsersApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetByIds_EmptyValue_ReturnsBadRequest()
+    {
+        var getResp = await _client.GetAsync("/api/v1/users?ids=");
+        Assert.Equal(HttpStatusCode.BadRequest, getResp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetByIds_MoreThanMaxBatchIds_ReturnsBadRequest()
+    {
+        var ids = Enumerable.Range(0, 101).Select(_ => Guid.NewGuid().ToString());
+        var query = string.Join(',', ids);
+
+        var getResp = await _client.GetAsync($"/api/v1/users?ids={query}");
+        Assert.Equal(HttpStatusCode.BadRequest, getResp.StatusCode);
+    }
+
+    [Fact]
     public async Task GetAll_ReturnsEmptyRolesAndPermissions_OnEachUser()
     {
         await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("Lista", "list.empty@example.com"), TestApiClient.JsonOptions);
