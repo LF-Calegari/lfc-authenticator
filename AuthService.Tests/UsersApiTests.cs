@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using AuthService.Data;
-using AuthService.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -180,6 +180,14 @@ public class UsersApiTests : IAsyncLifetime
 
         var getOk = await _client.GetAsync($"/api/v1/users/{dto.Id}");
         Assert.Equal(HttpStatusCode.OK, getOk.StatusCode);
+        using (var payload = JsonDocument.Parse(await getOk.Content.ReadAsStringAsync()))
+        {
+            var root = payload.RootElement;
+            Assert.Equal(3, root.EnumerateObject().Count());
+            Assert.Equal(dto.Id, root.GetProperty("id").GetGuid());
+            Assert.Equal("S", root.GetProperty("name").GetString());
+            Assert.Equal("g1@example.com", root.GetProperty("email").GetString());
+        }
 
         await _client.DeleteAsync($"/api/v1/users/{dto.Id}");
         var get404 = await _client.GetAsync($"/api/v1/users/{dto.Id}");
@@ -334,78 +342,59 @@ public class UsersApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GetById_ReturnsRolesAndPermissions_WhenLinkedInDatabase()
+    public async Task GetByIds_ReturnsMinimalProjection_InRequestedOrder()
     {
-        var create = await _client.PostAsJsonAsync("/api/v1/users",
-            UserCreateBody("Com vínculos", "user.links@example.com"), TestApiClient.JsonOptions);
-        create.EnsureSuccessStatusCode();
-        var created = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(created);
-
-        var roleResp = await _client.PostAsJsonAsync("/api/v1/roles",
-            new { name = "Papel teste vínculo", code = $"ut-user-detail-{Guid.NewGuid():N}" },
+        var create = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("Com vínculo", "batch.one@example.com"),
             TestApiClient.JsonOptions);
-        roleResp.EnsureSuccessStatusCode();
-        var roleDto = await roleResp.Content.ReadFromJsonAsync<IdOnlyDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(roleDto);
-        var roleId = roleDto.Id;
+        create.EnsureSuccessStatusCode();
+        var userA = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(userA);
 
-        Guid permissionId;
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            permissionId = await db.Permissions.Select(p => p.Id).FirstAsync();
-            var utc = DateTime.UtcNow;
-            db.UserRoles.Add(new AppUserRole
-            {
-                UserId = created.Id,
-                RoleId = roleId,
-                CreatedAt = utc,
-                UpdatedAt = utc,
-                DeletedAt = null
-            });
-            db.UserPermissions.Add(new AppUserPermission
-            {
-                UserId = created.Id,
-                PermissionId = permissionId,
-                CreatedAt = utc,
-                UpdatedAt = utc,
-                DeletedAt = null
-            });
-            await db.SaveChangesAsync();
-        }
+        var createSecond = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Dois", "batch.two@example.com"), TestApiClient.JsonOptions);
+        createSecond.EnsureSuccessStatusCode();
+        var userB = await createSecond.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(userB);
 
-        var getResp = await _client.GetAsync($"/api/v1/users/{created.Id}");
+        var getResp = await _client.GetAsync($"/api/v1/users?ids={userB.Id},{userA.Id}");
         getResp.EnsureSuccessStatusCode();
-        var detail = await getResp.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(detail);
-        Assert.Single(detail.Roles);
-        Assert.Equal(roleId, detail.Roles[0].RoleId);
-        Assert.Equal(created.Id, detail.Roles[0].UserId);
-        Assert.Single(detail.Permissions);
-        Assert.Equal(permissionId, detail.Permissions[0].PermissionId);
-        Assert.Equal(created.Id, detail.Permissions[0].UserId);
+        using var payload = JsonDocument.Parse(await getResp.Content.ReadAsStringAsync());
+        var rows = payload.RootElement.EnumerateArray().ToList();
+        Assert.Equal(2, rows.Count);
+
+        Assert.Equal(userB.Id, rows[0].GetProperty("id").GetGuid());
+        Assert.Equal("Dois", rows[0].GetProperty("name").GetString());
+        Assert.Equal("batch.two@example.com", rows[0].GetProperty("email").GetString());
+        Assert.Equal(3, rows[0].EnumerateObject().Count());
+
+        Assert.Equal(userA.Id, rows[1].GetProperty("id").GetGuid());
+        Assert.Equal("Com vínculo", rows[1].GetProperty("name").GetString());
+        Assert.Equal("batch.one@example.com", rows[1].GetProperty("email").GetString());
+        Assert.Equal(3, rows[1].EnumerateObject().Count());
     }
 
     [Fact]
-    public async Task GetById_RootUser_ReturnsRoleLink_AndNoDirectPermissions_FromSeeder()
+    public async Task GetByIds_InvalidGuid_ReturnsBadRequest()
     {
-        Guid rootId;
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            rootId = await db.Users
-                .Where(u => u.Email == DefaultSystemUserSeeder.RootEmail)
-                .Select(u => u.Id)
-                .SingleAsync();
-        }
+        var getResp = await _client.GetAsync("/api/v1/users?ids=not-a-guid");
+        Assert.Equal(HttpStatusCode.BadRequest, getResp.StatusCode);
+    }
 
-        var getResp = await _client.GetAsync($"/api/v1/users/{rootId}");
-        getResp.EnsureSuccessStatusCode();
-        var detail = await getResp.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(detail);
-        Assert.Single(detail.Roles);
-        Assert.Empty(detail.Permissions);
+    [Fact]
+    public async Task GetByIds_EmptyValue_ReturnsBadRequest()
+    {
+        var getResp = await _client.GetAsync("/api/v1/users?ids=");
+        Assert.Equal(HttpStatusCode.BadRequest, getResp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetByIds_MoreThanMaxBatchIds_ReturnsBadRequest()
+    {
+        var ids = Enumerable.Range(0, 101).Select(_ => Guid.NewGuid().ToString());
+        var query = string.Join(',', ids);
+
+        var getResp = await _client.GetAsync($"/api/v1/users?ids={query}");
+        Assert.Equal(HttpStatusCode.BadRequest, getResp.StatusCode);
     }
 
     [Fact]
@@ -466,8 +455,6 @@ public class UsersApiTests : IAsyncLifetime
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt);
-
-    private sealed record IdOnlyDto(Guid Id);
 
     private sealed record ClientIdDto(Guid Id);
 
