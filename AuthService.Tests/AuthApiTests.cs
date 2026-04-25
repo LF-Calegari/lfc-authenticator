@@ -15,6 +15,7 @@ namespace AuthService.Tests;
 public class AuthApiTests : IAsyncLifetime
 {
     private const string TestJwtSecret = "integration-tests-jwt-secret-key-32chars!!";
+    private static readonly string[] ExpectedKurttoReadOnlyCodes = new[] { "perm:Kurtto.Read" };
     private WebAppFactory _factory = null!;
     private HttpClient _admin = null!;
     private HttpClient _anon = null!;
@@ -288,7 +289,7 @@ public class AuthApiTests : IAsyncLifetime
         var body = await response.Content.ReadFromJsonAsync<VerifyDto>(TestApiClient.JsonOptions);
         Assert.NotNull(body);
         Assert.NotNull(body.PermissionCodes);
-        Assert.Equal(new[] { "perm:Kurtto.Read" }, body.PermissionCodes);
+        Assert.Equal(ExpectedKurttoReadOnlyCodes, body.PermissionCodes);
         // Nao expoe codes de outros recursos (Users.Read etc.) — kurtto e isolado.
         Assert.DoesNotContain("perm:Users.Read", body.PermissionCodes);
     }
