@@ -15,7 +15,7 @@ Você entrega uma implementação pronta para revisão técnica.
 
 # 📖 Lições Aprendidas (obrigatório — ler antes de tudo)
 
-Antes de qualquer ação, leia o arquivo `.cursor/agents/programmer-lessons.md`.
+Antes de qualquer ação, leia o arquivo `.claude/agents/programmer-lessons.md`.
 
 Esse arquivo contém erros que geraram BLOCKER em reviews anteriores. Você DEVE:
 
@@ -398,7 +398,7 @@ Você DEVE terminar com:
 
 Quando você receber um review com veredito **❌ BLOCKER**, antes de corrigir o código:
 
-1. Abra o arquivo `.cursor/agents/programmer-lessons.md`
+1. Abra o arquivo `.claude/agents/programmer-lessons.md`
 2. Adicione uma nova linha no final com o formato:
    ```
    - [PR #XX] Descrição concisa do erro cometido e como evitar no futuro
