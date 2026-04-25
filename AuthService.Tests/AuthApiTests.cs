@@ -15,6 +15,7 @@ namespace AuthService.Tests;
 public class AuthApiTests : IAsyncLifetime
 {
     private const string TestJwtSecret = "integration-tests-jwt-secret-key-32chars!!";
+    private static readonly string[] ExpectedKurttoReadOnlyCodes = new[] { "perm:Kurtto.Read" };
     private WebAppFactory _factory = null!;
     private HttpClient _admin = null!;
     private HttpClient _anon = null!;
@@ -48,6 +49,7 @@ public class AuthApiTests : IAsyncLifetime
         public string Email { get; set; } = string.Empty;
         public int Identity { get; set; }
         public List<Guid>? Permissions { get; set; }
+        public List<string>? PermissionCodes { get; set; }
         public List<string>? RouteCodes { get; set; }
     }
 
@@ -160,6 +162,7 @@ public class AuthApiTests : IAsyncLifetime
         Assert.NotNull(body);
         Assert.Equal("v.user@example.com", body.Email);
         Assert.NotNull(body.Permissions);
+        Assert.NotNull(body.PermissionCodes);
         Assert.NotNull(body.RouteCodes);
     }
 
@@ -182,6 +185,113 @@ public class AuthApiTests : IAsyncLifetime
 
         foreach (var code in expected)
             Assert.Contains(code, body.RouteCodes);
+    }
+
+    [Fact]
+    public async Task VerifyToken_RootUser_ReturnsAllPermissionPolicyCodes()
+    {
+        var response = await _admin.GetAsync("/api/v1/auth/verify-token");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<VerifyDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(body);
+        Assert.NotNull(body.PermissionCodes);
+
+        var expected = new[]
+        {
+            // authenticator system
+            "perm:Clients.Create", "perm:Clients.Read", "perm:Clients.Update", "perm:Clients.Delete", "perm:Clients.Restore",
+            "perm:Users.Create", "perm:Users.Read", "perm:Users.Update", "perm:Users.Delete", "perm:Users.Restore",
+            "perm:Systems.Create", "perm:Systems.Read", "perm:Systems.Update", "perm:Systems.Delete", "perm:Systems.Restore",
+            "perm:SystemsRoutes.Create", "perm:SystemsRoutes.Read", "perm:SystemsRoutes.Update", "perm:SystemsRoutes.Delete", "perm:SystemsRoutes.Restore",
+            "perm:SystemTokensTypes.Create", "perm:SystemTokensTypes.Read", "perm:SystemTokensTypes.Update", "perm:SystemTokensTypes.Delete", "perm:SystemTokensTypes.Restore",
+            "perm:Permissions.Create", "perm:Permissions.Read", "perm:Permissions.Update", "perm:Permissions.Delete", "perm:Permissions.Restore",
+            "perm:PermissionsTypes.Create", "perm:PermissionsTypes.Read", "perm:PermissionsTypes.Update", "perm:PermissionsTypes.Delete", "perm:PermissionsTypes.Restore",
+            "perm:Roles.Create", "perm:Roles.Read", "perm:Roles.Update", "perm:Roles.Delete", "perm:Roles.Restore",
+            // kurtto system
+            "perm:Kurtto.Create", "perm:Kurtto.Read", "perm:Kurtto.Update", "perm:Kurtto.Delete", "perm:Kurtto.Restore"
+        };
+
+        foreach (var code in expected)
+            Assert.Contains(code, body.PermissionCodes);
+
+        // Garante que todo code segue o formato perm:<Recurso>.<Acao>
+        foreach (var code in body.PermissionCodes)
+            Assert.StartsWith("perm:", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VerifyToken_UserWithoutPermissions_ReturnsEmptyPermissionCodes()
+    {
+        await _admin.PostAsJsonAsync("/api/v1/users",
+            new { name = "No Perms", email = "no.perms@example.com", password = "SenhaSegura1!", identity = 1, active = true },
+            TestApiClient.JsonOptions);
+
+        var login = await _anon.PostAsJsonAsync("/api/v1/auth/login",
+            LoginBody("no.perms@example.com", "SenhaSegura1!"), TestApiClient.JsonOptions);
+        var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(loginDto);
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
+        var response = await _anon.SendAsync(req);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<VerifyDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(body);
+        Assert.NotNull(body.PermissionCodes);
+        Assert.Empty(body.PermissionCodes);
+        // Permissions e RouteCodes mantem comportamento atual (presentes no payload).
+        Assert.NotNull(body.Permissions);
+        Assert.NotNull(body.RouteCodes);
+    }
+
+    [Fact]
+    public async Task VerifyToken_UserWithOnlyKurttoRead_ReturnsKurttoReadCodeOnly()
+    {
+        // Cria usuario sem role
+        await _admin.PostAsJsonAsync("/api/v1/users",
+            new { name = "Kurtto Reader", email = "kurtto.reader@example.com", password = "SenhaSegura1!", identity = 1, active = true },
+            TestApiClient.JsonOptions);
+
+        // Concede apenas a permissao kurtto+read direto ao usuario
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var user = await db.Users.AsNoTracking().FirstAsync(u => u.Email == "kurtto.reader@example.com");
+            var kurttoReadId = await db.Permissions.AsNoTracking()
+                .Where(p => p.SystemId == db.Systems.Where(s => s.Code == "kurtto").Select(s => s.Id).First()
+                    && p.PermissionTypeId == db.PermissionTypes.Where(t => t.Code == "read").Select(t => t.Id).First())
+                .Select(p => p.Id)
+                .FirstAsync();
+
+            db.UserPermissions.Add(new AuthService.Models.AppUserPermission
+            {
+                UserId = user.Id,
+                PermissionId = kurttoReadId,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                DeletedAt = null
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var login = await _anon.PostAsJsonAsync("/api/v1/auth/login",
+            LoginBody("kurtto.reader@example.com", "SenhaSegura1!"), TestApiClient.JsonOptions);
+        var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(loginDto);
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
+        var response = await _anon.SendAsync(req);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<VerifyDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(body);
+        Assert.NotNull(body.PermissionCodes);
+        Assert.Equal(ExpectedKurttoReadOnlyCodes, body.PermissionCodes);
+        // Nao expoe codes de outros recursos (Users.Read etc.) — kurtto e isolado.
+        Assert.DoesNotContain("perm:Users.Read", body.PermissionCodes);
     }
 
     [Fact]

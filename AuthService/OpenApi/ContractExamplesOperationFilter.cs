@@ -7,6 +7,8 @@ namespace AuthService.OpenApi;
 public sealed class ContractExamplesOperationFilter : IOperationFilter
 {
     private static readonly string[] ExamplePermissions = ["11111111-1111-1111-1111-111111111111"];
+    private static readonly string[] ExamplePermissionCodes = ["perm:Users.Read", "perm:Roles.Read"];
+    private static readonly string[] ExampleRouteCodes = ["KURTTO_V1_URLS_LIST_INCLUDE_DELETED"];
 
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
@@ -41,7 +43,9 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
                 name = "User Name",
                 email = "user@example.com",
                 identity = 1,
-                permissions = ExamplePermissions
+                permissions = ExamplePermissions,
+                permissionCodes = ExamplePermissionCodes,
+                routeCodes = ExampleRouteCodes
             });
             return;
         }
