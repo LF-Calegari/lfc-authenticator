@@ -10,8 +10,8 @@ internal static class PermissionCatalog
     /// Fonte única de verdade compartilhada entre <see cref="PermissionResolver"/> e geração reversa
     /// de codes legíveis em <c>verify-token</c>.
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, string> ResourceToSystem =
-        new Dictionary<string, string>(StringComparer.Ordinal)
+    private static readonly Dictionary<string, string> ResourceToSystem =
+        new(StringComparer.Ordinal)
         {
             ["Clients"] = AuthenticatorSystemCode,
             ["Users"] = AuthenticatorSystemCode,
@@ -24,7 +24,7 @@ internal static class PermissionCatalog
             ["Kurtto"] = KurttoSystemCode
         };
 
-    private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> ResourcesBySystem =
+    private static readonly Dictionary<string, IReadOnlyList<string>> ResourcesBySystem =
         ResourceToSystem
             .GroupBy(kvp => kvp.Value, StringComparer.Ordinal)
             .ToDictionary(

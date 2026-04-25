@@ -147,7 +147,7 @@ public partial class AuthController : ControllerBase
     private partial void LogLogoutCompleted(Guid userId);
 
     private async Task<IReadOnlyList<string>> ResolvePermissionCodesAsync(
-        IReadOnlyCollection<Guid> permissionIds,
+        List<Guid> permissionIds,
         CancellationToken cancellationToken)
     {
         if (permissionIds.Count == 0)
