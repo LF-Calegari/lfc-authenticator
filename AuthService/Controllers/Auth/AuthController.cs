@@ -48,6 +48,7 @@ public partial class AuthController : ControllerBase
         string Email,
         int Identity,
         IReadOnlyList<Guid> Permissions,
+        IReadOnlyList<string> PermissionCodes,
         IReadOnlyList<string> RouteCodes);
 
     [HttpPost("login")]
@@ -109,6 +110,7 @@ public partial class AuthController : ControllerBase
         var permissionIds = (await EffectivePermissionIds.GetForUserAsync(_db, userId))
             .OrderBy(x => x)
             .ToList();
+        var permissionCodes = await ResolvePermissionCodesAsync(permissionIds, HttpContext.RequestAborted);
         var routeCodes = await ResolveRouteCodesAsync(permissionIds, HttpContext.RequestAborted);
         return Ok(new VerifyTokenResponse(
             user.Id,
@@ -116,6 +118,7 @@ public partial class AuthController : ControllerBase
             user.Email,
             user.Identity,
             permissionIds,
+            permissionCodes,
             routeCodes)
         );
     }
@@ -142,6 +145,45 @@ public partial class AuthController : ControllerBase
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Logout concluído para o usuário {UserId}.")]
     private partial void LogLogoutCompleted(Guid userId);
+
+    private async Task<IReadOnlyList<string>> ResolvePermissionCodesAsync(
+        IReadOnlyCollection<Guid> permissionIds,
+        CancellationToken cancellationToken)
+    {
+        if (permissionIds.Count == 0)
+            return Array.Empty<string>();
+
+        var systemTypePairs = await _db.Permissions.AsNoTracking()
+            .Where(p => permissionIds.Contains(p.Id))
+            .Join(
+                _db.Systems.AsNoTracking(),
+                p => p.SystemId,
+                s => s.Id,
+                (p, s) => new { p.PermissionTypeId, SystemCode = s.Code })
+            .Join(
+                _db.PermissionTypes.AsNoTracking(),
+                x => x.PermissionTypeId,
+                t => t.Id,
+                (x, t) => new { x.SystemCode, TypeCode = t.Code })
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        if (systemTypePairs.Count == 0)
+            return Array.Empty<string>();
+
+        var codes = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var pair in systemTypePairs)
+        {
+            var resources = PermissionCatalog.GetResourcesForSystem(pair.SystemCode);
+            if (resources.Count == 0)
+                continue;
+
+            foreach (var resource in resources)
+                codes.Add(PermissionCodeFormatter.Format(resource, pair.TypeCode));
+        }
+
+        return codes.ToArray();
+    }
 
     private async Task<IReadOnlyList<string>> ResolveRouteCodesAsync(
         IReadOnlyCollection<Guid> permissionIds,
