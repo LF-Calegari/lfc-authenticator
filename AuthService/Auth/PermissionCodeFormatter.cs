@@ -26,9 +26,6 @@ internal static class PermissionCodeFormatter
     private static string ToPascalCase(string value)
     {
         var trimmed = value.Trim();
-        if (trimmed.Length == 0)
-            return trimmed;
-
         var lower = trimmed.ToLowerInvariant();
         var first = char.ToUpper(lower[0], CultureInfo.InvariantCulture);
         return lower.Length == 1 ? first.ToString() : string.Concat(first.ToString(), lower.AsSpan(1));
