@@ -8,7 +8,7 @@ public sealed class JwtTokenService(IOptions<JwtOptions> options) : IJwtTokenSer
 {
     private readonly JwtOptions _options = options.Value;
 
-    public string CreateAccessToken(Guid userId, int tokenVersion, out DateTimeOffset expiresAt)
+    public string CreateAccessToken(Guid userId, int tokenVersion, Guid systemId, out DateTimeOffset expiresAt)
     {
         if (string.IsNullOrWhiteSpace(_options.Secret) || _options.Secret.Length < 32)
             throw new InvalidOperationException("Auth:Jwt:Secret deve ter pelo menos 32 caracteres.");
@@ -22,6 +22,7 @@ public sealed class JwtTokenService(IOptions<JwtOptions> options) : IJwtTokenSer
             .WithSecret(_options.Secret)
             .AddClaim("sub", userId.ToString("D"))
             .AddClaim("tv", tokenVersion)
+            .AddClaim("sys", systemId.ToString("D"))
             .AddClaim("exp", exp)
             .AddClaim("iat", DateTimeOffset.UtcNow.ToUnixTimeSeconds())
             .Encode();

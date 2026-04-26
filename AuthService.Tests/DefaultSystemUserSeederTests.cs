@@ -40,6 +40,8 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     [Fact]
     public async Task SystemUsers_ExistAfterBootstrap_CanLoginWithSeededCredentials()
     {
+        var systemId = await TestApiClient.GetSystemIdAsync(_factory, TestApiClient.DefaultSystemCode);
+
         var cases = new[]
         {
             new { Email = DefaultSystemUserSeeder.RootEmail, Password = DefaultSystemUserSeeder.ResolveCredential() },
@@ -50,7 +52,7 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
         foreach (var c in cases)
         {
             var response = await _client.PostAsJsonAsync("/api/v1/auth/login",
-                new { email = c.Email, password = c.Password },
+                new { email = c.Email, password = c.Password, systemId },
                 TestApiClient.JsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);

@@ -303,13 +303,14 @@ public class UsersApiTests : IAsyncLifetime
             new { password = "NovaSenhaSegura2!" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.OK, putPwd.StatusCode);
 
+        var systemId = await TestApiClient.GetSystemIdAsync(_factory, TestApiClient.DefaultSystemCode);
         var anon = _factory.CreateApiClient();
         var oldLogin = await anon.PostAsJsonAsync("/api/v1/auth/login",
-            new { email = "pwd.change@example.com", password = "SenhaSegura1!" }, TestApiClient.JsonOptions);
+            new { email = "pwd.change@example.com", password = "SenhaSegura1!", systemId }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Unauthorized, oldLogin.StatusCode);
 
         var newLogin = await anon.PostAsJsonAsync("/api/v1/auth/login",
-            new { email = "pwd.change@example.com", password = "NovaSenhaSegura2!" }, TestApiClient.JsonOptions);
+            new { email = "pwd.change@example.com", password = "NovaSenhaSegura2!", systemId }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.OK, newLogin.StatusCode);
     }
 
