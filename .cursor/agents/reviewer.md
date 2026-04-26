@@ -220,6 +220,15 @@ Antes de aprovar, verificar CI ou evidências no PR:
   - Alteração em `.editorconfig` ou configurações de formatação sem necessidade da issue → BLOCKER
 - **build** (`dotnet build` sem warnings)
 - **testes** (`docker compose --profile test run --rm test`)
+- **SonarCloud — zero issues novas na PR** (obrigatório):
+  - Após validar Quality Gate, listar todas as issues novas da PR:
+    ```bash
+    curl -sS -u "$SONAR_TOKEN:" \
+      "https://sonarcloud.io/api/issues/search?organization=${SONAR_ORGANIZATION}&projects=${SONAR_PROJECT_KEY}&pullRequest=${PR_NUMBER}&resolved=false&ps=100"
+    ```
+  - Qualquer issue retornada — **independente de severity (BLOCKER/CRITICAL/MAJOR/MINOR/INFO), impact (HIGH/MEDIUM/LOW), effort (mesmo `0min`) ou status do Quality Gate (mesmo com QG `OK`)** — é tratada como **BLOCKER**.
+  - Detalhar cada issue no review (seção "🔍 Problemas") com label `[BLOCKER]`, indicando arquivo, linha, código da regra (ex.: `CA1859`, `CA1861`) e correção esperada.
+  - Exceção única: issues em código **não tocado pelo PR** (existentes em `development` antes do diff) ficam fora do escopo desta análise. Apenas issues **novas introduzidas pelo PR** bloqueiam.
 
 Falha silenciosa ou ausência de pipeline quando o repositório exige → NEEDS IMPROVEMENT ou BLOCKER conforme gravidade.
 
@@ -259,6 +268,7 @@ Falha silenciosa ou ausência de pipeline quando o repositório exige → NEEDS 
 - SVE crítica
 - escopo errado
 - migration/schema inconsistente (EF Core + PostgreSQL) quando o PR exige
+- qualquer issue nova do SonarCloud na PR (independente de severity, impact, effort ou Quality Gate) — ver Etapa 8
 
 ## ⚠️ NEEDS IMPROVEMENT
 - melhoria de código
