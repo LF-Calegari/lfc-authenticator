@@ -43,7 +43,7 @@ public class AuthApiTests : IAsyncLifetime
 
     private object LoginBody(string email, string password) => new { email, password, systemId = _kurttoSystemId };
 
-    private object LoginBodyForSystem(string email, string password, Guid systemId) =>
+    private static object LoginBodyForSystem(string email, string password, Guid systemId) =>
         new { email, password, systemId };
 
     private sealed class LoginResponseDto

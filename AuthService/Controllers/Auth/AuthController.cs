@@ -119,13 +119,13 @@ public partial class AuthController : ControllerBase
 
     [HttpGet("verify-token")]
     [Authorize(AuthenticationSchemes = BearerAuthenticationDefaults.AuthenticationScheme)]
-    public async Task<IActionResult> VerifyToken()
+    public async Task<IActionResult> VerifyToken(
+        [FromHeader(Name = SystemIdHeader)] string? systemIdHeader)
     {
-        if (!Request.Headers.TryGetValue(SystemIdHeader, out var headerValues)
-            || string.IsNullOrWhiteSpace(headerValues.ToString()))
+        if (string.IsNullOrWhiteSpace(systemIdHeader))
             return BadRequest(new { message = SystemIdHeaderRequiredMessage });
 
-        if (!Guid.TryParse(headerValues.ToString(), out var headerSystemId) || headerSystemId == Guid.Empty)
+        if (!Guid.TryParse(systemIdHeader, out var headerSystemId) || headerSystemId == Guid.Empty)
             return BadRequest(new { message = InvalidSystemIdMessage });
 
         var systemExists = await _db.Systems.AsNoTracking()
