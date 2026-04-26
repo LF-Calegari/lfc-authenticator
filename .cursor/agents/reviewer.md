@@ -10,6 +10,70 @@ Seu papel é validar se o PR atende ao contrato esperado do programador e aos cr
 
 ---
 
+# 📁 Espelhamento `.cursor/agents/` ↔ `.claude/agents/` (obrigatório)
+
+As pastas `.cursor/agents/` e `.claude/agents/` são gêmeas e devem permanecer espelhadas.
+
+Toda alteração (criar, editar ou remover arquivo) em uma das duas pastas DEVE ser replicada na pasta-irmã, no **mesmo commit**.
+
+Regras:
+
+- Conteúdo deve ser **idêntico** entre as duas pastas (sem exceções de path — referências a outros arquivos do diretório usam caminho relativo portável)
+- Arquivo novo em uma pasta → criar o equivalente na outra
+- Arquivo removido em uma pasta → remover o equivalente na outra
+
+Validação obrigatória antes de finalizar:
+
+```bash
+diff -r .cursor/agents .claude/agents
+```
+
+Qualquer divergência deve ser corrigida antes do push.
+
+Esquecer de espelhar é tratado como erro de escopo.
+
+---
+
+# 🌐 Mapeamento de projetos (contexto multi-repo)
+
+Use este mapa como verdade de domínio quando houver citação de serviços/projetos:
+
+| Serviço | Responsabilidade | Relação com `lfc-authenticator` |
+|---------|------------------|------------------------------|
+| `lfc-authenticator` | Backend central de autenticação, autorização e catálogo administrativo (este repo) | Repo alvo |
+| `lfc-admin-gui` | SPA administrativa para operação do catálogo do ecossistema | Cliente da API REST `/api/v1` |
+| `lfc-kurtto-admin-gui` | Outro painel administrativo do ecossistema | Cliente da API REST `/api/v1` |
+
+### Caminhos locais
+
+- LFC Authenticator: `/home/calegari/Documentos/Projetos/LF Calegari Sistemas/auth-service`
+- LFC Admin GUI: `/home/calegari/Documentos/Projetos/LF Calegari Sistemas/admin-gui`
+- LFC Kurtto Admin GUI: `/home/calegari/Documentos/Projetos/LF Calegari Sistemas/Kurtto/kurtto-admin-gui`
+
+Regras:
+
+- Sempre que a issue/PR citar `lfc-admin-gui`, `lfc-kurtto-admin-gui` ou consumidores externos, carregue contexto dos projetos citados antes de revisar.
+- Em mudanças que afetam contrato de API (payloads, status codes, headers, permissões), avalie risco cross-repo e classifique impacto explicitamente no review.
+
+---
+
+# 🐳 Ambiente de Execução — CONTAINER ONLY (verificação obrigatória)
+
+Todos os comandos `dotnet` (`build`, `test`, `format`, `ef`, `run`, `restore`, etc.) devem ter sido executados pelo programmer via container Docker SDK 10.0 — nunca no host.
+
+Permitido no host (programmer + reviewer): `docker`, `docker compose`, `gh`, `git`, comandos básicos de filesystem.
+
+Você deve validar evidências de container nos logs/saída do programmer:
+
+- `dotnet format --verify-no-changes` via Docker SDK
+- `docker compose --profile test run --rm test` para testes
+- `dotnet build` via Docker SDK
+- migrations via `dotnet ef migrations add ...` em Docker SDK quando o host não tiver `dotnet`
+
+Evidência de execução de `dotnet` no host (path do host em logs, ausência de menção a Docker quando comando `dotnet` foi rodado, tooling instalado fora do container) → **BLOCKER**.
+
+---
+
 # 🎯 Objetivo
 
 Garantir:
@@ -128,8 +192,10 @@ Verifique se existem:
 - Testes
 - Impacto de segurança
 - PR estruturado
+- Corpo da PR contendo `Closes #<issue-number>` da issue corrente (ou múltiplas linhas `Closes #<id>` se houver mais de uma issue no escopo)
 
 Se faltar qualquer item → PROBLEMA
+Se faltar `Closes #<issue-number>` → BLOCKER (sem isso a issue não fecha automaticamente no merge)
 
 ---
 
@@ -269,6 +335,8 @@ Falha silenciosa ou ausência de pipeline quando o repositório exige → NEEDS 
 - escopo errado
 - migration/schema inconsistente (EF Core + PostgreSQL) quando o PR exige
 - qualquer issue nova do SonarCloud na PR (independente de severity, impact, effort ou Quality Gate) — ver Etapa 8
+- corpo da PR sem `Closes #<issue-number>` da issue corrente
+- evidência de execução de `dotnet` no host (deve ser via container Docker SDK 10.0)
 
 ## ⚠️ NEEDS IMPROVEMENT
 - melhoria de código

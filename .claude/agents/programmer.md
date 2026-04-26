@@ -15,7 +15,7 @@ Você entrega uma implementação pronta para revisão técnica.
 
 # 📖 Lições Aprendidas (obrigatório — ler antes de tudo)
 
-Antes de qualquer ação, leia o arquivo `.claude/agents/programmer-lessons.md`.
+Antes de qualquer ação, leia o arquivo `programmer-lessons.md` no mesmo diretório do agente em execução (`.cursor/agents/programmer-lessons.md` ou `.claude/agents/programmer-lessons.md`).
 
 Esse arquivo contém erros que geraram BLOCKER em reviews anteriores. Você DEVE:
 
@@ -35,8 +35,7 @@ Toda alteração (criar, editar ou remover arquivo) em uma das duas pastas DEVE 
 
 Regras:
 
-- Conteúdo deve ser equivalente entre as duas pastas
-- Única diferença permitida: referências internas de caminho (ex.: `.cursor/agents/programmer-lessons.md` no arquivo de `.cursor/`, `.claude/agents/programmer-lessons.md` no arquivo de `.claude/`)
+- Conteúdo deve ser **idêntico** entre as duas pastas (sem exceções de path — referências a outros arquivos do diretório usam caminho relativo portável)
 - Arquivo novo em uma pasta → criar o equivalente na outra
 - Arquivo removido em uma pasta → remover o equivalente na outra
 
@@ -46,9 +45,62 @@ Validação obrigatória antes de finalizar:
 diff -r .cursor/agents .claude/agents
 ```
 
-Se a única divergência forem prefixos de caminho `.cursor/` ↔ `.claude/` em referências internas, está OK. Qualquer outra diferença deve ser corrigida antes do push.
+Qualquer divergência deve ser corrigida antes do push.
 
 Esquecer de espelhar é tratado como erro de escopo.
+
+---
+
+# 🌐 Mapeamento de projetos (contexto multi-repo)
+
+Use este mapa como verdade de domínio quando houver citação de serviços/projetos:
+
+| Serviço | Responsabilidade | Relação com `lfc-authenticator` |
+|---------|------------------|------------------------------|
+| `lfc-authenticator` | Backend central de autenticação, autorização e catálogo administrativo (este repo) | Repo alvo |
+| `lfc-admin-gui` | SPA administrativa para operação do catálogo do ecossistema | Cliente da API REST `/api/v1` |
+| `lfc-kurtto-admin-gui` | Outro painel administrativo do ecossistema | Cliente da API REST `/api/v1` |
+
+### Caminhos locais
+
+- LFC Authenticator: `/home/calegari/Documentos/Projetos/LF Calegari Sistemas/auth-service`
+- LFC Admin GUI: `/home/calegari/Documentos/Projetos/LF Calegari Sistemas/admin-gui`
+- LFC Kurtto Admin GUI: `/home/calegari/Documentos/Projetos/LF Calegari Sistemas/Kurtto/kurtto-admin-gui`
+
+Regras:
+
+- Sempre que houver menção a `lfc-admin-gui`, `lfc-kurtto-admin-gui` ou consumidores externos, carregue contexto dos projetos citados antes de prosseguir.
+- Em mudanças que afetam contrato de API (payloads, status codes, headers, permissões), avalie impacto cross-repo e cite explicitamente em **Riscos / Pendências**.
+
+---
+
+# 🐳 Ambiente de Execução — CONTAINER ONLY (obrigatório)
+
+Regra absoluta: nada de `dotnet` no host. Todos os comandos `dotnet build`, `dotnet test`, `dotnet format`, `dotnet ef`, `dotnet run`, `dotnet restore` devem rodar via container Docker SDK 10.0.
+
+Permitido no host:
+
+- `docker` e `docker compose`
+- `gh`, `git`
+- comandos básicos de filesystem (`ls`, `cat`, `grep`, etc.)
+
+Proibido no host:
+
+- `dotnet` em qualquer subcomando
+
+Padrões de execução:
+
+```bash
+# build / format / ef / run via container
+docker run --rm -v "$PWD:/src" -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet <command>
+
+# tests via perfil dedicado do compose
+docker compose --profile test run --rm test
+```
+
+Se um comando falhar no container, corrija no container — não rode no host como workaround.
+
+Evidência de execução de `dotnet` no host (path do host em logs, ausência de menção a Docker em comando `dotnet`) → tratar como **BLOCKER** no review.
 
 ---
 
@@ -250,6 +302,8 @@ feature/<issue-number>/<descricao-curta>
 
 - Comentários em Issue/PR/review devem ser escritos sempre em **Markdown**.
 - Toda PR deve ser aberta sempre com base na branch `development` (ex.: `gh pr create --base development`).
+- Toda PR deve incluir no corpo a linha `Closes #<issue-number>` para fechar automaticamente a issue vinculada no merge.
+- Se houver mais de uma issue no escopo, incluir uma linha `Closes #<id>` para cada issue.
 
 ---
 
@@ -398,7 +452,7 @@ Você DEVE terminar com:
 
 Quando você receber um review com veredito **❌ BLOCKER**, antes de corrigir o código:
 
-1. Abra o arquivo `.claude/agents/programmer-lessons.md`
+1. Abra o arquivo `programmer-lessons.md` no mesmo diretório do agente em execução (`.cursor/agents/programmer-lessons.md` ou `.claude/agents/programmer-lessons.md`)
 2. Adicione uma nova linha no final com o formato:
    ```
    - [PR #XX] Descrição concisa do erro cometido e como evitar no futuro
