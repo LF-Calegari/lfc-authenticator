@@ -34,7 +34,11 @@ public sealed class JwtBearerAuthenticationHandler(
         if (payloadResult.Error is not null)
             return payloadResult.Error;
 
-        var claimExtraction = TryExtractIdentityClaims(payloadResult.Payload!, out var userId, out var tokenVersionClaim);
+        var claimExtraction = TryExtractIdentityClaims(
+            payloadResult.Payload!,
+            out var userId,
+            out var tokenVersionClaim,
+            out var systemIdClaim);
         if (claimExtraction is not null)
             return claimExtraction;
 
@@ -54,12 +58,19 @@ public sealed class JwtBearerAuthenticationHandler(
         {
             new(ClaimTypes.NameIdentifier, userId.ToString("D")),
             new(ClaimTypes.Email, user.Email),
-            new(ClaimTypes.Name, user.Name)
+            new(ClaimTypes.Name, user.Name),
+            new(SystemIdClaimType, systemIdClaim.ToString("D"))
         };
         var identity = new ClaimsIdentity(claims, Scheme.Name);
         var principal = new ClaimsPrincipal(identity);
         return AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme.Name));
     }
+
+    /// <summary>
+    /// Tipo de claim que carrega o <c>systemId</c> do sistema que emitiu o token (claim <c>sys</c>).
+    /// Usado pelo verify-token para evitar uso cruzado de tokens entre sistemas distintos.
+    /// </summary>
+    public const string SystemIdClaimType = "sys";
 
     private AuthenticateResult? TryReadBearerToken(out string token)
     {
@@ -113,10 +124,12 @@ public sealed class JwtBearerAuthenticationHandler(
     private static AuthenticateResult? TryExtractIdentityClaims(
         IDictionary<string, object> payload,
         out Guid userId,
-        out int tokenVersionClaim)
+        out int tokenVersionClaim,
+        out Guid systemIdClaim)
     {
         userId = Guid.Empty;
         tokenVersionClaim = 0;
+        systemIdClaim = Guid.Empty;
 
         if (!payload.TryGetValue("sub", out var subObj) || subObj?.ToString() is not { } subStr
             || !Guid.TryParse(subStr, out userId))
@@ -124,6 +137,10 @@ public sealed class JwtBearerAuthenticationHandler(
 
         if (!payload.TryGetValue("tv", out var tvObj) || !TryGetInt32(tvObj, out tokenVersionClaim))
             return AuthenticateResult.Fail("Token sem versão de sessão válida.");
+
+        if (!payload.TryGetValue("sys", out var sysObj) || sysObj?.ToString() is not { } sysStr
+            || !Guid.TryParse(sysStr, out systemIdClaim))
+            return AuthenticateResult.Fail("Token sem identificador de sistema válido.");
 
         return null;
     }

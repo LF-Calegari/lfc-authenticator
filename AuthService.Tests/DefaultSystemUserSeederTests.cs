@@ -40,6 +40,8 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
     [Fact]
     public async Task SystemUsers_ExistAfterBootstrap_CanLoginWithSeededCredentials()
     {
+        var systemId = await TestApiClient.GetSystemIdAsync(_factory, TestApiClient.DefaultSystemCode);
+
         var cases = new[]
         {
             new { Email = DefaultSystemUserSeeder.RootEmail, Password = DefaultSystemUserSeeder.ResolveCredential() },
@@ -50,7 +52,7 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
         foreach (var c in cases)
         {
             var response = await _client.PostAsJsonAsync("/api/v1/auth/login",
-                new { email = c.Email, password = c.Password },
+                new { email = c.Email, password = c.Password, systemId },
                 TestApiClient.JsonOptions);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -110,6 +112,106 @@ public class DefaultSystemUserSeederTests : IAsyncLifetime
 
             var directPermissions = await db.UserPermissions.AsNoTracking().CountAsync(up => up.UserId == user.Id);
             Assert.Equal(0, directPermissions);
+        }
+    }
+
+    [Fact]
+    public async Task RootUser_RoleHasAllCatalogPermissions_AcrossAllSystems()
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var rootEmail = DefaultSystemUserSeeder.RootEmail.Trim().ToLowerInvariant();
+        var rootRoleCode = DefaultSystemUserSeeder.RootRoleCode;
+
+        var rootUserId = await db.Users.AsNoTracking()
+            .Where(u => u.Email == rootEmail)
+            .Select(u => u.Id)
+            .SingleAsync();
+
+        var rootRoleId = await db.Roles.AsNoTracking()
+            .Where(r => r.Code == rootRoleCode)
+            .Select(r => r.Id)
+            .SingleAsync();
+
+        var userRoleLink = await db.UserRoles.AsNoTracking()
+            .CountAsync(ur => ur.UserId == rootUserId && ur.RoleId == rootRoleId);
+        Assert.Equal(1, userRoleLink);
+
+        var allPermissionIds = await db.Permissions.AsNoTracking()
+            .Select(p => p.Id)
+            .OrderBy(id => id)
+            .ToListAsync();
+
+        var rolePermissionIds = await db.RolePermissions.AsNoTracking()
+            .Where(rp => rp.RoleId == rootRoleId)
+            .Select(rp => rp.PermissionId)
+            .OrderBy(id => id)
+            .ToListAsync();
+
+        Assert.Equal(allPermissionIds, rolePermissionIds);
+
+        var systemCodesCovered = await db.RolePermissions.AsNoTracking()
+            .Where(rp => rp.RoleId == rootRoleId)
+            .Join(
+                db.Permissions.AsNoTracking(),
+                rp => rp.PermissionId,
+                p => p.Id,
+                (_, p) => p.SystemId)
+            .Join(
+                db.Systems.AsNoTracking(),
+                systemId => systemId,
+                s => s.Id,
+                (_, s) => s.Code)
+            .Distinct()
+            .OrderBy(c => c)
+            .ToListAsync();
+
+        Assert.Contains("authenticator", systemCodesCovered);
+        Assert.Contains("kurtto", systemCodesCovered);
+    }
+
+    [Fact]
+    public async Task EnsureSystemUsersAsync_Idempotent_DoesNotDuplicateOrRemoveRolePermissions()
+    {
+        Guid rootRoleId;
+        int permissionCountBefore;
+
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            rootRoleId = await db.Roles.AsNoTracking()
+                .Where(r => r.Code == DefaultSystemUserSeeder.RootRoleCode)
+                .Select(r => r.Id)
+                .SingleAsync();
+            permissionCountBefore = await db.RolePermissions.AsNoTracking()
+                .CountAsync(rp => rp.RoleId == rootRoleId);
+        }
+
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await DefaultSystemUserSeeder.EnsureSystemUsersAsync(db);
+            await DefaultSystemUserSeeder.EnsureSystemUsersAsync(db);
+        }
+
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var permissionCountAfter = await db.RolePermissions.IgnoreQueryFilters()
+                .CountAsync(rp => rp.RoleId == rootRoleId);
+            Assert.Equal(permissionCountBefore, permissionCountAfter);
+
+            var allPermissionIds = await db.Permissions.AsNoTracking()
+                .Select(p => p.Id)
+                .OrderBy(id => id)
+                .ToListAsync();
+            var rolePermissionIds = await db.RolePermissions.AsNoTracking()
+                .Where(rp => rp.RoleId == rootRoleId)
+                .Select(rp => rp.PermissionId)
+                .OrderBy(id => id)
+                .ToListAsync();
+            Assert.Equal(allPermissionIds, rolePermissionIds);
         }
     }
 

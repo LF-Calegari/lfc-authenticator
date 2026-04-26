@@ -19,7 +19,7 @@ public class JwtTokenServiceUnitTests
 
         Assert.Throws<InvalidOperationException>(() =>
         {
-            service.CreateAccessToken(Guid.NewGuid(), 1, out _);
+            service.CreateAccessToken(Guid.NewGuid(), 1, Guid.NewGuid(), out _);
         });
     }
 
@@ -34,7 +34,7 @@ public class JwtTokenServiceUnitTests
         var service = new JwtTokenService(options);
         var now = DateTimeOffset.UtcNow;
 
-        _ = service.CreateAccessToken(Guid.NewGuid(), 3, out var expiresAt);
+        _ = service.CreateAccessToken(Guid.NewGuid(), 3, Guid.NewGuid(), out var expiresAt);
 
         var minutes = (expiresAt - now).TotalMinutes;
         Assert.InRange(minutes, 59, 61);
@@ -44,6 +44,7 @@ public class JwtTokenServiceUnitTests
     public void CreateAccessToken_EmbedsExpectedClaims()
     {
         var userId = Guid.NewGuid();
+        var systemId = Guid.NewGuid();
         const int tokenVersion = 7;
         var options = Options.Create(new JwtOptions
         {
@@ -52,11 +53,12 @@ public class JwtTokenServiceUnitTests
         });
         var service = new JwtTokenService(options);
 
-        var token = service.CreateAccessToken(userId, tokenVersion, out _);
+        var token = service.CreateAccessToken(userId, tokenVersion, systemId, out _);
         var payload = ReadJwtPayload(token);
 
         Assert.Equal(userId.ToString("D"), payload.GetProperty("sub").GetString());
         Assert.Equal(tokenVersion, payload.GetProperty("tv").GetInt32());
+        Assert.Equal(systemId.ToString("D"), payload.GetProperty("sys").GetString());
         Assert.True(payload.GetProperty("exp").GetInt64() > 0);
         Assert.True(payload.GetProperty("iat").GetInt64() > 0);
     }

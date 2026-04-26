@@ -16,6 +16,13 @@ public partial class AuthController : ControllerBase
     private const string InvalidCredentialsMessage = "Credenciais inválidas.";
     private const string InvalidTokenMessage = "Token inválido.";
     private const string UserNotFoundMessage = "Usuário não encontrado.";
+    private const string SystemIdRequiredMessage = "SystemId é obrigatório.";
+    private const string SystemIdHeaderRequiredMessage = "Header X-System-Id é obrigatório.";
+    private const string InvalidSystemIdMessage = "Sistema inválido ou inativo.";
+    private const string CrossSystemTokenMessage = "Token não é válido para este sistema.";
+
+    /// <summary>Header HTTP que identifica o sistema cliente em <c>GET /auth/verify-token</c>.</summary>
+    public const string SystemIdHeader = "X-System-Id";
 
     private readonly AppDbContext _db;
     private readonly IJwtTokenService _jwt;
@@ -38,6 +45,9 @@ public partial class AuthController : ControllerBase
         [Required(ErrorMessage = "Password é obrigatório.")]
         [MaxLength(60)]
         public string Password { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "SystemId é obrigatório.")]
+        public Guid? SystemId { get; set; }
     }
 
     public record LoginResponse(string Token);
@@ -48,6 +58,7 @@ public partial class AuthController : ControllerBase
         string Email,
         int Identity,
         IReadOnlyList<Guid> Permissions,
+        IReadOnlyList<string> PermissionCodes,
         IReadOnlyList<string> RouteCodes);
 
     [HttpPost("login")]
@@ -56,6 +67,18 @@ public partial class AuthController : ControllerBase
     {
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
+
+        if (request.SystemId is not { } systemId || systemId == Guid.Empty)
+            return BadRequest(new { message = SystemIdRequiredMessage });
+
+        // Query filter global remove sistemas com DeletedAt != null (soft-delete = inativo).
+        var systemExists = await _db.Systems.AsNoTracking()
+            .AnyAsync(s => s.Id == systemId, HttpContext.RequestAborted);
+        if (!systemExists)
+        {
+            _logger.LogWarning("Tentativa de login com sistema inválido/inativo {SystemId}.", systemId);
+            return BadRequest(new { message = InvalidSystemIdMessage });
+        }
 
         var email = request.Email.Trim().ToLowerInvariant();
         var password = request.Password.Trim();
@@ -90,17 +113,42 @@ public partial class AuthController : ControllerBase
             return Unauthorized(new { message = InvalidCredentialsMessage });
         }
 
-        var token = _jwt.CreateAccessToken(user.Id, user.TokenVersion, out _);
+        var token = _jwt.CreateAccessToken(user.Id, user.TokenVersion, systemId, out _);
         return Ok(new LoginResponse(token));
     }
 
     [HttpGet("verify-token")]
     [Authorize(AuthenticationSchemes = BearerAuthenticationDefaults.AuthenticationScheme)]
-    public async Task<IActionResult> VerifyToken()
+    public async Task<IActionResult> VerifyToken(
+        [FromHeader(Name = SystemIdHeader)] string? systemIdHeader)
     {
+        if (string.IsNullOrWhiteSpace(systemIdHeader))
+            return BadRequest(new { message = SystemIdHeaderRequiredMessage });
+
+        if (!Guid.TryParse(systemIdHeader, out var headerSystemId) || headerSystemId == Guid.Empty)
+            return BadRequest(new { message = InvalidSystemIdMessage });
+
+        var systemExists = await _db.Systems.AsNoTracking()
+            .AnyAsync(s => s.Id == headerSystemId, HttpContext.RequestAborted);
+        if (!systemExists)
+            return BadRequest(new { message = InvalidSystemIdMessage });
+
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrEmpty(sub) || !Guid.TryParse(sub, out var userId))
             return Unauthorized(new { message = InvalidTokenMessage });
+
+        var sysClaim = User.FindFirstValue(JwtBearerAuthenticationHandler.SystemIdClaimType);
+        if (string.IsNullOrEmpty(sysClaim) || !Guid.TryParse(sysClaim, out var tokenSystemId))
+            return Unauthorized(new { message = InvalidTokenMessage });
+
+        if (tokenSystemId != headerSystemId)
+        {
+            _logger.LogWarning(
+                "Token cruzado detectado: claim sys={TokenSystemId} difere do header X-System-Id={HeaderSystemId}.",
+                tokenSystemId,
+                headerSystemId);
+            return Unauthorized(new { message = CrossSystemTokenMessage });
+        }
 
         var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null)
@@ -109,13 +157,15 @@ public partial class AuthController : ControllerBase
         var permissionIds = (await EffectivePermissionIds.GetForUserAsync(_db, userId))
             .OrderBy(x => x)
             .ToList();
-        var routeCodes = await ResolveRouteCodesAsync(permissionIds, HttpContext.RequestAborted);
+        var permissionCodes = await ResolvePermissionCodesAsync(permissionIds, HttpContext.RequestAborted);
+        var routeCodes = await ResolveRouteCodesAsync(permissionIds, headerSystemId, HttpContext.RequestAborted);
         return Ok(new VerifyTokenResponse(
             user.Id,
             user.Name,
             user.Email,
             user.Identity,
             permissionIds,
+            permissionCodes,
             routeCodes)
         );
     }
@@ -143,30 +193,78 @@ public partial class AuthController : ControllerBase
     [LoggerMessage(Level = LogLevel.Information, Message = "Logout concluído para o usuário {UserId}.")]
     private partial void LogLogoutCompleted(Guid userId);
 
-    private async Task<IReadOnlyList<string>> ResolveRouteCodesAsync(
-        IReadOnlyCollection<Guid> permissionIds,
+    private async Task<IReadOnlyList<string>> ResolvePermissionCodesAsync(
+        List<Guid> permissionIds,
         CancellationToken cancellationToken)
     {
         if (permissionIds.Count == 0)
             return Array.Empty<string>();
 
-        var kurttoPermissionTypes = await _db.Permissions.AsNoTracking()
+        var systemTypePairs = await _db.Permissions.AsNoTracking()
             .Where(p => permissionIds.Contains(p.Id))
             .Join(
                 _db.Systems.AsNoTracking(),
                 p => p.SystemId,
                 s => s.Id,
                 (p, s) => new { p.PermissionTypeId, SystemCode = s.Code })
-            .Where(x => x.SystemCode == "kurtto")
             .Join(
                 _db.PermissionTypes.AsNoTracking(),
                 x => x.PermissionTypeId,
+                t => t.Id,
+                (x, t) => new { x.SystemCode, TypeCode = t.Code })
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        if (systemTypePairs.Count == 0)
+            return Array.Empty<string>();
+
+        var codes = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var pair in systemTypePairs)
+        {
+            var resources = PermissionCatalog.GetResourcesForSystem(pair.SystemCode);
+            if (resources.Count == 0)
+                continue;
+
+            foreach (var resource in resources)
+                codes.Add(PermissionCodeFormatter.Format(resource, pair.TypeCode));
+        }
+
+        return codes.ToArray();
+    }
+
+    private async Task<IReadOnlyList<string>> ResolveRouteCodesAsync(
+        IReadOnlyCollection<Guid> permissionIds,
+        Guid systemId,
+        CancellationToken cancellationToken)
+    {
+        if (permissionIds.Count == 0)
+            return Array.Empty<string>();
+
+        // Tipos de permissão (create/read/update/delete/restore) que o usuário possui no sistema indicado.
+        var permissionTypeCodes = await _db.Permissions.AsNoTracking()
+            .Where(p => permissionIds.Contains(p.Id) && p.SystemId == systemId)
+            .Join(
+                _db.PermissionTypes.AsNoTracking(),
+                p => p.PermissionTypeId,
                 t => t.Id,
                 (_, t) => t.Code)
             .Distinct()
             .ToListAsync(cancellationToken);
 
-        var allowedPolicies = kurttoPermissionTypes
+        if (permissionTypeCodes.Count == 0)
+            return Array.Empty<string>();
+
+        // Códigos de rota declarados no DB para o sistema-alvo (limita rotas reais a este sistema).
+        var systemRouteCodes = (await _db.Routes.AsNoTracking()
+                .Where(r => r.SystemId == systemId)
+                .Select(r => r.Code)
+                .ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (systemRouteCodes.Count == 0)
+            return Array.Empty<string>();
+
+        var allowedPolicies = permissionTypeCodes
             .Select(MapKurttoPermissionTypeToPolicy)
             .Where(policy => policy is not null)
             .Cast<string>()
@@ -175,8 +273,11 @@ public partial class AuthController : ControllerBase
         if (allowedPolicies.Count == 0)
             return Array.Empty<string>();
 
+        // O mapeamento estático route→policy hoje cobre apenas o sistema kurtto. Se o systemId
+        // não corresponde a kurtto, o filtro por systemRouteCodes garante que nada é vazado.
         return KurttoAccessSeeder.KurttoAdminRoutes
-            .Where(route => allowedPolicies.Contains(route.TargetPermissionPolicy))
+            .Where(route => allowedPolicies.Contains(route.TargetPermissionPolicy)
+                && systemRouteCodes.Contains(route.Code))
             .Select(route => route.Code)
             .OrderBy(code => code)
             .ToArray();

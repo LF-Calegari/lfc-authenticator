@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AuthService.Controllers.Auth;
 using Microsoft.OpenApi;
 using Swashbuckle.AspNetCore.SwaggerGen;
 
@@ -7,6 +8,8 @@ namespace AuthService.OpenApi;
 public sealed class ContractExamplesOperationFilter : IOperationFilter
 {
     private static readonly string[] ExamplePermissions = ["11111111-1111-1111-1111-111111111111"];
+    private static readonly string[] ExamplePermissionCodes = ["perm:Users.Read", "perm:Roles.Read"];
+    private static readonly string[] ExampleRouteCodes = ["KURTTO_V1_URLS_LIST_INCLUDE_DELETED"];
 
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
@@ -29,20 +32,25 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
         if (normalized == "/auth/login" && method == "POST")
         {
             AddJsonResponse(operation, "200", "Login realizado.", new { token = "<jwt-token>" });
+            AddErrorResponse(operation, "400", "SystemId ausente ou sistema invalido/inativo.", new { message = "SystemId é obrigatório." });
             AddErrorResponse(operation, "401", "Credenciais invalidas.", new { message = "Credenciais inválidas." });
             return;
         }
 
         if (normalized == "/auth/verify-token" && method == "GET")
         {
+            EnsureSystemIdHeaderParameter(operation);
             AddJsonResponse(operation, "200", "Token valido.", new
             {
                 id = "00000000-0000-0000-0000-000000000000",
                 name = "User Name",
                 email = "user@example.com",
                 identity = 1,
-                permissions = ExamplePermissions
+                permissions = ExamplePermissions,
+                permissionCodes = ExamplePermissionCodes,
+                routeCodes = ExampleRouteCodes
             });
+            AddErrorResponse(operation, "400", "Header X-System-Id ausente ou sistema invalido/inativo.", new { message = "Header X-System-Id é obrigatório." });
             return;
         }
 
@@ -133,5 +141,42 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
                 }
             }
         };
+    }
+
+    private static void EnsureSystemIdHeaderParameter(OpenApiOperation operation)
+    {
+        // O parâmetro X-System-Id é gerado automaticamente pelo ASP.NET Core a partir do
+        // [FromHeader] no controller. Aqui só ajustamos metadados (required, description)
+        // para garantir uma documentação consistente no Swagger.
+        const string headerDescription =
+            "UUID do sistema cliente. Deve corresponder ao systemId usado em POST /auth/login.";
+
+        operation.Parameters ??= [];
+        var existing = operation.Parameters.FirstOrDefault(p =>
+            p.In == ParameterLocation.Header
+            && string.Equals(p.Name, AuthController.SystemIdHeader, StringComparison.OrdinalIgnoreCase));
+
+        if (existing is OpenApiParameter mutable)
+        {
+            mutable.Required = true;
+            if (string.IsNullOrWhiteSpace(mutable.Description))
+                mutable.Description = headerDescription;
+            return;
+        }
+
+        if (existing is not null)
+        {
+            // Parâmetro presente como referência imutável; deixamos o auto-gerado prevalecer
+            // sem duplicar a entrada na operação.
+            return;
+        }
+
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = AuthController.SystemIdHeader,
+            In = ParameterLocation.Header,
+            Required = true,
+            Description = headerDescription
+        });
     }
 }
