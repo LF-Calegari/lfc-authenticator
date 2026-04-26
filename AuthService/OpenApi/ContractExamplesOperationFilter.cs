@@ -40,12 +40,34 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
         if (normalized == "/auth/verify-token" && method == "GET")
         {
             EnsureSystemIdHeaderParameter(operation);
-            AddJsonResponse(operation, "200", "Token valido.", new
+            EnsureRouteCodeHeaderParameter(operation);
+            AddJsonResponse(operation, "200", "Token valido e rota autorizada.", new
             {
-                id = "00000000-0000-0000-0000-000000000000",
-                name = "User Name",
-                email = "user@example.com",
-                identity = 1,
+                valid = true,
+                issuedAt = "2026-04-26T18:00:00+00:00",
+                expiresAt = "2026-04-26T19:00:00+00:00"
+            });
+            AddErrorResponse(
+                operation,
+                "400",
+                "Header X-System-Id/X-Route-Code ausente, sistema invalido/inativo ou rota desconhecida.",
+                new { message = "Header X-Route-Code é obrigatório." });
+            AddErrorResponse(operation, "403", "Token valido, mas usuario sem direito a rota informada.", new { message = "Acesso negado para a rota." });
+            return;
+        }
+
+        if (normalized == "/auth/permissions" && method == "GET")
+        {
+            EnsureSystemIdHeaderParameter(operation);
+            AddJsonResponse(operation, "200", "Catalogo de autorizacao do usuario no sistema solicitado.", new
+            {
+                user = new
+                {
+                    id = "00000000-0000-0000-0000-000000000000",
+                    name = "User Name",
+                    email = "user@example.com",
+                    identity = 1
+                },
                 permissions = ExamplePermissions,
                 permissionCodes = ExamplePermissionCodes,
                 routeCodes = ExampleRouteCodes
@@ -151,10 +173,26 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
         const string headerDescription =
             "UUID do sistema cliente. Deve corresponder ao systemId usado em POST /auth/login.";
 
+        EnsureRequiredHeaderParameter(operation, AuthController.SystemIdHeader, headerDescription);
+    }
+
+    private static void EnsureRouteCodeHeaderParameter(OpenApiOperation operation)
+    {
+        // Parâmetro também gerado automaticamente via [FromHeader] no controller. Aqui apenas
+        // garantimos que o header aparece como obrigatório no Swagger e com descrição clara.
+        const string headerDescription =
+            "Código da rota concreta a ser autorizada (ex.: KURTTO_V1_URLS_LIST_INCLUDE_DELETED). "
+            + "Deve estar entre as routeCodes do usuário no sistema do header X-System-Id.";
+
+        EnsureRequiredHeaderParameter(operation, AuthController.RouteCodeHeader, headerDescription);
+    }
+
+    private static void EnsureRequiredHeaderParameter(OpenApiOperation operation, string headerName, string headerDescription)
+    {
         operation.Parameters ??= [];
         var existing = operation.Parameters.FirstOrDefault(p =>
             p.In == ParameterLocation.Header
-            && string.Equals(p.Name, AuthController.SystemIdHeader, StringComparison.OrdinalIgnoreCase));
+            && string.Equals(p.Name, headerName, StringComparison.OrdinalIgnoreCase));
 
         if (existing is OpenApiParameter mutable)
         {
@@ -173,7 +211,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
 
         operation.Parameters.Add(new OpenApiParameter
         {
-            Name = AuthController.SystemIdHeader,
+            Name = headerName,
             In = ParameterLocation.Header,
             Required = true,
             Description = headerDescription

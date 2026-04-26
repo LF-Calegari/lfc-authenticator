@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
 using System.Security.Claims;
 using AuthService.Auth;
 using AuthService.Data;
@@ -20,9 +21,15 @@ public partial class AuthController : ControllerBase
     private const string SystemIdHeaderRequiredMessage = "Header X-System-Id é obrigatório.";
     private const string InvalidSystemIdMessage = "Sistema inválido ou inativo.";
     private const string CrossSystemTokenMessage = "Token não é válido para este sistema.";
+    private const string RouteCodeHeaderRequiredMessage = "Header X-Route-Code é obrigatório.";
+    private const string InvalidRouteCodeMessage = "Rota inválida.";
+    private const string RouteForbiddenMessage = "Acesso negado para a rota.";
 
-    /// <summary>Header HTTP que identifica o sistema cliente em <c>GET /auth/verify-token</c>.</summary>
+    /// <summary>Header HTTP que identifica o sistema cliente em <c>GET /auth/verify-token</c> e <c>GET /auth/permissions</c>.</summary>
     public const string SystemIdHeader = "X-System-Id";
+
+    /// <summary>Header HTTP que identifica a rota concreta a ser autorizada em <c>GET /auth/verify-token</c>.</summary>
+    public const string RouteCodeHeader = "X-Route-Code";
 
     private readonly AppDbContext _db;
     private readonly IJwtTokenService _jwt;
@@ -52,11 +59,27 @@ public partial class AuthController : ControllerBase
 
     public record LoginResponse(string Token);
 
+    /// <summary>
+    /// Resposta enxuta do <c>verify-token</c> após a separação de catálogo (issue #148).
+    /// Carrega apenas a confirmação de validade e janela temporal do JWT.
+    /// </summary>
     public record VerifyTokenResponse(
+        bool Valid,
+        DateTimeOffset IssuedAt,
+        DateTimeOffset ExpiresAt);
+
+    public record PermissionsUserDto(
         Guid Id,
         string Name,
         string Email,
-        int Identity,
+        int Identity);
+
+    /// <summary>
+    /// Resposta do <c>GET /auth/permissions</c> com o catálogo de autorização do usuário no sistema do header.
+    /// Substitui a parte de catálogo do antigo <c>verify-token</c>.
+    /// </summary>
+    public record PermissionsResponse(
+        PermissionsUserDto User,
         IReadOnlyList<Guid> Permissions,
         IReadOnlyList<string> PermissionCodes,
         IReadOnlyList<string> RouteCodes);
@@ -120,18 +143,16 @@ public partial class AuthController : ControllerBase
     [HttpGet("verify-token")]
     [Authorize(AuthenticationSchemes = BearerAuthenticationDefaults.AuthenticationScheme)]
     public async Task<IActionResult> VerifyToken(
-        [FromHeader(Name = SystemIdHeader)] string? systemIdHeader)
+        [FromHeader(Name = SystemIdHeader)] string? systemIdHeader,
+        [FromHeader(Name = RouteCodeHeader)] string? routeCodeHeader)
     {
-        if (string.IsNullOrWhiteSpace(systemIdHeader))
-            return BadRequest(new { message = SystemIdHeaderRequiredMessage });
+        var systemValidation = await ValidateSystemHeaderAsync(systemIdHeader);
+        if (systemValidation.ErrorResult is not null)
+            return systemValidation.ErrorResult;
+        var headerSystemId = systemValidation.SystemId;
 
-        if (!Guid.TryParse(systemIdHeader, out var headerSystemId) || headerSystemId == Guid.Empty)
-            return BadRequest(new { message = InvalidSystemIdMessage });
-
-        var systemExists = await _db.Systems.AsNoTracking()
-            .AnyAsync(s => s.Id == headerSystemId, HttpContext.RequestAborted);
-        if (!systemExists)
-            return BadRequest(new { message = InvalidSystemIdMessage });
+        if (string.IsNullOrWhiteSpace(routeCodeHeader))
+            return BadRequest(new { message = RouteCodeHeaderRequiredMessage });
 
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrEmpty(sub) || !Guid.TryParse(sub, out var userId))
@@ -150,7 +171,68 @@ public partial class AuthController : ControllerBase
             return Unauthorized(new { message = CrossSystemTokenMessage });
         }
 
-        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+        var userExists = await _db.Users.AsNoTracking().AnyAsync(u => u.Id == userId, HttpContext.RequestAborted);
+        if (!userExists)
+            return Unauthorized(new { message = UserNotFoundMessage });
+
+        // Rota deve existir no catálogo do sistema do header.
+        var routeKnown = await _db.Routes.AsNoTracking()
+            .AnyAsync(r => r.SystemId == headerSystemId && r.Code == routeCodeHeader, HttpContext.RequestAborted);
+        if (!routeKnown)
+            return BadRequest(new { message = InvalidRouteCodeMessage });
+
+        var permissionIds = (await EffectivePermissionIds.GetForUserAsync(_db, userId))
+            .OrderBy(x => x)
+            .ToList();
+        var routeCodes = await ResolveRouteCodesAsync(permissionIds, headerSystemId, HttpContext.RequestAborted);
+
+        if (!routeCodes.Contains(routeCodeHeader, StringComparer.Ordinal))
+        {
+            _logger.LogWarning(
+                "Acesso à rota {RouteCode} negado para o usuário {UserId} no sistema {SystemId}.",
+                routeCodeHeader,
+                userId,
+                headerSystemId);
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = RouteForbiddenMessage });
+        }
+
+        if (!TryReadUnixSecondsClaim(JwtBearerAuthenticationHandler.IssuedAtClaimType, out var issuedAt))
+            return Unauthorized(new { message = InvalidTokenMessage });
+
+        if (!TryReadUnixSecondsClaim(JwtBearerAuthenticationHandler.ExpiresAtClaimType, out var expiresAt))
+            return Unauthorized(new { message = InvalidTokenMessage });
+
+        return Ok(new VerifyTokenResponse(true, issuedAt, expiresAt));
+    }
+
+    [HttpGet("permissions")]
+    [Authorize(AuthenticationSchemes = BearerAuthenticationDefaults.AuthenticationScheme)]
+    public async Task<IActionResult> GetPermissions(
+        [FromHeader(Name = SystemIdHeader)] string? systemIdHeader)
+    {
+        var systemValidation = await ValidateSystemHeaderAsync(systemIdHeader);
+        if (systemValidation.ErrorResult is not null)
+            return systemValidation.ErrorResult;
+        var headerSystemId = systemValidation.SystemId;
+
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(sub) || !Guid.TryParse(sub, out var userId))
+            return Unauthorized(new { message = InvalidTokenMessage });
+
+        var sysClaim = User.FindFirstValue(JwtBearerAuthenticationHandler.SystemIdClaimType);
+        if (string.IsNullOrEmpty(sysClaim) || !Guid.TryParse(sysClaim, out var tokenSystemId))
+            return Unauthorized(new { message = InvalidTokenMessage });
+
+        if (tokenSystemId != headerSystemId)
+        {
+            _logger.LogWarning(
+                "Token cruzado detectado em /auth/permissions: claim sys={TokenSystemId} difere do header X-System-Id={HeaderSystemId}.",
+                tokenSystemId,
+                headerSystemId);
+            return Unauthorized(new { message = CrossSystemTokenMessage });
+        }
+
+        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId, HttpContext.RequestAborted);
         if (user is null)
             return Unauthorized(new { message = UserNotFoundMessage });
 
@@ -159,15 +241,12 @@ public partial class AuthController : ControllerBase
             .ToList();
         var permissionCodes = await ResolvePermissionCodesAsync(permissionIds, HttpContext.RequestAborted);
         var routeCodes = await ResolveRouteCodesAsync(permissionIds, headerSystemId, HttpContext.RequestAborted);
-        return Ok(new VerifyTokenResponse(
-            user.Id,
-            user.Name,
-            user.Email,
-            user.Identity,
+
+        return Ok(new PermissionsResponse(
+            new PermissionsUserDto(user.Id, user.Name, user.Email, user.Identity),
             permissionIds,
             permissionCodes,
-            routeCodes)
-        );
+            routeCodes));
     }
 
     [HttpGet("logout")]
@@ -192,6 +271,38 @@ public partial class AuthController : ControllerBase
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Logout concluído para o usuário {UserId}.")]
     private partial void LogLogoutCompleted(Guid userId);
+
+    private readonly record struct SystemHeaderValidation(IActionResult? ErrorResult, Guid SystemId);
+
+    private async Task<SystemHeaderValidation> ValidateSystemHeaderAsync(string? systemIdHeader)
+    {
+        if (string.IsNullOrWhiteSpace(systemIdHeader))
+            return new SystemHeaderValidation(BadRequest(new { message = SystemIdHeaderRequiredMessage }), Guid.Empty);
+
+        if (!Guid.TryParse(systemIdHeader, out var headerSystemId) || headerSystemId == Guid.Empty)
+            return new SystemHeaderValidation(BadRequest(new { message = InvalidSystemIdMessage }), Guid.Empty);
+
+        var systemExists = await _db.Systems.AsNoTracking()
+            .AnyAsync(s => s.Id == headerSystemId, HttpContext.RequestAborted);
+        if (!systemExists)
+            return new SystemHeaderValidation(BadRequest(new { message = InvalidSystemIdMessage }), Guid.Empty);
+
+        return new SystemHeaderValidation(null, headerSystemId);
+    }
+
+    private bool TryReadUnixSecondsClaim(string claimType, out DateTimeOffset value)
+    {
+        value = default;
+        var raw = User.FindFirstValue(claimType);
+        if (string.IsNullOrEmpty(raw))
+            return false;
+
+        if (!long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds))
+            return false;
+
+        value = DateTimeOffset.FromUnixTimeSeconds(seconds);
+        return true;
+    }
 
     private async Task<IReadOnlyList<string>> ResolvePermissionCodesAsync(
         List<Guid> permissionIds,

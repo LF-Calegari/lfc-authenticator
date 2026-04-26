@@ -67,6 +67,7 @@ public class ApiVersioningAndDocsTests : IAsyncLifetime
         {
             "/api/v1/auth/login",
             "/api/v1/auth/logout",
+            "/api/v1/auth/permissions",
             "/api/v1/auth/verify-token",
             "/api/v1/clients",
             "/api/v1/clients/{id}",
