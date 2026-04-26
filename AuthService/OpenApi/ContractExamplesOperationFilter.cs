@@ -13,102 +13,149 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
 
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
-        AddErrorResponse(operation, "400", "Requisicao invalida.", new { message = "Payload invalido." });
-        AddErrorResponse(operation, "401", "Nao autenticado.", new { message = "Token invalido." });
-        AddErrorResponse(operation, "403", "Sem permissao.", new { message = "Acesso negado." });
-        AddErrorResponse(operation, "404", "Recurso nao encontrado.", new { message = "Recurso nao encontrado." });
-        AddErrorResponse(operation, "409", "Conflito de dados.", new { message = "Conflito de unicidade." });
+        AddDefaultErrorResponses(operation);
 
         var apiPath = context.ApiDescription.RelativePath ?? string.Empty;
         var normalized = "/" + apiPath.TrimStart('/').ToLowerInvariant();
         var method = context.ApiDescription.HttpMethod?.ToUpperInvariant() ?? string.Empty;
 
-        if (normalized == "/health" && method == "GET")
-        {
-            AddJsonResponse(operation, "200", "Health check.", new { status = "ok", message = "API is running" });
+        if (TryApplyEndpointSpecificResponses(operation, normalized, method))
             return;
-        }
 
-        if (normalized == "/auth/login" && method == "POST")
-        {
-            AddJsonResponse(operation, "200", "Login realizado.", new { token = "<jwt-token>" });
-            AddErrorResponse(operation, "400", "SystemId ausente ou sistema invalido/inativo.", new { message = "SystemId é obrigatório." });
-            AddErrorResponse(operation, "401", "Credenciais invalidas.", new { message = "Credenciais inválidas." });
-            return;
-        }
+        ApplyMethodFallbackResponse(operation, normalized, method);
+    }
 
-        if (normalized == "/auth/verify-token" && method == "GET")
+    private static void AddDefaultErrorResponses(OpenApiOperation operation)
+    {
+        AddErrorResponse(operation, "400", "Requisicao invalida.", new { message = "Payload invalido." });
+        AddErrorResponse(operation, "401", "Nao autenticado.", new { message = "Token invalido." });
+        AddErrorResponse(operation, "403", "Sem permissao.", new { message = "Acesso negado." });
+        AddErrorResponse(operation, "404", "Recurso nao encontrado.", new { message = "Recurso nao encontrado." });
+        AddErrorResponse(operation, "409", "Conflito de dados.", new { message = "Conflito de unicidade." });
+    }
+
+    /// <summary>
+    /// Aplica os exemplos OpenAPI de endpoints específicos (rota+verbo). Retorna <c>true</c>
+    /// quando o endpoint atual foi tratado por algum dos helpers, sinalizando ao chamador
+    /// que não há fallback por método HTTP a aplicar.
+    /// </summary>
+    private static bool TryApplyEndpointSpecificResponses(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        return TryApplyHealthGet(operation, normalizedPath, method)
+            || TryApplyAuthLoginPost(operation, normalizedPath, method)
+            || TryApplyAuthVerifyTokenGet(operation, normalizedPath, method)
+            || TryApplyAuthPermissionsGet(operation, normalizedPath, method)
+            || TryApplyAuthLogoutGet(operation, normalizedPath, method)
+            || TryApplyRestorePost(operation, normalizedPath, method);
+    }
+
+    private static bool TryApplyHealthGet(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        if (normalizedPath != "/health" || method != "GET")
+            return false;
+
+        AddJsonResponse(operation, "200", "Health check.", new { status = "ok", message = "API is running" });
+        return true;
+    }
+
+    private static bool TryApplyAuthLoginPost(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        if (normalizedPath != "/auth/login" || method != "POST")
+            return false;
+
+        AddJsonResponse(operation, "200", "Login realizado.", new { token = "<jwt-token>" });
+        AddErrorResponse(operation, "400", "SystemId ausente ou sistema invalido/inativo.", new { message = "SystemId é obrigatório." });
+        AddErrorResponse(operation, "401", "Credenciais invalidas.", new { message = "Credenciais inválidas." });
+        return true;
+    }
+
+    private static bool TryApplyAuthVerifyTokenGet(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        if (normalizedPath != "/auth/verify-token" || method != "GET")
+            return false;
+
+        EnsureSystemIdHeaderParameter(operation);
+        EnsureRouteCodeHeaderParameter(operation);
+        AddJsonResponse(operation, "200", "Token valido e rota autorizada.", new
         {
-            EnsureSystemIdHeaderParameter(operation);
-            EnsureRouteCodeHeaderParameter(operation);
-            AddJsonResponse(operation, "200", "Token valido e rota autorizada.", new
+            valid = true,
+            issuedAt = "2026-04-26T18:00:00+00:00",
+            expiresAt = "2026-04-26T19:00:00+00:00"
+        });
+        AddErrorResponse(
+            operation,
+            "400",
+            "Header X-System-Id/X-Route-Code ausente, sistema invalido/inativo ou rota desconhecida.",
+            new { message = "Header X-Route-Code é obrigatório." });
+        AddErrorResponse(operation, "403", "Token valido, mas usuario sem direito a rota informada.", new { message = "Acesso negado para a rota." });
+        return true;
+    }
+
+    private static bool TryApplyAuthPermissionsGet(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        if (normalizedPath != "/auth/permissions" || method != "GET")
+            return false;
+
+        EnsureSystemIdHeaderParameter(operation);
+        AddJsonResponse(operation, "200", "Catalogo de autorizacao do usuario no sistema solicitado.", new
+        {
+            user = new
             {
-                valid = true,
-                issuedAt = "2026-04-26T18:00:00+00:00",
-                expiresAt = "2026-04-26T19:00:00+00:00"
-            });
-            AddErrorResponse(
-                operation,
-                "400",
-                "Header X-System-Id/X-Route-Code ausente, sistema invalido/inativo ou rota desconhecida.",
-                new { message = "Header X-Route-Code é obrigatório." });
-            AddErrorResponse(operation, "403", "Token valido, mas usuario sem direito a rota informada.", new { message = "Acesso negado para a rota." });
-            return;
-        }
+                id = "00000000-0000-0000-0000-000000000000",
+                name = "User Name",
+                email = "user@example.com",
+                identity = 1
+            },
+            permissions = ExamplePermissions,
+            permissionCodes = ExamplePermissionCodes,
+            routeCodes = ExampleRouteCodes
+        });
+        AddErrorResponse(operation, "400", "Header X-System-Id ausente ou sistema invalido/inativo.", new { message = "Header X-System-Id é obrigatório." });
+        return true;
+    }
 
-        if (normalized == "/auth/permissions" && method == "GET")
-        {
-            EnsureSystemIdHeaderParameter(operation);
-            AddJsonResponse(operation, "200", "Catalogo de autorizacao do usuario no sistema solicitado.", new
-            {
-                user = new
-                {
-                    id = "00000000-0000-0000-0000-000000000000",
-                    name = "User Name",
-                    email = "user@example.com",
-                    identity = 1
-                },
-                permissions = ExamplePermissions,
-                permissionCodes = ExamplePermissionCodes,
-                routeCodes = ExampleRouteCodes
-            });
-            AddErrorResponse(operation, "400", "Header X-System-Id ausente ou sistema invalido/inativo.", new { message = "Header X-System-Id é obrigatório." });
-            return;
-        }
+    private static bool TryApplyAuthLogoutGet(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        if (normalizedPath != "/auth/logout" || method != "GET")
+            return false;
 
-        if (normalized == "/auth/logout" && method == "GET")
-        {
-            AddJsonResponse(operation, "200", "Logout concluido.", new { message = "Sessão encerrada." });
-            return;
-        }
+        AddJsonResponse(operation, "200", "Logout concluido.", new { message = "Sessão encerrada." });
+        return true;
+    }
 
-        if (normalized.EndsWith("/restore", StringComparison.Ordinal) && method == "POST")
-        {
-            AddJsonResponse(operation, "200", "Restauracao concluida.", new { message = "Registro restaurado com sucesso." });
-            return;
-        }
+    private static bool TryApplyRestorePost(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        if (method != "POST" || !normalizedPath.EndsWith("/restore", StringComparison.Ordinal))
+            return false;
 
-        if (method == "POST")
-        {
-            AddJsonResponse(operation, "201", "Registro criado.", new { id = "00000000-0000-0000-0000-000000000000" });
-            return;
-        }
+        AddJsonResponse(operation, "200", "Restauracao concluida.", new { message = "Registro restaurado com sucesso." });
+        return true;
+    }
 
-        if (method == "GET")
-        {
-            AddJsonResponse(operation, "200", "Leitura concluida.", new { message = "Consulta realizada com sucesso." });
-            return;
-        }
+    /// <summary>
+    /// Fallback genérico por verbo HTTP para endpoints que não foram cobertos por um
+    /// helper específico em <see cref="TryApplyEndpointSpecificResponses"/>.
+    /// </summary>
+    private static void ApplyMethodFallbackResponse(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        // normalizedPath é mantido na assinatura para coerência com os helpers específicos;
+        // os fallbacks por verbo não dependem do path concreto.
+        _ = normalizedPath;
 
-        if (method == "PUT")
+        switch (method)
         {
-            AddJsonResponse(operation, "200", "Atualizacao concluida.", new { message = "Registro atualizado com sucesso." });
-            return;
-        }
-
-        if (method == "DELETE")
-        {
-            AddNoContentResponse(operation);
+            case "POST":
+                AddJsonResponse(operation, "201", "Registro criado.", new { id = "00000000-0000-0000-0000-000000000000" });
+                break;
+            case "GET":
+                AddJsonResponse(operation, "200", "Leitura concluida.", new { message = "Consulta realizada com sucesso." });
+                break;
+            case "PUT":
+                AddJsonResponse(operation, "200", "Atualizacao concluida.", new { message = "Registro atualizado com sucesso." });
+                break;
+            case "DELETE":
+                AddNoContentResponse(operation);
+                break;
         }
     }
 
