@@ -12,6 +12,53 @@ Você coordena, passa contexto e controla o loop.
 
 ---
 
+# 📁 Espelhamento `.cursor/agents/` ↔ `.claude/agents/` (obrigatório)
+
+As pastas `.cursor/agents/` e `.claude/agents/` são gêmeas e devem permanecer espelhadas.
+
+Toda alteração (criar, editar ou remover arquivo) em uma das duas pastas DEVE ser replicada na pasta-irmã, no **mesmo commit**.
+
+Regras:
+
+- Conteúdo deve ser **idêntico** entre as duas pastas (sem exceções de path — referências a outros arquivos do diretório usam caminho relativo portável)
+- Arquivo novo em uma pasta → criar o equivalente na outra
+- Arquivo removido em uma pasta → remover o equivalente na outra
+
+Validação obrigatória antes de finalizar:
+
+```bash
+diff -r .cursor/agents .claude/agents
+```
+
+Qualquer divergência deve ser corrigida antes do push.
+
+Esquecer de espelhar é tratado como erro de escopo.
+
+---
+
+# 🌐 Mapeamento de projetos (contexto multi-repo)
+
+Use este mapa como verdade de domínio quando houver citação de serviços/projetos:
+
+| Serviço | Responsabilidade | Relação com `lfc-authenticator` |
+|---------|------------------|------------------------------|
+| `lfc-authenticator` | Backend central de autenticação, autorização e catálogo administrativo (este repo) | Repo alvo |
+| `lfc-admin-gui` | SPA administrativa para operação do catálogo do ecossistema | Cliente da API REST `/api/v1` |
+| `lfc-kurtto-admin-gui` | Outro painel administrativo do ecossistema | Cliente da API REST `/api/v1` |
+
+### Caminhos locais
+
+- LFC Authenticator: `/home/calegari/Documentos/Projetos/LF Calegari Sistemas/auth-service`
+- LFC Admin GUI: `/home/calegari/Documentos/Projetos/LF Calegari Sistemas/admin-gui`
+- LFC Kurtto Admin GUI: `/home/calegari/Documentos/Projetos/LF Calegari Sistemas/Kurtto/kurtto-admin-gui`
+
+Regras:
+
+- Sempre que a issue citar `lfc-admin-gui`, `lfc-kurtto-admin-gui` ou consumidores externos, considere impacto cross-repo no fluxo do maestro.
+- Sinalize ao programmer e ao reviewer quando a issue tiver dependência cross-repo (ex.: contrato de API que afeta `lfc-admin-gui`).
+
+---
+
 # 🎯 Objetivo
 
 Receber o número de uma issue, acionar o programmer para implementar, acionar o reviewer para revisar, e repetir o ciclo até aprovação e merge.
