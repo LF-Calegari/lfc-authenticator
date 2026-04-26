@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using AuthService.Data;
@@ -38,7 +39,9 @@ public sealed class JwtBearerAuthenticationHandler(
             payloadResult.Payload!,
             out var userId,
             out var tokenVersionClaim,
-            out var systemIdClaim);
+            out var systemIdClaim,
+            out var issuedAtClaim,
+            out var expiresAtClaim);
         if (claimExtraction is not null)
             return claimExtraction;
 
@@ -59,7 +62,9 @@ public sealed class JwtBearerAuthenticationHandler(
             new(ClaimTypes.NameIdentifier, userId.ToString("D")),
             new(ClaimTypes.Email, user.Email),
             new(ClaimTypes.Name, user.Name),
-            new(SystemIdClaimType, systemIdClaim.ToString("D"))
+            new(SystemIdClaimType, systemIdClaim.ToString("D")),
+            new(IssuedAtClaimType, issuedAtClaim.ToString(CultureInfo.InvariantCulture)),
+            new(ExpiresAtClaimType, expiresAtClaim.ToString(CultureInfo.InvariantCulture))
         };
         var identity = new ClaimsIdentity(claims, Scheme.Name);
         var principal = new ClaimsPrincipal(identity);
@@ -71,6 +76,18 @@ public sealed class JwtBearerAuthenticationHandler(
     /// Usado pelo verify-token para evitar uso cruzado de tokens entre sistemas distintos.
     /// </summary>
     public const string SystemIdClaimType = "sys";
+
+    /// <summary>
+    /// Tipo de claim que carrega o instante de emissão do token em segundos Unix (claim <c>iat</c>).
+    /// Exposto ao verify-token para devolver <c>issuedAt</c> sem reabrir o JWT.
+    /// </summary>
+    public const string IssuedAtClaimType = "iat";
+
+    /// <summary>
+    /// Tipo de claim que carrega o instante de expiração do token em segundos Unix (claim <c>exp</c>).
+    /// Exposto ao verify-token para devolver <c>expiresAt</c> sem reabrir o JWT.
+    /// </summary>
+    public const string ExpiresAtClaimType = "exp";
 
     private AuthenticateResult? TryReadBearerToken(out string token)
     {
@@ -125,11 +142,15 @@ public sealed class JwtBearerAuthenticationHandler(
         IDictionary<string, object> payload,
         out Guid userId,
         out int tokenVersionClaim,
-        out Guid systemIdClaim)
+        out Guid systemIdClaim,
+        out long issuedAtClaim,
+        out long expiresAtClaim)
     {
         userId = Guid.Empty;
         tokenVersionClaim = 0;
         systemIdClaim = Guid.Empty;
+        issuedAtClaim = 0;
+        expiresAtClaim = 0;
 
         if (!payload.TryGetValue("sub", out var subObj) || subObj?.ToString() is not { } subStr
             || !Guid.TryParse(subStr, out userId))
@@ -141,6 +162,12 @@ public sealed class JwtBearerAuthenticationHandler(
         if (!payload.TryGetValue("sys", out var sysObj) || sysObj?.ToString() is not { } sysStr
             || !Guid.TryParse(sysStr, out systemIdClaim))
             return AuthenticateResult.Fail("Token sem identificador de sistema válido.");
+
+        if (!payload.TryGetValue("iat", out var iatObj) || !TryGetInt64(iatObj, out issuedAtClaim))
+            return AuthenticateResult.Fail("Token sem timestamp de emissão válido.");
+
+        if (!payload.TryGetValue("exp", out var expObj) || !TryGetInt64(expObj, out expiresAtClaim))
+            return AuthenticateResult.Fail("Token sem timestamp de expiração válido.");
 
         return null;
     }
@@ -162,8 +189,31 @@ public sealed class JwtBearerAuthenticationHandler(
             default:
                 return int.TryParse(
                     value?.ToString(),
-                    System.Globalization.NumberStyles.Integer,
-                    System.Globalization.CultureInfo.InvariantCulture,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out n);
+        }
+    }
+
+    private static bool TryGetInt64(object? value, out long n)
+    {
+        n = 0;
+        switch (value)
+        {
+            case int i:
+                n = i;
+                return true;
+            case long l:
+                n = l;
+                return true;
+            case double d when d is >= long.MinValue and <= long.MaxValue:
+                n = (long)d;
+                return true;
+            default:
+                return long.TryParse(
+                    value?.ToString(),
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
                     out n);
         }
     }
