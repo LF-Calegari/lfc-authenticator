@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace AuthService.Models;
 
 [Index(nameof(DeletedAt), Name = "IX_Permissions_DeletedAt")]
-[Index(nameof(SystemId), Name = "IX_Permissions_SystemId")]
+[Index(nameof(RouteId), Name = "IX_Permissions_RouteId")]
 [Index(nameof(PermissionTypeId), Name = "IX_Permissions_PermissionTypeId")]
 [Table("Permissions")]
 public class AppPermission : ISoftDelete
@@ -14,7 +14,7 @@ public class AppPermission : ISoftDelete
     public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
-    public Guid SystemId { get; set; }
+    public Guid RouteId { get; set; }
 
     [Required]
     public Guid PermissionTypeId { get; set; }

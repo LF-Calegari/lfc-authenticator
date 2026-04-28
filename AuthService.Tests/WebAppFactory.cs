@@ -16,28 +16,21 @@ public class WebAppFactory : WebApplicationFactory<Program>
 {
     private const string TestPgBaseEnv = "AUTH_SERVICE_TEST_PG_BASE";
 
+    /// <summary>Variável de ambiente esperada por <see cref="RootUserSeeder"/> para a senha do root.</summary>
+    public const string RootCredentialEnvVar = "DEFAULT_SYSTEM_USER_PASSWORD";
+
+    /// <summary>Senha default do root quando a env var não está definida (apenas em ambiente de teste).</summary>
+    public const string RootCredentialDefault = "toor";
+
     private readonly string _databaseName;
     private readonly string _masterConnectionString;
     private readonly string _appConnectionString;
     private bool _disposed;
 
-    private const string DefaultUserCredentialEnvVar = "DEFAULT_SYSTEM_USER_PASSWORD";
-    private const string DefaultUserCredentialDefault = "toor";
-    private const string AdminUserCredentialEnvVar = "ADMIN_SYSTEM_USER_PASSWORD";
-    private const string AdminUserCredentialDefault = "admin";
-    private const string StandardUserCredentialEnvVar = "DEFAULT_USER_PASSWORD";
-    private const string StandardUserCredentialDefault = "default";
-
     public WebAppFactory()
     {
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(DefaultUserCredentialEnvVar)))
-            Environment.SetEnvironmentVariable(DefaultUserCredentialEnvVar, DefaultUserCredentialDefault);
-
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(AdminUserCredentialEnvVar)))
-            Environment.SetEnvironmentVariable(AdminUserCredentialEnvVar, AdminUserCredentialDefault);
-
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(StandardUserCredentialEnvVar)))
-            Environment.SetEnvironmentVariable(StandardUserCredentialEnvVar, StandardUserCredentialDefault);
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(RootCredentialEnvVar)))
+            Environment.SetEnvironmentVariable(RootCredentialEnvVar, RootCredentialDefault);
 
         var baseConnection = Environment.GetEnvironmentVariable(TestPgBaseEnv)?.Trim();
         if (string.IsNullOrEmpty(baseConnection))
@@ -76,10 +69,16 @@ public class WebAppFactory : WebApplicationFactory<Program>
         using var scope = host.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         db.Database.Migrate();
-        OfficialCatalogSeeder.EnsureCatalogAsync(db).GetAwaiter().GetResult();
-        KurttoAccessSeeder.EnsureKurttoAccessAsync(db).GetAwaiter().GetResult();
-        DefaultSystemUserSeeder.EnsureDefaultUserAsync(db).GetAwaiter().GetResult();
-        LegacyUsersClientSeeder.EnsureLegacyUsersHaveClientAsync(db).GetAwaiter().GetResult();
+
+        // Em "Testing" o Program.cs não roda os seeders — replicamos a mesma sequência usada em produção
+        // para que os testes de integração tenham o catálogo do authenticator e o usuário root prontos.
+        SystemSeeder.EnsureSystemsAsync(db).GetAwaiter().GetResult();
+        AuthenticatorRoutesSeeder.EnsureRoutesAsync(db).GetAwaiter().GetResult();
+        PermissionTypeSeeder.EnsurePermissionTypesAsync(db).GetAwaiter().GetResult();
+        AuthenticatorPermissionsSeeder.EnsurePermissionsAsync(db).GetAwaiter().GetResult();
+        RootUserSeeder.EnsureRootUserAsync(db).GetAwaiter().GetResult();
+        RootRolePermissionsSeeder.EnsureRootRolePermissionsAsync(db).GetAwaiter().GetResult();
+
         return host;
     }
 

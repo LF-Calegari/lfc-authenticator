@@ -3,7 +3,6 @@ namespace AuthService.Auth;
 internal static class PermissionCatalog
 {
     private const string AuthenticatorSystemCode = "authenticator";
-    private const string KurttoSystemCode = "kurtto";
 
     /// <summary>
     /// Mapeamento canônico recurso lógico (PascalCase) → código do sistema oficial.
@@ -20,8 +19,7 @@ internal static class PermissionCatalog
             ["SystemTokensTypes"] = AuthenticatorSystemCode,
             ["Permissions"] = AuthenticatorSystemCode,
             ["PermissionsTypes"] = AuthenticatorSystemCode,
-            ["Roles"] = AuthenticatorSystemCode,
-            ["Kurtto"] = KurttoSystemCode
+            ["Roles"] = AuthenticatorSystemCode
         };
 
     private static readonly Dictionary<string, IReadOnlyList<string>> ResourcesBySystem =

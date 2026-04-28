@@ -69,9 +69,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
         modelBuilder.Entity<AppPermission>(entity =>
         {
-            entity.HasOne<AppSystem>()
+            entity.HasOne<AppRoute>()
                 .WithMany()
-                .HasForeignKey(p => p.SystemId)
+                .HasForeignKey(p => p.RouteId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne<AppPermissionType>()

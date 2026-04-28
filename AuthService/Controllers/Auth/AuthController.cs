@@ -181,10 +181,7 @@ public partial class AuthController : ControllerBase
         if (!routeKnown)
             return BadRequest(new { message = InvalidRouteCodeMessage });
 
-        var permissionIds = (await EffectivePermissionIds.GetForUserAsync(_db, userId))
-            .OrderBy(x => x)
-            .ToList();
-        var routeCodes = await ResolveRouteCodesAsync(permissionIds, headerSystemId, HttpContext.RequestAborted);
+        var routeCodes = await ResolveRouteCodesAsync(headerSystemId, HttpContext.RequestAborted);
 
         if (!routeCodes.Contains(routeCodeHeader, StringComparer.Ordinal))
         {
@@ -240,7 +237,7 @@ public partial class AuthController : ControllerBase
             .OrderBy(x => x)
             .ToList();
         var permissionCodes = await ResolvePermissionCodesAsync(permissionIds, HttpContext.RequestAborted);
-        var routeCodes = await ResolveRouteCodesAsync(permissionIds, headerSystemId, HttpContext.RequestAborted);
+        var routeCodes = await ResolveRouteCodesAsync(headerSystemId, HttpContext.RequestAborted);
 
         return Ok(new PermissionsResponse(
             new PermissionsUserDto(user.Id, user.Name, user.Email, user.Identity),
@@ -314,10 +311,15 @@ public partial class AuthController : ControllerBase
         var systemTypePairs = await _db.Permissions.AsNoTracking()
             .Where(p => permissionIds.Contains(p.Id))
             .Join(
+                _db.Routes.AsNoTracking(),
+                p => p.RouteId,
+                r => r.Id,
+                (p, r) => new { p.PermissionTypeId, r.SystemId })
+            .Join(
                 _db.Systems.AsNoTracking(),
-                p => p.SystemId,
+                x => x.SystemId,
                 s => s.Id,
-                (p, s) => new { p.PermissionTypeId, SystemCode = s.Code })
+                (x, s) => new { x.PermissionTypeId, SystemCode = s.Code })
             .Join(
                 _db.PermissionTypes.AsNoTracking(),
                 x => x.PermissionTypeId,
@@ -344,64 +346,13 @@ public partial class AuthController : ControllerBase
     }
 
     private async Task<IReadOnlyList<string>> ResolveRouteCodesAsync(
-        IReadOnlyCollection<Guid> permissionIds,
         Guid systemId,
         CancellationToken cancellationToken)
     {
-        if (permissionIds.Count == 0)
-            return Array.Empty<string>();
-
-        // Tipos de permissão (create/read/update/delete/restore) que o usuário possui no sistema indicado.
-        var permissionTypeCodes = await _db.Permissions.AsNoTracking()
-            .Where(p => permissionIds.Contains(p.Id) && p.SystemId == systemId)
-            .Join(
-                _db.PermissionTypes.AsNoTracking(),
-                p => p.PermissionTypeId,
-                t => t.Id,
-                (_, t) => t.Code)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-
-        if (permissionTypeCodes.Count == 0)
-            return Array.Empty<string>();
-
-        // Códigos de rota declarados no DB para o sistema-alvo (limita rotas reais a este sistema).
-        var systemRouteCodes = (await _db.Routes.AsNoTracking()
-                .Where(r => r.SystemId == systemId)
-                .Select(r => r.Code)
-                .ToListAsync(cancellationToken))
-            .ToHashSet(StringComparer.Ordinal);
-
-        if (systemRouteCodes.Count == 0)
-            return Array.Empty<string>();
-
-        var allowedPolicies = permissionTypeCodes
-            .Select(MapKurttoPermissionTypeToPolicy)
-            .Where(policy => policy is not null)
-            .Cast<string>()
-            .ToHashSet(StringComparer.Ordinal);
-
-        if (allowedPolicies.Count == 0)
-            return Array.Empty<string>();
-
-        // O mapeamento estático route→policy hoje cobre apenas o sistema kurtto. Se o systemId
-        // não corresponde a kurtto, o filtro por systemRouteCodes garante que nada é vazado.
-        return KurttoAccessSeeder.KurttoAdminRoutes
-            .Where(route => allowedPolicies.Contains(route.TargetPermissionPolicy)
-                && systemRouteCodes.Contains(route.Code))
-            .Select(route => route.Code)
+        return await _db.Routes.AsNoTracking()
+            .Where(r => r.SystemId == systemId)
+            .Select(r => r.Code)
             .OrderBy(code => code)
-            .ToArray();
+            .ToListAsync(cancellationToken);
     }
-
-    private static string? MapKurttoPermissionTypeToPolicy(string permissionTypeCode) =>
-        permissionTypeCode switch
-        {
-            "create" => PermissionPolicies.KurttoCreate,
-            "read" => PermissionPolicies.KurttoRead,
-            "update" => PermissionPolicies.KurttoUpdate,
-            "delete" => PermissionPolicies.KurttoDelete,
-            "restore" => PermissionPolicies.KurttoRestore,
-            _ => null
-        };
 }

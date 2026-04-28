@@ -25,8 +25,8 @@ public partial class PermissionsController : ControllerBase
 
     public class CreatePermissionRequest
     {
-        [Required(ErrorMessage = "SystemId é obrigatório.")]
-        public Guid? SystemId { get; set; }
+        [Required(ErrorMessage = "RouteId é obrigatório.")]
+        public Guid? RouteId { get; set; }
 
         [Required(ErrorMessage = "PermissionTypeId é obrigatório.")]
         public Guid? PermissionTypeId { get; set; }
@@ -37,8 +37,8 @@ public partial class PermissionsController : ControllerBase
 
     public class UpdatePermissionRequest
     {
-        [Required(ErrorMessage = "SystemId é obrigatório.")]
-        public Guid? SystemId { get; set; }
+        [Required(ErrorMessage = "RouteId é obrigatório.")]
+        public Guid? RouteId { get; set; }
 
         [Required(ErrorMessage = "PermissionTypeId é obrigatório.")]
         public Guid? PermissionTypeId { get; set; }
@@ -49,7 +49,7 @@ public partial class PermissionsController : ControllerBase
 
     public record PermissionResponse(
         Guid Id,
-        Guid SystemId,
+        Guid RouteId,
         Guid PermissionTypeId,
         string? Description,
         DateTime CreatedAt,
@@ -58,7 +58,7 @@ public partial class PermissionsController : ControllerBase
     );
 
     private static PermissionResponse ToResponse(AppPermission e) =>
-        new(e.Id, e.SystemId, e.PermissionTypeId, e.Description, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
+        new(e.Id, e.RouteId, e.PermissionTypeId, e.Description, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
 
     private static void ValidateDescription(ModelStateDictionary modelState, string? descriptionOrNull, string descriptionPropertyKey)
     {
@@ -66,22 +66,22 @@ public partial class PermissionsController : ControllerBase
             modelState.AddModelError(descriptionPropertyKey, "Description deve ter no máximo 500 caracteres.");
     }
 
-    private async Task<bool> SystemExistsAndActiveAsync(Guid systemId) =>
-        systemId != Guid.Empty && await _db.Systems.AnyAsync(s => s.Id == systemId);
+    private async Task<bool> RouteExistsAndActiveAsync(Guid routeId) =>
+        routeId != Guid.Empty && await _db.Routes.AnyAsync(r => r.Id == routeId);
 
     private async Task<bool> PermissionTypeExistsAndActiveAsync(Guid permissionTypeId) =>
         permissionTypeId != Guid.Empty && await _db.PermissionTypes.AnyAsync(t => t.Id == permissionTypeId);
 
-    /// <summary>Permissões ativas cujo sistema e tipo de permissão ainda estão ativos.</summary>
+    /// <summary>Permissões ativas cuja rota e tipo de permissão ainda estão ativos.</summary>
     private IQueryable<AppPermission> ActivePermissionsWithActiveParents() =>
         _db.Permissions.Where(p =>
-            _db.Systems.Any(s => s.Id == p.SystemId)
+            _db.Routes.Any(r => r.Id == p.RouteId)
             && _db.PermissionTypes.Any(t => t.Id == p.PermissionTypeId));
 
-    private ActionResult InvalidReferencesResult(bool systemOk, bool typeOk)
+    private ActionResult InvalidReferencesResult(bool routeOk, bool typeOk)
     {
-        if (!systemOk)
-            ModelState.AddModelError(nameof(CreatePermissionRequest.SystemId), "SystemId inválido ou sistema inativo.");
+        if (!routeOk)
+            ModelState.AddModelError(nameof(CreatePermissionRequest.RouteId), "RouteId inválido ou rota inativa.");
         if (!typeOk)
             ModelState.AddModelError(nameof(CreatePermissionRequest.PermissionTypeId), "PermissionTypeId inválido ou tipo de permissão inativo.");
         return ValidationProblem(ModelState);
@@ -94,17 +94,17 @@ public partial class PermissionsController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        var systemId = request.SystemId!.Value;
+        var routeId = request.RouteId!.Value;
         var permissionTypeId = request.PermissionTypeId!.Value;
 
-        var systemOk = await SystemExistsAndActiveAsync(systemId);
+        var routeOk = await RouteExistsAndActiveAsync(routeId);
         var typeOk = await PermissionTypeExistsAndActiveAsync(permissionTypeId);
-        if (!systemOk || !typeOk)
+        if (!routeOk || !typeOk)
         {
             _logger.LogWarning(
-                "Criação de permissão rejeitada: SystemId {SystemId} ok={SystemOk}, PermissionTypeId {TypeId} ok={TypeOk}.",
-                systemId, systemOk, permissionTypeId, typeOk);
-            return InvalidReferencesResult(systemOk, typeOk);
+                "Criação de permissão rejeitada: RouteId {RouteId} ok={RouteOk}, PermissionTypeId {TypeId} ok={TypeOk}.",
+                routeId, routeOk, permissionTypeId, typeOk);
+            return InvalidReferencesResult(routeOk, typeOk);
         }
 
         var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
@@ -115,7 +115,7 @@ public partial class PermissionsController : ControllerBase
         var now = DateTime.UtcNow;
         var entity = new AppPermission
         {
-            SystemId = systemId,
+            RouteId = routeId,
             PermissionTypeId = permissionTypeId,
             Description = description,
             CreatedAt = now,
@@ -131,9 +131,9 @@ public partial class PermissionsController : ControllerBase
         catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
         {
             _logger.LogWarning(ex, "Violação de FK ao criar permissão.");
-            var s = await SystemExistsAndActiveAsync(systemId);
+            var r = await RouteExistsAndActiveAsync(routeId);
             var t = await PermissionTypeExistsAndActiveAsync(permissionTypeId);
-            return InvalidReferencesResult(s, t);
+            return InvalidReferencesResult(r, t);
         }
 
         LogPermissionCreated(entity.Id);
@@ -148,7 +148,7 @@ public partial class PermissionsController : ControllerBase
             .OrderBy(p => p.CreatedAt)
             .Select(p => new PermissionResponse(
                 p.Id,
-                p.SystemId,
+                p.RouteId,
                 p.PermissionTypeId,
                 p.Description,
                 p.CreatedAt,
@@ -179,17 +179,17 @@ public partial class PermissionsController : ControllerBase
         if (entity is null)
             return NotFound(new { message = "Permissão não encontrada." });
 
-        var systemId = request.SystemId!.Value;
+        var routeId = request.RouteId!.Value;
         var permissionTypeId = request.PermissionTypeId!.Value;
 
-        var systemOk = await SystemExistsAndActiveAsync(systemId);
+        var routeOk = await RouteExistsAndActiveAsync(routeId);
         var typeOk = await PermissionTypeExistsAndActiveAsync(permissionTypeId);
-        if (!systemOk || !typeOk)
+        if (!routeOk || !typeOk)
         {
             _logger.LogWarning(
-                "Atualização de permissão {PermissionId} rejeitada: System ok={SystemOk}, Type ok={TypeOk}.",
-                id, systemOk, typeOk);
-            return InvalidReferencesResult(systemOk, typeOk);
+                "Atualização de permissão {PermissionId} rejeitada: Route ok={RouteOk}, Type ok={TypeOk}.",
+                id, routeOk, typeOk);
+            return InvalidReferencesResult(routeOk, typeOk);
         }
 
         var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
@@ -197,7 +197,7 @@ public partial class PermissionsController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        entity.SystemId = systemId;
+        entity.RouteId = routeId;
         entity.PermissionTypeId = permissionTypeId;
         entity.Description = description;
         entity.UpdatedAt = DateTime.UtcNow;
@@ -209,9 +209,9 @@ public partial class PermissionsController : ControllerBase
         catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
         {
             _logger.LogWarning(ex, "Violação de FK ao atualizar permissão {PermissionId}.", id);
-            var s = await SystemExistsAndActiveAsync(systemId);
+            var r = await RouteExistsAndActiveAsync(routeId);
             var t = await PermissionTypeExistsAndActiveAsync(permissionTypeId);
-            return InvalidReferencesResult(s, t);
+            return InvalidReferencesResult(r, t);
         }
 
         LogPermissionUpdated(id);
@@ -245,11 +245,11 @@ public partial class PermissionsController : ControllerBase
         if (entity is null)
             return NotFound(new { message = "Permissão não encontrada ou não está deletada." });
 
-        if (!await SystemExistsAndActiveAsync(entity.SystemId) || !await PermissionTypeExistsAndActiveAsync(entity.PermissionTypeId))
+        if (!await RouteExistsAndActiveAsync(entity.RouteId) || !await PermissionTypeExistsAndActiveAsync(entity.PermissionTypeId))
         {
             return BadRequest(new
             {
-                message = "Não é possível restaurar a permissão: o sistema ou o tipo de permissão vinculado está inativo."
+                message = "Não é possível restaurar a permissão: a rota ou o tipo de permissão vinculado está inativo."
             });
         }
 
