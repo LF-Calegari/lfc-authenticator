@@ -67,9 +67,7 @@ public class AuthApiTests : IAsyncLifetime
     private sealed class PermissionsDto
     {
         public PermissionsUserDto? User { get; set; }
-        public List<Guid>? Permissions { get; set; }
-        public List<string>? PermissionCodes { get; set; }
-        public List<string>? RouteCodes { get; set; }
+        public List<string>? Routes { get; set; }
     }
 
     [Fact]
@@ -194,8 +192,7 @@ public class AuthApiTests : IAsyncLifetime
         Assert.DoesNotContain("\"name\"", raw, StringComparison.Ordinal);
         Assert.DoesNotContain("\"identity\"", raw, StringComparison.Ordinal);
         Assert.DoesNotContain("permissions", raw, StringComparison.Ordinal);
-        Assert.DoesNotContain("permissionCodes", raw, StringComparison.Ordinal);
-        Assert.DoesNotContain("routeCodes", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"routes\"", raw, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -684,41 +681,23 @@ public class AuthApiTests : IAsyncLifetime
         Assert.NotNull(body);
         Assert.NotNull(body.User);
         Assert.Equal(RootUserSeeder.RootEmail, body.User.Email);
-        Assert.NotNull(body.Permissions);
-        Assert.NotEmpty(body.Permissions);
-        Assert.NotNull(body.PermissionCodes);
-        Assert.NotNull(body.RouteCodes);
+        Assert.NotNull(body.Routes);
 
-        // Root cobre as 5 ações sobre todos os recursos do authenticator.
-        var expectedPermissionCodes = new[]
-        {
-            "perm:Users.Create", "perm:Users.Read", "perm:Users.Update",
-            "perm:Users.Delete", "perm:Users.Restore",
-            "perm:Roles.Create", "perm:Roles.Read",
-            "perm:Permissions.Create", "perm:Clients.Read"
-        };
-        foreach (var code in expectedPermissionCodes)
-            Assert.Contains(code, body.PermissionCodes);
-
-        var expectedRouteCodes = new[]
+        var expectedRoutes = new[]
         {
             "AUTH_V1_USERS_LIST",
             "AUTH_V1_AUTH_PERMISSIONS",
             "AUTH_V1_ROLES_CREATE"
         };
-        foreach (var code in expectedRouteCodes)
-            Assert.Contains(code, body.RouteCodes);
-
-        // Permission codes seguem padrão perm:<Recurso>.<Acao>.
-        foreach (var code in body.PermissionCodes)
-            Assert.StartsWith("perm:", code, StringComparison.Ordinal);
+        foreach (var code in expectedRoutes)
+            Assert.Contains(code, body.Routes);
     }
 
     [Fact]
-    public async Task Permissions_UserWithoutPermissions_ReturnsEmptyPermissionsButSystemRouteCatalog()
+    public async Task Permissions_UserWithoutPermissions_ReturnsSystemRouteCatalog()
     {
-        // Sem nenhuma permissão atribuída, permissionIds/permissionCodes ficam vazios; já routeCodes
-        // reflete o catálogo do sistema do header (não é filtrado por permissão de usuário hoje).
+        // Mesmo sem permissões atribuídas, routes reflete o catálogo do sistema do header
+        // (a resposta não filtra rotas por permissão de usuário hoje).
         await _admin.PostAsJsonAsync("/api/v1/users",
             new { name = "Empty Perms", email = "empty.perms@example.com", password = "SenhaSegura1!", identity = 1, active = true },
             TestApiClient.JsonOptions);
@@ -737,16 +716,12 @@ public class AuthApiTests : IAsyncLifetime
         var body = await response.Content.ReadFromJsonAsync<PermissionsDto>(TestApiClient.JsonOptions);
         Assert.NotNull(body);
         Assert.NotNull(body.User);
-        Assert.NotNull(body.Permissions);
-        Assert.Empty(body.Permissions);
-        Assert.NotNull(body.PermissionCodes);
-        Assert.Empty(body.PermissionCodes);
-        Assert.NotNull(body.RouteCodes);
-        Assert.Contains(DefaultRouteCode, body.RouteCodes);
+        Assert.NotNull(body.Routes);
+        Assert.Contains(DefaultRouteCode, body.Routes);
     }
 
     [Fact]
-    public async Task Permissions_AuthenticatorSystem_ReturnsAuthenticatorRouteCodes()
+    public async Task Permissions_AuthenticatorSystem_ReturnsAuthenticatorRoutes()
     {
         // Root tem todas as permissões; consulta /auth/permissions com X-System-Id = authenticator
         // deve listar as rotas seedadas do authenticator.
@@ -764,9 +739,9 @@ public class AuthApiTests : IAsyncLifetime
 
         var body = await response.Content.ReadFromJsonAsync<PermissionsDto>(TestApiClient.JsonOptions);
         Assert.NotNull(body);
-        Assert.NotNull(body.RouteCodes);
-        Assert.Contains("AUTH_V1_USERS_LIST", body.RouteCodes);
-        Assert.Contains("AUTH_V1_AUTH_PERMISSIONS", body.RouteCodes);
+        Assert.NotNull(body.Routes);
+        Assert.Contains("AUTH_V1_USERS_LIST", body.Routes);
+        Assert.Contains("AUTH_V1_AUTH_PERMISSIONS", body.Routes);
     }
 
     [Fact]

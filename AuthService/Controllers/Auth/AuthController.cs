@@ -75,14 +75,12 @@ public partial class AuthController : ControllerBase
         int Identity);
 
     /// <summary>
-    /// Resposta do <c>GET /auth/permissions</c> com o catálogo de autorização do usuário no sistema do header.
+    /// Resposta do <c>GET /auth/permissions</c> com o catálogo de rotas do sistema do header.
     /// Substitui a parte de catálogo do antigo <c>verify-token</c>.
     /// </summary>
     public record PermissionsResponse(
         PermissionsUserDto User,
-        IReadOnlyList<Guid> Permissions,
-        IReadOnlyList<string> PermissionCodes,
-        IReadOnlyList<string> RouteCodes);
+        IReadOnlyList<string> Routes);
 
     [HttpPost("login")]
     [AllowAnonymous]
@@ -181,9 +179,9 @@ public partial class AuthController : ControllerBase
         if (!routeKnown)
             return BadRequest(new { message = InvalidRouteCodeMessage });
 
-        var routeCodes = await ResolveRouteCodesAsync(headerSystemId, HttpContext.RequestAborted);
+        var routes = await ResolveRoutesAsync(headerSystemId, HttpContext.RequestAborted);
 
-        if (!routeCodes.Contains(routeCodeHeader, StringComparer.Ordinal))
+        if (!routes.Contains(routeCodeHeader, StringComparer.Ordinal))
         {
             _logger.LogWarning(
                 "Acesso à rota {RouteCode} negado para o usuário {UserId} no sistema {SystemId}.",
@@ -233,17 +231,11 @@ public partial class AuthController : ControllerBase
         if (user is null)
             return Unauthorized(new { message = UserNotFoundMessage });
 
-        var permissionIds = (await EffectivePermissionIds.GetForUserAsync(_db, userId))
-            .OrderBy(x => x)
-            .ToList();
-        var permissionCodes = await ResolvePermissionCodesAsync(permissionIds, HttpContext.RequestAborted);
-        var routeCodes = await ResolveRouteCodesAsync(headerSystemId, HttpContext.RequestAborted);
+        var routes = await ResolveRoutesAsync(headerSystemId, HttpContext.RequestAborted);
 
         return Ok(new PermissionsResponse(
             new PermissionsUserDto(user.Id, user.Name, user.Email, user.Identity),
-            permissionIds,
-            permissionCodes,
-            routeCodes));
+            routes));
     }
 
     [HttpGet("logout")]
@@ -301,51 +293,7 @@ public partial class AuthController : ControllerBase
         return true;
     }
 
-    private async Task<IReadOnlyList<string>> ResolvePermissionCodesAsync(
-        List<Guid> permissionIds,
-        CancellationToken cancellationToken)
-    {
-        if (permissionIds.Count == 0)
-            return Array.Empty<string>();
-
-        var systemTypePairs = await _db.Permissions.AsNoTracking()
-            .Where(p => permissionIds.Contains(p.Id))
-            .Join(
-                _db.Routes.AsNoTracking(),
-                p => p.RouteId,
-                r => r.Id,
-                (p, r) => new { p.PermissionTypeId, r.SystemId })
-            .Join(
-                _db.Systems.AsNoTracking(),
-                x => x.SystemId,
-                s => s.Id,
-                (x, s) => new { x.PermissionTypeId, SystemCode = s.Code })
-            .Join(
-                _db.PermissionTypes.AsNoTracking(),
-                x => x.PermissionTypeId,
-                t => t.Id,
-                (x, t) => new { x.SystemCode, TypeCode = t.Code })
-            .Distinct()
-            .ToListAsync(cancellationToken);
-
-        if (systemTypePairs.Count == 0)
-            return Array.Empty<string>();
-
-        var codes = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var pair in systemTypePairs)
-        {
-            var resources = PermissionCatalog.GetResourcesForSystem(pair.SystemCode);
-            if (resources.Count == 0)
-                continue;
-
-            foreach (var resource in resources)
-                codes.Add(PermissionCodeFormatter.Format(resource, pair.TypeCode));
-        }
-
-        return codes.ToArray();
-    }
-
-    private async Task<IReadOnlyList<string>> ResolveRouteCodesAsync(
+    private async Task<IReadOnlyList<string>> ResolveRoutesAsync(
         Guid systemId,
         CancellationToken cancellationToken)
     {

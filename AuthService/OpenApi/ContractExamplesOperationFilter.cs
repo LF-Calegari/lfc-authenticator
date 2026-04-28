@@ -7,9 +7,7 @@ namespace AuthService.OpenApi;
 
 public sealed class ContractExamplesOperationFilter : IOperationFilter
 {
-    private static readonly string[] ExamplePermissions = ["11111111-1111-1111-1111-111111111111"];
-    private static readonly string[] ExamplePermissionCodes = ["perm:Users.Read", "perm:Roles.Read"];
-    private static readonly string[] ExampleRouteCodes = ["AUTH_V1_USERS_LIST"];
+    private static readonly string[] ExampleRoutes = ["AUTH_V1_USERS_LIST"];
 
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
@@ -97,7 +95,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             return false;
 
         EnsureSystemIdHeaderParameter(operation);
-        AddJsonResponse(operation, "200", "Catalogo de autorizacao do usuario no sistema solicitado.", new
+        AddJsonResponse(operation, "200", "Catalogo de rotas do sistema solicitado.", new
         {
             user = new
             {
@@ -106,9 +104,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
                 email = "user@example.com",
                 identity = 1
             },
-            permissions = ExamplePermissions,
-            permissionCodes = ExamplePermissionCodes,
-            routeCodes = ExampleRouteCodes
+            routes = ExampleRoutes
         });
         AddErrorResponse(operation, "400", "Header X-System-Id ausente ou sistema invalido/inativo.", new { message = "Header X-System-Id é obrigatório." });
         return true;
@@ -229,7 +225,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
         // garantimos que o header aparece como obrigatório no Swagger e com descrição clara.
         const string headerDescription =
             "Código da rota concreta a ser autorizada (ex.: AUTH_V1_USERS_LIST). "
-            + "Deve estar entre as routeCodes do usuário no sistema do header X-System-Id.";
+            + "Deve estar entre as routes do usuário no sistema do header X-System-Id.";
 
         EnsureRequiredHeaderParameter(operation, AuthController.RouteCodeHeader, headerDescription);
     }
