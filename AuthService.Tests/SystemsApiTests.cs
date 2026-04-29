@@ -132,11 +132,240 @@ public class SystemsApiTests : IAsyncLifetime
 
         var listResp = await _client.GetAsync("/api/v1/systems");
         listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<SystemDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        Assert.All(list, s => Assert.Null(s.DeletedAt));
-        Assert.Contains(list, s => s.Code == "ATIVO");
-        Assert.DoesNotContain(list, s => s.Code == "OUTRO");
+        var page = await listResp.Content.ReadFromJsonAsync<PagedSystemsDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        Assert.Equal(1, page.Page);
+        Assert.Equal(20, page.PageSize);
+        Assert.All(page.Data, s => Assert.Null(s.DeletedAt));
+        Assert.Contains(page.Data, s => s.Code == "ATIVO");
+        Assert.DoesNotContain(page.Data, s => s.Code == "OUTRO");
+        Assert.Equal(page.Data.Count, page.Total);
+    }
+
+    [Fact]
+    public async Task GetAll_NoFilters_UsesDefaultEnvelope()
+    {
+        var page = await GetSystemsPageAsync("/api/v1/systems");
+        Assert.Equal(1, page.Page);
+        Assert.Equal(20, page.PageSize);
+        Assert.True(page.Total >= page.Data.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_PartialMatchOnName()
+    {
+        await SeedSystemsAsync(("Admin GUI", "ADMIN_GUI"), ("Faturamento", "FAT_001"));
+
+        var page = await GetSystemsPageAsync("/api/v1/systems?q=adm");
+        Assert.Contains(page.Data, s => s.Code == "ADMIN_GUI");
+        Assert.DoesNotContain(page.Data, s => s.Code == "FAT_001");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_IsCaseInsensitive()
+    {
+        await SeedSystemsAsync(("Admin GUI", "ADMIN_GUI"));
+
+        var lower = await GetSystemsPageAsync("/api/v1/systems?q=admin");
+        var upper = await GetSystemsPageAsync("/api/v1/systems?q=ADMIN");
+        var mixed = await GetSystemsPageAsync("/api/v1/systems?q=AdMiN");
+
+        Assert.Contains(lower.Data, s => s.Code == "ADMIN_GUI");
+        Assert.Contains(upper.Data, s => s.Code == "ADMIN_GUI");
+        Assert.Contains(mixed.Data, s => s.Code == "ADMIN_GUI");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_MatchesNameOrCode()
+    {
+        await SeedSystemsAsync(
+            ("Sistema Alpha", "BETA_CODE"),
+            ("Outro Nome", "ALPHA_CODE"),
+            ("Sem relacao", "NEUTRO"));
+
+        var byName = await GetSystemsPageAsync("/api/v1/systems?q=Alpha");
+        Assert.Contains(byName.Data, s => s.Code == "BETA_CODE");
+        Assert.Contains(byName.Data, s => s.Code == "ALPHA_CODE");
+        Assert.DoesNotContain(byName.Data, s => s.Code == "NEUTRO");
+    }
+
+    [Fact]
+    public async Task GetAll_WithPagination_ReturnsCorrectSubset()
+    {
+        await SeedSystemsAsync(
+            ("AAA Sistema", "PAGE_AAA"),
+            ("BBB Sistema", "PAGE_BBB"),
+            ("CCC Sistema", "PAGE_CCC"),
+            ("DDD Sistema", "PAGE_DDD"),
+            ("EEE Sistema", "PAGE_EEE"));
+
+        var firstPage = await GetSystemsPageAsync("/api/v1/systems?q=Sistema&page=1&pageSize=2");
+        var secondPage = await GetSystemsPageAsync("/api/v1/systems?q=Sistema&page=2&pageSize=2");
+        var thirdPage = await GetSystemsPageAsync("/api/v1/systems?q=Sistema&page=3&pageSize=2");
+
+        Assert.Equal(2, firstPage.Data.Count);
+        Assert.Equal(2, secondPage.Data.Count);
+        Assert.Single(thirdPage.Data);
+        Assert.Equal(5, firstPage.Total);
+        Assert.Equal(5, secondPage.Total);
+        Assert.Equal(5, thirdPage.Total);
+
+        var firstCodes = firstPage.Data.Select(s => s.Code).ToList();
+        var secondCodes = secondPage.Data.Select(s => s.Code).ToList();
+        var thirdCodes = thirdPage.Data.Select(s => s.Code).ToList();
+        Assert.Empty(firstCodes.Intersect(secondCodes));
+        Assert.Empty(secondCodes.Intersect(thirdCodes));
+        Assert.Empty(firstCodes.Intersect(thirdCodes));
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeAboveLimit_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/systems?pageSize=101");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeZero_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/systems?pageSize=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeNegative_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/systems?pageSize=-3");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageZero_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/systems?page=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageNegative_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/systems?page=-1");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithIncludeDeletedTrue_ReturnsActiveAndDeleted()
+    {
+        await SeedSystemsAsync(("Sis Ativo", "INC_ACTIVE"));
+        var deletedResp = await _client.PostAsJsonAsync(
+            "/api/v1/systems",
+            new { name = "Sis Deletado", code = "INC_DELETED" },
+            TestApiClient.JsonOptions);
+        var deleted = await deletedResp.Content.ReadFromJsonAsync<SystemDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(deleted);
+        await _client.DeleteAsync($"/api/v1/systems/{deleted.Id}");
+
+        var page = await GetSystemsPageAsync("/api/v1/systems?includeDeleted=true&q=Sis&pageSize=100");
+        Assert.Contains(page.Data, s => s.Code == "INC_ACTIVE");
+        Assert.Contains(page.Data, s => s.Code == "INC_DELETED" && s.DeletedAt != null);
+    }
+
+    [Fact]
+    public async Task GetAll_WithIncludeDeletedDefault_HidesSoftDeleted()
+    {
+        var resp = await _client.PostAsJsonAsync(
+            "/api/v1/systems",
+            new { name = "Sis Hidden", code = "HIDE_DELETED" },
+            TestApiClient.JsonOptions);
+        var dto = await resp.Content.ReadFromJsonAsync<SystemDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+        await _client.DeleteAsync($"/api/v1/systems/{dto.Id}");
+
+        var page = await GetSystemsPageAsync("/api/v1/systems?q=Hidden&pageSize=100");
+        Assert.DoesNotContain(page.Data, s => s.Code == "HIDE_DELETED");
+    }
+
+    [Fact]
+    public async Task GetAll_TotalReflectsFilters_BeforePagination()
+    {
+        await SeedSystemsAsync(
+            ("Filtro UM", "FIL_TOTAL_1"),
+            ("Filtro DOIS", "FIL_TOTAL_2"),
+            ("Filtro TRES", "FIL_TOTAL_3"),
+            ("Outro", "OTHER_TOTAL"));
+
+        var page = await GetSystemsPageAsync("/api/v1/systems?q=Filtro&page=1&pageSize=2");
+        Assert.Equal(3, page.Total);
+        Assert.Equal(2, page.Data.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_PageBeyondTotal_ReturnsEmptyDataAnd200()
+    {
+        await SeedSystemsAsync(("Empty page A", "EMPTY_A"));
+
+        var resp = await _client.GetAsync("/api/v1/systems?q=Empty&page=99&pageSize=10");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var page = await resp.Content.ReadFromJsonAsync<PagedSystemsDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        Assert.Empty(page.Data);
+        Assert.Equal(1, page.Total);
+    }
+
+    [Fact]
+    public async Task GetAll_OrderingIsStable_NoDuplicatesAcrossPages()
+    {
+        var seeds = Enumerable.Range(0, 7)
+            .Select(i => ($"Ordem {i:D2}", $"ORDER_{i:D2}"))
+            .ToArray();
+        await SeedSystemsAsync(seeds);
+
+        var first = await GetSystemsPageAsync("/api/v1/systems?q=Ordem&page=1&pageSize=3");
+        var second = await GetSystemsPageAsync("/api/v1/systems?q=Ordem&page=2&pageSize=3");
+        var third = await GetSystemsPageAsync("/api/v1/systems?q=Ordem&page=3&pageSize=3");
+
+        var collected = first.Data.Concat(second.Data).Concat(third.Data)
+            .Select(s => s.Code)
+            .ToList();
+        Assert.Equal(collected.Count, collected.Distinct().Count());
+        Assert.Equal(seeds.Length, collected.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_OrderedByName_Ascending()
+    {
+        await SeedSystemsAsync(
+            ("ZZZ Order", "ORD_ZZZ"),
+            ("AAA Order", "ORD_AAA"),
+            ("MMM Order", "ORD_MMM"));
+
+        var page = await GetSystemsPageAsync("/api/v1/systems?q=Order&pageSize=10");
+        var names = page.Data.Where(s => s.Code.StartsWith("ORD_", StringComparison.Ordinal))
+            .Select(s => s.Name)
+            .ToList();
+        var sorted = names.OrderBy(n => n, StringComparer.Ordinal).ToList();
+        Assert.Equal(sorted, names);
+    }
+
+    private async Task<PagedSystemsDto> GetSystemsPageAsync(string url)
+    {
+        var resp = await _client.GetAsync(url);
+        resp.EnsureSuccessStatusCode();
+        var page = await resp.Content.ReadFromJsonAsync<PagedSystemsDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        return page;
+    }
+
+    private async Task SeedSystemsAsync(params (string Name, string Code)[] systems)
+    {
+        foreach (var (name, code) in systems)
+        {
+            var resp = await _client.PostAsJsonAsync(
+                "/api/v1/systems",
+                new { name, code },
+                TestApiClient.JsonOptions);
+            resp.EnsureSuccessStatusCode();
+        }
     }
 
     [Fact]
@@ -222,4 +451,10 @@ public class SystemsApiTests : IAsyncLifetime
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt);
+
+    private sealed record PagedSystemsDto(
+        List<SystemDto> Data,
+        int Page,
+        int PageSize,
+        int Total);
 }

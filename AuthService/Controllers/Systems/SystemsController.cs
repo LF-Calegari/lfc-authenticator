@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using AuthService.Auth;
+using AuthService.Controllers.Common;
 using AuthService.Data;
 using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -129,12 +130,47 @@ public class SystemsController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
     }
 
+    /// <summary>Tamanho de página default quando o cliente não envia <c>pageSize</c>.</summary>
+    public const int DefaultPageSize = 20;
+
+    /// <summary>Limite superior para <c>pageSize</c>; valores acima retornam 400.</summary>
+    public const int MaxPageSize = 100;
+
     [HttpGet]
     [Authorize(Policy = PermissionPolicies.SystemsRead)]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        [FromQuery] string? q = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = DefaultPageSize,
+        [FromQuery] bool includeDeleted = false)
     {
-        var list = await _db.Systems
-            .OrderBy(s => s.CreatedAt)
+        if (page <= 0)
+            ModelState.AddModelError(nameof(page), "page deve ser maior ou igual a 1.");
+
+        if (pageSize <= 0 || pageSize > MaxPageSize)
+            ModelState.AddModelError(nameof(pageSize), $"pageSize deve estar entre 1 e {MaxPageSize}.");
+
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        IQueryable<AppSystem> query = _db.Systems;
+        if (includeDeleted)
+            query = query.IgnoreQueryFilters();
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var pattern = $"%{EscapeLikePattern(q.Trim())}%";
+            query = query.Where(s =>
+                EF.Functions.ILike(s.Name, pattern) || EF.Functions.ILike(s.Code, pattern));
+        }
+
+        var total = await query.CountAsync();
+
+        var data = await query
+            .OrderBy(s => s.Name)
+            .ThenBy(s => s.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(s => new SystemResponse(
                 s.Id,
                 s.Name,
@@ -144,7 +180,20 @@ public class SystemsController : ControllerBase
                 s.UpdatedAt,
                 s.DeletedAt))
             .ToListAsync();
-        return Ok(list);
+
+        return Ok(new PagedResponse<SystemResponse>(data, page, pageSize, total));
+    }
+
+    /// <summary>
+    /// Escapa caracteres curinga (<c>%</c>, <c>_</c>) e o caractere de escape (<c>\</c>) na entrada do usuário
+    /// para evitar que sejam interpretados como wildcards no <c>ILIKE</c>. Mantém o termo como busca literal parcial.
+    /// </summary>
+    private static string EscapeLikePattern(string value)
+    {
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("%", "\\%")
+            .Replace("_", "\\_");
     }
 
     [HttpGet("{id:guid}")]
