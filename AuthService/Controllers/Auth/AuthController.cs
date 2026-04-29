@@ -179,7 +179,7 @@ public partial class AuthController : ControllerBase
         if (!routeKnown)
             return BadRequest(new { message = InvalidRouteCodeMessage });
 
-        var routes = await ResolveRoutesAsync(headerSystemId, HttpContext.RequestAborted);
+        var routes = await ResolveAuthorizedRouteCodesAsync(userId, headerSystemId, HttpContext.RequestAborted);
 
         if (!routes.Contains(routeCodeHeader, StringComparer.Ordinal))
         {
@@ -231,7 +231,7 @@ public partial class AuthController : ControllerBase
         if (user is null)
             return Unauthorized(new { message = UserNotFoundMessage });
 
-        var routes = await ResolveRoutesAsync(headerSystemId, HttpContext.RequestAborted);
+        var routes = await ResolveAuthorizedRouteCodesAsync(userId, headerSystemId, HttpContext.RequestAborted);
 
         return Ok(new PermissionsResponse(
             new PermissionsUserDto(user.Id, user.Name, user.Email, user.Identity),
@@ -293,13 +293,25 @@ public partial class AuthController : ControllerBase
         return true;
     }
 
-    private async Task<IReadOnlyList<string>> ResolveRoutesAsync(
+    private async Task<IReadOnlyList<string>> ResolveAuthorizedRouteCodesAsync(
+        Guid userId,
         Guid systemId,
         CancellationToken cancellationToken)
     {
-        return await _db.Routes.AsNoTracking()
-            .Where(r => r.SystemId == systemId)
-            .Select(r => r.Code)
+        var effective = (await EffectivePermissionIds.GetForUserAsync(_db, userId, cancellationToken)).ToList();
+        if (effective.Count == 0)
+            return Array.Empty<string>();
+
+        return await _db.Permissions.AsNoTracking()
+            .Where(p => effective.Contains(p.Id))
+            .Join(
+                _db.Routes.AsNoTracking(),
+                p => p.RouteId,
+                r => r.Id,
+                (_, r) => new { r.SystemId, r.Code })
+            .Where(x => x.SystemId == systemId)
+            .Select(x => x.Code)
+            .Distinct()
             .OrderBy(code => code)
             .ToListAsync(cancellationToken);
     }

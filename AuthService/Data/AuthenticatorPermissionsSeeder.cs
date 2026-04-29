@@ -77,7 +77,8 @@ public static class AuthenticatorPermissionsSeeder
     }
 
     // Endpoints especiais (verify-token, permissions, logout) caem no fallback "read" — são consultas
-    // sob a perspectiva do consumidor.
+    // sob a perspectiva do consumidor. _ASSIGN/_REMOVE/_SYNC mapeiam para "update" porque alteram
+    // vínculos/catálogo da entidade-pai sem removê-la (policies dos endpoints são perm:*.Update).
     private static string ResolvePermissionTypeCode(string routeCode)
     {
         if (routeCode.EndsWith("_CREATE", StringComparison.Ordinal))
@@ -87,7 +88,10 @@ public static class AuthenticatorPermissionsSeeder
         if (routeCode.EndsWith("_RESTORE", StringComparison.Ordinal))
             return "restore";
         if (routeCode.EndsWith("_UPDATE", StringComparison.Ordinal) ||
-            routeCode.EndsWith("_UPDATE_PASSWORD", StringComparison.Ordinal))
+            routeCode.EndsWith("_UPDATE_PASSWORD", StringComparison.Ordinal) ||
+            routeCode.EndsWith("_ASSIGN", StringComparison.Ordinal) ||
+            routeCode.EndsWith("_REMOVE", StringComparison.Ordinal) ||
+            routeCode.EndsWith("_SYNC", StringComparison.Ordinal))
             return "update";
         if (routeCode.EndsWith("_LIST", StringComparison.Ordinal) ||
             routeCode.EndsWith("_GET_BY_ID", StringComparison.Ordinal))

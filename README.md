@@ -257,8 +257,22 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 | `PUT` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Update` |
 | `DELETE` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Delete` |
 | `POST` | `/api/v1/systems/routes/{id}/restore` | Sim | `perm:SystemsRoutes.Restore` |
+| `POST` | `/api/v1/systems/routes/sync` | Sim | `perm:SystemsRoutes.Update` |
 
 `systemId` obrigatório; `code` único globalmente. Listagens consideram sistema pai ativo.
+
+**`POST /api/v1/systems/routes/sync`** — auto-registro do catálogo de rotas por um sistema-cliente. Body:
+
+```json
+{
+  "systemCode": "kurtto",
+  "routes": [
+    { "code": "KURTTO_V1_X_LIST", "name": "GET /api/v1/x", "description": "...", "permissionTypeCode": "read" }
+  ]
+}
+```
+
+Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema que **sumirem** do payload são soft-deletadas junto com suas Permissions vinculadas. Quando `permissionTypeCode` é informado, a `Permission(Route, Type)` correspondente é criada/reativada automaticamente. Resposta: `{ created, updated, reactivated, deleted }`. Erros: 404 (`systemCode` desconhecido), 400 (`permissionTypeCode` desconhecido ou `code` duplicado no payload), 409 (`code` já em uso por outro sistema — `UX_Routes_Code` é unique global).
 
 ### Usuários — `/api/v1/users`
 
@@ -271,6 +285,10 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 | `PUT` | `/api/v1/users/{id}/password` | Sim | `perm:Users.Update` |
 | `DELETE` | `/api/v1/users/{id}` | Sim | `perm:Users.Delete` |
 | `POST` | `/api/v1/users/{id}/restore` | Sim | `perm:Users.Restore` |
+| `POST` | `/api/v1/users/{id}/permissions` | Sim | `perm:Users.Update` |
+| `DELETE` | `/api/v1/users/{id}/permissions/{permissionId}` | Sim | `perm:Users.Update` |
+| `POST` | `/api/v1/users/{id}/roles` | Sim | `perm:Users.Update` |
+| `DELETE` | `/api/v1/users/{id}/roles/{roleId}` | Sim | `perm:Users.Update` |
 
 **POST:** `name`, `email`, `password`, `identity`, `active` (opcional, padrão `true`). **PUT** usuário: `name`, `email`, `identity`, `active` (sem senha). Email normalizado (ex.: minúsculas).
 
@@ -329,6 +347,8 @@ Regras de negócio principais: `type` imutável (`PF`/`PJ`), validação de CPF/
 | `PUT` | `/api/v1/roles/{id}` | Sim | `perm:Roles.Update` |
 | `DELETE` | `/api/v1/roles/{id}` | Sim | `perm:Roles.Delete` |
 | `POST` | `/api/v1/roles/{id}/restore` | Sim | `perm:Roles.Restore` |
+| `POST` | `/api/v1/roles/{id}/permissions` | Sim | `perm:Roles.Update` |
+| `DELETE` | `/api/v1/roles/{id}/permissions/{permissionId}` | Sim | `perm:Roles.Update` |
 
 ### Permissões — `/api/v1/permissions`
 

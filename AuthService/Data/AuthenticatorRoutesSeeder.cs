@@ -85,6 +85,10 @@ public static class AuthenticatorRoutesSeeder
             "Remove (soft-delete) uma role."),
         ("AUTH_V1_ROLES_RESTORE", "POST /api/v1/roles/{id}/restore",
             "Restaura uma role previamente removida."),
+        ("AUTH_V1_ROLES_PERMISSIONS_ASSIGN", "POST /api/v1/roles/{id}/permissions",
+            "Vincula uma permissão à role."),
+        ("AUTH_V1_ROLES_PERMISSIONS_REMOVE", "DELETE /api/v1/roles/{id}/permissions/{permissionId}",
+            "Remove o vínculo entre uma permissão e a role."),
 
         // Routes
         ("AUTH_V1_SYSTEMS_ROUTES_CREATE", "POST /api/v1/systems/routes",
@@ -99,6 +103,8 @@ public static class AuthenticatorRoutesSeeder
             "Remove (soft-delete) uma rota."),
         ("AUTH_V1_SYSTEMS_ROUTES_RESTORE", "POST /api/v1/systems/routes/{id}/restore",
             "Restaura uma rota previamente removida."),
+        ("AUTH_V1_SYSTEMS_ROUTES_SYNC", "POST /api/v1/systems/routes/sync",
+            "Sincroniza em lote o catálogo de rotas de um sistema (auto-registro pelo sistema-cliente)."),
 
         // Systems
         ("AUTH_V1_SYSTEMS_CREATE", "POST /api/v1/systems",
@@ -142,7 +148,15 @@ public static class AuthenticatorRoutesSeeder
         ("AUTH_V1_USERS_DELETE", "DELETE /api/v1/users/{id}",
             "Remove (soft-delete) um usuário."),
         ("AUTH_V1_USERS_RESTORE", "POST /api/v1/users/{id}/restore",
-            "Restaura um usuário previamente removido.")
+            "Restaura um usuário previamente removido."),
+        ("AUTH_V1_USERS_PERMISSIONS_ASSIGN", "POST /api/v1/users/{id}/permissions",
+            "Vincula uma permissão diretamente ao usuário."),
+        ("AUTH_V1_USERS_PERMISSIONS_REMOVE", "DELETE /api/v1/users/{id}/permissions/{permissionId}",
+            "Remove o vínculo direto de uma permissão com o usuário."),
+        ("AUTH_V1_USERS_ROLES_ASSIGN", "POST /api/v1/users/{id}/roles",
+            "Vincula uma role ao usuário."),
+        ("AUTH_V1_USERS_ROLES_REMOVE", "DELETE /api/v1/users/{id}/roles/{roleId}",
+            "Remove o vínculo de uma role com o usuário.")
     ];
 
     public static async Task EnsureRoutesAsync(AppDbContext db, CancellationToken cancellationToken = default)

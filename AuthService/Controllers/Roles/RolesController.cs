@@ -227,6 +227,86 @@ public partial class RolesController : ControllerBase
         return Ok(new { message = "Role restaurado com sucesso." });
     }
 
+    public class AssignPermissionRequest
+    {
+        [Required(ErrorMessage = "PermissionId é obrigatório.")]
+        public Guid? PermissionId { get; set; }
+    }
+
+    public record RolePermissionResponse(
+        Guid Id,
+        Guid RoleId,
+        Guid PermissionId,
+        DateTime CreatedAt,
+        DateTime UpdatedAt,
+        DateTime? DeletedAt);
+
+    [HttpPost("{roleId:guid}/permissions")]
+    [Authorize(Policy = PermissionPolicies.RolesUpdate)]
+    public async Task<IActionResult> AssignPermission(Guid roleId, [FromBody] AssignPermissionRequest request)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        var permissionId = request.PermissionId!.Value;
+
+        var roleExists = await _db.Roles.AnyAsync(r => r.Id == roleId);
+        if (!roleExists)
+            return NotFound(new { message = "Role não encontrado." });
+
+        var permissionExists = await _db.Permissions.AnyAsync(p => p.Id == permissionId);
+        if (!permissionExists)
+            return BadRequest(new { message = "PermissionId inválido ou permissão inativa." });
+
+        var existing = await _db.RolePermissions.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(rp => rp.RoleId == roleId && rp.PermissionId == permissionId);
+
+        var utc = DateTime.UtcNow;
+        if (existing is not null)
+        {
+            if (existing.DeletedAt is not null)
+            {
+                existing.DeletedAt = null;
+                existing.UpdatedAt = utc;
+                await _db.SaveChangesAsync();
+            }
+            return Ok(ToRolePermissionResponse(existing));
+        }
+
+        var entity = new AppRolePermission
+        {
+            RoleId = roleId,
+            PermissionId = permissionId,
+            CreatedAt = utc,
+            UpdatedAt = utc,
+            DeletedAt = null
+        };
+        _db.RolePermissions.Add(entity);
+        await _db.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetById), new { id = roleId }, ToRolePermissionResponse(entity));
+    }
+
+    [HttpDelete("{roleId:guid}/permissions/{permissionId:guid}")]
+    [Authorize(Policy = PermissionPolicies.RolesUpdate)]
+    public async Task<IActionResult> RemovePermission(Guid roleId, Guid permissionId)
+    {
+        var existing = await _db.RolePermissions
+            .FirstOrDefaultAsync(rp => rp.RoleId == roleId && rp.PermissionId == permissionId);
+
+        if (existing is null)
+            return NotFound(new { message = "Vínculo de permissão não encontrado." });
+
+        var utc = DateTime.UtcNow;
+        existing.DeletedAt = utc;
+        existing.UpdatedAt = utc;
+        await _db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    private static RolePermissionResponse ToRolePermissionResponse(AppRolePermission e) =>
+        new(e.Id, e.RoleId, e.PermissionId, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Role criado: {RoleId}, Code {Code}.")]
     private partial void LogRoleCreated(Guid roleId, string code);
 

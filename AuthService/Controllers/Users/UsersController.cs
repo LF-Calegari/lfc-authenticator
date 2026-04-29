@@ -444,4 +444,164 @@ public class UsersController : ControllerBase
         await _db.SaveChangesAsync();
         return Ok(new { message = "Usuário restaurado com sucesso." });
     }
+
+    public class AssignPermissionRequest
+    {
+        [Required(ErrorMessage = "PermissionId é obrigatório.")]
+        public Guid? PermissionId { get; set; }
+    }
+
+    public class AssignRoleRequest
+    {
+        [Required(ErrorMessage = "RoleId é obrigatório.")]
+        public Guid? RoleId { get; set; }
+    }
+
+    public record UserPermissionResponse(
+        Guid Id,
+        Guid UserId,
+        Guid PermissionId,
+        DateTime CreatedAt,
+        DateTime UpdatedAt,
+        DateTime? DeletedAt);
+
+    public record UserRoleResponse(
+        Guid Id,
+        Guid UserId,
+        Guid RoleId,
+        DateTime CreatedAt,
+        DateTime UpdatedAt,
+        DateTime? DeletedAt);
+
+    [HttpPost("{userId:guid}/permissions")]
+    [Authorize(Policy = PermissionPolicies.UsersUpdate)]
+    public async Task<IActionResult> AssignPermission(Guid userId, [FromBody] AssignPermissionRequest request)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        var permissionId = request.PermissionId!.Value;
+
+        var userExists = await _db.Users.AnyAsync(u => u.Id == userId);
+        if (!userExists)
+            return NotFound(new { message = UserNotFoundMessage });
+
+        var permissionExists = await _db.Permissions.AnyAsync(p => p.Id == permissionId);
+        if (!permissionExists)
+            return BadRequest(new { message = "PermissionId inválido ou permissão inativa." });
+
+        var existing = await _db.UserPermissions.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(up => up.UserId == userId && up.PermissionId == permissionId);
+
+        var utc = DateTime.UtcNow;
+        if (existing is not null)
+        {
+            if (existing.DeletedAt is not null)
+            {
+                existing.DeletedAt = null;
+                existing.UpdatedAt = utc;
+                await _db.SaveChangesAsync();
+            }
+            return Ok(ToUserPermissionResponse(existing));
+        }
+
+        var entity = new AppUserPermission
+        {
+            UserId = userId,
+            PermissionId = permissionId,
+            CreatedAt = utc,
+            UpdatedAt = utc,
+            DeletedAt = null
+        };
+        _db.UserPermissions.Add(entity);
+        await _db.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetById), new { id = userId }, ToUserPermissionResponse(entity));
+    }
+
+    [HttpDelete("{userId:guid}/permissions/{permissionId:guid}")]
+    [Authorize(Policy = PermissionPolicies.UsersUpdate)]
+    public async Task<IActionResult> RemovePermission(Guid userId, Guid permissionId)
+    {
+        var existing = await _db.UserPermissions
+            .FirstOrDefaultAsync(up => up.UserId == userId && up.PermissionId == permissionId);
+
+        if (existing is null)
+            return NotFound(new { message = "Vínculo de permissão não encontrado." });
+
+        var utc = DateTime.UtcNow;
+        existing.DeletedAt = utc;
+        existing.UpdatedAt = utc;
+        await _db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpPost("{userId:guid}/roles")]
+    [Authorize(Policy = PermissionPolicies.UsersUpdate)]
+    public async Task<IActionResult> AssignRole(Guid userId, [FromBody] AssignRoleRequest request)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        var roleId = request.RoleId!.Value;
+
+        var userExists = await _db.Users.AnyAsync(u => u.Id == userId);
+        if (!userExists)
+            return NotFound(new { message = UserNotFoundMessage });
+
+        var roleExists = await _db.Roles.AnyAsync(r => r.Id == roleId);
+        if (!roleExists)
+            return BadRequest(new { message = "RoleId inválido ou role inativa." });
+
+        var existing = await _db.UserRoles.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(ur => ur.UserId == userId && ur.RoleId == roleId);
+
+        var utc = DateTime.UtcNow;
+        if (existing is not null)
+        {
+            if (existing.DeletedAt is not null)
+            {
+                existing.DeletedAt = null;
+                existing.UpdatedAt = utc;
+                await _db.SaveChangesAsync();
+            }
+            return Ok(ToUserRoleResponse(existing));
+        }
+
+        var entity = new AppUserRole
+        {
+            UserId = userId,
+            RoleId = roleId,
+            CreatedAt = utc,
+            UpdatedAt = utc,
+            DeletedAt = null
+        };
+        _db.UserRoles.Add(entity);
+        await _db.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetById), new { id = userId }, ToUserRoleResponse(entity));
+    }
+
+    [HttpDelete("{userId:guid}/roles/{roleId:guid}")]
+    [Authorize(Policy = PermissionPolicies.UsersUpdate)]
+    public async Task<IActionResult> RemoveRole(Guid userId, Guid roleId)
+    {
+        var existing = await _db.UserRoles
+            .FirstOrDefaultAsync(ur => ur.UserId == userId && ur.RoleId == roleId);
+
+        if (existing is null)
+            return NotFound(new { message = "Vínculo de role não encontrado." });
+
+        var utc = DateTime.UtcNow;
+        existing.DeletedAt = utc;
+        existing.UpdatedAt = utc;
+        await _db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    private static UserPermissionResponse ToUserPermissionResponse(AppUserPermission e) =>
+        new(e.Id, e.UserId, e.PermissionId, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
+
+    private static UserRoleResponse ToUserRoleResponse(AppUserRole e) =>
+        new(e.Id, e.UserId, e.RoleId, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
 }

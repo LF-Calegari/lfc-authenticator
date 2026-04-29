@@ -275,4 +275,180 @@ public class RoutesController : ControllerBase
         await _db.SaveChangesAsync();
         return Ok(new { message = "Route restaurada com sucesso." });
     }
+
+    public class RouteSyncItem
+    {
+        [Required(ErrorMessage = "Code é obrigatório.")]
+        [MaxLength(50, ErrorMessage = "Code deve ter no máximo 50 caracteres.")]
+        public string Code { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Name é obrigatório.")]
+        [MaxLength(80, ErrorMessage = "Name deve ter no máximo 80 caracteres.")]
+        public string Name { get; set; } = string.Empty;
+
+        [MaxLength(500, ErrorMessage = "Description deve ter no máximo 500 caracteres.")]
+        public string? Description { get; set; }
+
+        /// <summary>Code do PermissionType (ex.: read/create). Se informado, cria/reativa a Permission(Route, Type).</summary>
+        [MaxLength(50, ErrorMessage = "PermissionTypeCode deve ter no máximo 50 caracteres.")]
+        public string? PermissionTypeCode { get; set; }
+    }
+
+    public class SyncRoutesRequest
+    {
+        [Required(ErrorMessage = "SystemCode é obrigatório.")]
+        [MaxLength(50, ErrorMessage = "SystemCode deve ter no máximo 50 caracteres.")]
+        public string SystemCode { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Routes é obrigatório.")]
+        public List<RouteSyncItem> Routes { get; set; } = new();
+    }
+
+    public record SyncRoutesResponse(int Created, int Updated, int Reactivated, int Deleted);
+
+    [HttpPost("sync")]
+    [Authorize(Policy = PermissionPolicies.SystemsRoutesUpdate)]
+    public async Task<IActionResult> Sync([FromBody] SyncRoutesRequest request, [FromQuery] bool prune = false)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        var duplicates = request.Routes
+            .GroupBy(r => r.Code, StringComparer.Ordinal)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToList();
+        if (duplicates.Count > 0)
+        {
+            ModelState.AddModelError(nameof(request.Routes),
+                $"Codes duplicados no payload: {string.Join(", ", duplicates)}.");
+            return ValidationProblem(ModelState);
+        }
+
+        var system = await _db.Systems.FirstOrDefaultAsync(s => s.Code == request.SystemCode);
+        if (system is null)
+            return NotFound(new { message = $"System '{request.SystemCode}' não encontrado." });
+
+        var typeCodes = request.Routes
+            .Where(r => !string.IsNullOrWhiteSpace(r.PermissionTypeCode))
+            .Select(r => r.PermissionTypeCode!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var typeIdByCode = typeCodes.Count == 0
+            ? new Dictionary<string, Guid>(StringComparer.Ordinal)
+            : await _db.PermissionTypes.AsNoTracking()
+                .Where(t => typeCodes.Contains(t.Code))
+                .ToDictionaryAsync(t => t.Code, t => t.Id);
+
+        var unknownTypes = typeCodes.Where(c => !typeIdByCode.ContainsKey(c)).ToList();
+        if (unknownTypes.Count > 0)
+        {
+            ModelState.AddModelError(nameof(request.Routes),
+                $"PermissionTypeCode desconhecido(s): {string.Join(", ", unknownTypes)}.");
+            return ValidationProblem(ModelState);
+        }
+
+        var existingRoutes = await _db.Routes.IgnoreQueryFilters()
+            .Where(r => r.SystemId == system.Id)
+            .ToListAsync();
+        var existingByCode = existingRoutes.ToDictionary(r => r.Code, StringComparer.Ordinal);
+        var requestCodes = request.Routes.Select(r => r.Code).ToHashSet(StringComparer.Ordinal);
+
+        var utc = DateTime.UtcNow;
+        var created = 0;
+        var updated = 0;
+        var reactivated = 0;
+        var deleted = 0;
+
+        foreach (var item in request.Routes)
+        {
+            Guid routeId;
+            if (existingByCode.TryGetValue(item.Code, out var existing))
+            {
+                var changed = false;
+                if (existing.Name != item.Name) { existing.Name = item.Name; changed = true; }
+                if (existing.Description != item.Description) { existing.Description = item.Description; changed = true; }
+                if (existing.DeletedAt is not null) { existing.DeletedAt = null; reactivated++; }
+                if (changed) updated++;
+                existing.UpdatedAt = utc;
+                routeId = existing.Id;
+            }
+            else
+            {
+                var route = new AppRoute
+                {
+                    SystemId = system.Id,
+                    Name = item.Name,
+                    Code = item.Code,
+                    Description = item.Description,
+                    CreatedAt = utc,
+                    UpdatedAt = utc,
+                    DeletedAt = null
+                };
+                _db.Routes.Add(route);
+                routeId = route.Id;
+                created++;
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.PermissionTypeCode))
+                await EnsurePermissionAsync(routeId, typeIdByCode[item.PermissionTypeCode!], utc);
+        }
+
+        if (prune)
+        {
+            foreach (var existing in existingRoutes.Where(r => !requestCodes.Contains(r.Code) && r.DeletedAt is null))
+            {
+                existing.DeletedAt = utc;
+                existing.UpdatedAt = utc;
+                deleted++;
+
+                var perms = await _db.Permissions.IgnoreQueryFilters()
+                    .Where(p => p.RouteId == existing.Id && p.DeletedAt == null)
+                    .ToListAsync();
+                foreach (var p in perms)
+                {
+                    p.DeletedAt = utc;
+                    p.UpdatedAt = utc;
+                }
+            }
+        }
+
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            // UX_Routes_Code é global; um Code do payload pode colidir com outro sistema.
+            return Conflict(new { message = "Code de rota já em uso por outro sistema." });
+        }
+
+        return Ok(new SyncRoutesResponse(created, updated, reactivated, deleted));
+    }
+
+    private async Task EnsurePermissionAsync(Guid routeId, Guid typeId, DateTime utc)
+    {
+        var existing = await _db.Permissions.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.RouteId == routeId && p.PermissionTypeId == typeId);
+
+        if (existing is null)
+        {
+            _db.Permissions.Add(new AppPermission
+            {
+                RouteId = routeId,
+                PermissionTypeId = typeId,
+                CreatedAt = utc,
+                UpdatedAt = utc,
+                DeletedAt = null
+            });
+            return;
+        }
+
+        if (existing.DeletedAt is not null)
+        {
+            existing.DeletedAt = null;
+            existing.UpdatedAt = utc;
+        }
+    }
 }
