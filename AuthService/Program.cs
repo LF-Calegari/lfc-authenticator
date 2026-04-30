@@ -71,6 +71,7 @@ builder.Services.AddSwaggerGen(options =>
         In = ParameterLocation.Header,
         Description = "JWT no header Authorization (Bearer {token})."
     });
+    options.CustomSchemaIds(type => type.FullName?.Replace("+", "."));
     options.DocumentFilter<V1PathPrefixDocumentFilter>();
     options.OperationFilter<ContractExamplesOperationFilter>();
 });
