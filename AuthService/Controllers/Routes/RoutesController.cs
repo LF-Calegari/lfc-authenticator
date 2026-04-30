@@ -235,10 +235,10 @@ public class RoutesController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        // Quando includeDeleted=true, ignoramos:
-        //  - o query filter global (DeletedAt == null), expondo rotas soft-deletadas;
-        //  - o filtro "sistema pai ativo" (ActiveRoutesWithActiveSystem),
-        //    para que a lista admin enxergue rotas órfãs cujo sistema vinculado também foi soft-deletado.
+        // Quando includeDeleted=true, a lista admin precisa enxergar tudo: rotas soft-deletadas
+        // (ignorando o query filter global de soft-delete) e rotas cujo sistema pai também foi
+        // soft-deletado (dispensando o filtro ActiveRoutesWithActiveSystem). Caso contrário,
+        // mantemos o filtro de sistema pai ativo aplicado pelas demais leituras do controller.
         IQueryable<AppRoute> query = includeDeleted
             ? _db.Routes.IgnoreQueryFilters()
             : ActiveRoutesWithActiveSystem();
