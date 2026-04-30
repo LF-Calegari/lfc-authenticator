@@ -358,6 +358,229 @@ public class RoutesApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Delete_WithoutLinkedPermissions_ReturnsNoContent()
+    {
+        // Issue #157: rota sem Permissions vinculadas mantém o comportamento legado (204).
+        var sysId = await CreateSystemAsync("RT_SYS_LP_NONE");
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var routeId = await CreateRouteForLinkedPermissionsAsync(sysId, "S", "RT_LP_NONE", sttId);
+
+        var del = await _client.DeleteAsync($"/api/v1/systems/routes/{routeId}");
+        Assert.Equal(HttpStatusCode.NoContent, del.StatusCode);
+
+        await AssertRouteSoftDeletedAsync(routeId, expectDeleted: true);
+    }
+
+    [Fact]
+    public async Task Delete_WithOneActiveLinkedPermission_ReturnsConflictAndDoesNotMutate()
+    {
+        // Issue #157: 1 Permission ativa bloqueia o DELETE com 409 e linkedPermissionsCount=1.
+        var sysId = await CreateSystemAsync("RT_SYS_LP_ONE");
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var routeId = await CreateRouteForLinkedPermissionsAsync(sysId, "S", "RT_LP_ONE", sttId);
+        var typeId = await CreatePermissionTypeForLinkedPermissionsAsync("RT_LP_ONE_TYPE");
+
+        var perm = await _client.PostAsJsonAsync("/api/v1/permissions",
+            new { routeId, permissionTypeId = typeId, description = (string?)null }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.Created, perm.StatusCode);
+        var permDto = await perm.Content.ReadFromJsonAsync<PermissionRefDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(permDto);
+
+        var del = await _client.DeleteAsync($"/api/v1/systems/routes/{routeId}");
+        Assert.Equal(HttpStatusCode.Conflict, del.StatusCode);
+
+        var payload = await del.Content.ReadFromJsonAsync<DeleteConflictDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(payload);
+        Assert.Equal(1, payload.LinkedPermissionsCount);
+        Assert.False(string.IsNullOrWhiteSpace(payload.Message));
+        Assert.Contains("permissões ativas vinculadas", payload.Message);
+
+        // Caminho 409: rota não soft-deletada e permissão preservada.
+        await AssertRouteSoftDeletedAsync(routeId, expectDeleted: false);
+        await AssertPermissionDeletedAtAsync(permDto.Id, expectDeleted: false);
+    }
+
+    [Fact]
+    public async Task Delete_WithThreeActiveLinkedPermissions_ReturnsConflictWithCountThree()
+    {
+        // Issue #157: linkedPermissionsCount reflete a contagem exata de Permissions ativas.
+        var sysId = await CreateSystemAsync("RT_SYS_LP_THREE");
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var routeId = await CreateRouteForLinkedPermissionsAsync(sysId, "S", "RT_LP_THREE", sttId);
+
+        for (var i = 0; i < 3; i++)
+        {
+            var typeId = await CreatePermissionTypeForLinkedPermissionsAsync($"RT_LP_THREE_T{i}");
+            var perm = await _client.PostAsJsonAsync("/api/v1/permissions",
+                new { routeId, permissionTypeId = typeId, description = (string?)null }, TestApiClient.JsonOptions);
+            Assert.Equal(HttpStatusCode.Created, perm.StatusCode);
+        }
+
+        var del = await _client.DeleteAsync($"/api/v1/systems/routes/{routeId}");
+        Assert.Equal(HttpStatusCode.Conflict, del.StatusCode);
+        var payload = await del.Content.ReadFromJsonAsync<DeleteConflictDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(payload);
+        Assert.Equal(3, payload.LinkedPermissionsCount);
+
+        await AssertRouteSoftDeletedAsync(routeId, expectDeleted: false);
+    }
+
+    [Fact]
+    public async Task Delete_WithOnlySoftDeletedLinkedPermissions_ReturnsNoContent()
+    {
+        // Issue #157: Permissions soft-deletadas não bloqueiam (alinhado ao filtro global do EF).
+        var sysId = await CreateSystemAsync("RT_SYS_LP_SOFT");
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var routeId = await CreateRouteForLinkedPermissionsAsync(sysId, "S", "RT_LP_SOFT", sttId);
+        var typeId = await CreatePermissionTypeForLinkedPermissionsAsync("RT_LP_SOFT_TYPE");
+
+        var perm = await _client.PostAsJsonAsync("/api/v1/permissions",
+            new { routeId, permissionTypeId = typeId, description = (string?)null }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.Created, perm.StatusCode);
+        var permDto = await perm.Content.ReadFromJsonAsync<PermissionRefDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(permDto);
+
+        var deletePerm = await _client.DeleteAsync($"/api/v1/permissions/{permDto.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, deletePerm.StatusCode);
+        await AssertPermissionDeletedAtAsync(permDto.Id, expectDeleted: true);
+
+        var del = await _client.DeleteAsync($"/api/v1/systems/routes/{routeId}");
+        Assert.Equal(HttpStatusCode.NoContent, del.StatusCode);
+        await AssertRouteSoftDeletedAsync(routeId, expectDeleted: true);
+    }
+
+    [Fact]
+    public async Task Delete_WithMixedActiveAndSoftDeletedPermissions_ReturnsConflictWithActiveCountOnly()
+    {
+        // Issue #157: contagem ignora permissões soft-deletadas e foca apenas nas ativas.
+        var sysId = await CreateSystemAsync("RT_SYS_LP_MIX");
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var routeId = await CreateRouteForLinkedPermissionsAsync(sysId, "S", "RT_LP_MIX", sttId);
+
+        var typeIdA = await CreatePermissionTypeForLinkedPermissionsAsync("RT_LP_MIX_TA");
+        var typeIdB = await CreatePermissionTypeForLinkedPermissionsAsync("RT_LP_MIX_TB");
+        var typeIdC = await CreatePermissionTypeForLinkedPermissionsAsync("RT_LP_MIX_TC");
+
+        var permA = await _client.PostAsJsonAsync("/api/v1/permissions",
+            new { routeId, permissionTypeId = typeIdA, description = (string?)null }, TestApiClient.JsonOptions);
+        var permB = await _client.PostAsJsonAsync("/api/v1/permissions",
+            new { routeId, permissionTypeId = typeIdB, description = (string?)null }, TestApiClient.JsonOptions);
+        var permC = await _client.PostAsJsonAsync("/api/v1/permissions",
+            new { routeId, permissionTypeId = typeIdC, description = (string?)null }, TestApiClient.JsonOptions);
+
+        Assert.Equal(HttpStatusCode.Created, permA.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, permB.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, permC.StatusCode);
+
+        var permADto = await permA.Content.ReadFromJsonAsync<PermissionRefDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(permADto);
+
+        // Soft-delete da Permission A — restam B e C ativas vinculadas à rota.
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await _client.DeleteAsync($"/api/v1/permissions/{permADto.Id}")).StatusCode);
+
+        var del = await _client.DeleteAsync($"/api/v1/systems/routes/{routeId}");
+        Assert.Equal(HttpStatusCode.Conflict, del.StatusCode);
+        var payload = await del.Content.ReadFromJsonAsync<DeleteConflictDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(payload);
+        Assert.Equal(2, payload.LinkedPermissionsCount);
+
+        await AssertRouteSoftDeletedAsync(routeId, expectDeleted: false);
+    }
+
+    [Fact]
+    public async Task Delete_BlockedByPermissions_DoesNotPersistAnySideEffect()
+    {
+        // Issue #157: contrato de "no side-effect" no caminho 409 — UpdatedAt da rota e DeletedAt
+        // da permissão devem permanecer idênticos aos valores de antes da chamada bloqueada.
+        var sysId = await CreateSystemAsync("RT_SYS_LP_NOSIDE");
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var routeId = await CreateRouteForLinkedPermissionsAsync(sysId, "S", "RT_LP_NOSIDE", sttId);
+        var typeId = await CreatePermissionTypeForLinkedPermissionsAsync("RT_LP_NOSIDE_TYPE");
+
+        var perm = await _client.PostAsJsonAsync("/api/v1/permissions",
+            new { routeId, permissionTypeId = typeId, description = (string?)null }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.Created, perm.StatusCode);
+        var permDto = await perm.Content.ReadFromJsonAsync<PermissionRefDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(permDto);
+
+        var (routeUpdatedBefore, routeDeletedBefore) = await GetRouteTimestampsAsync(routeId);
+        var (permUpdatedBefore, permDeletedBefore) = await GetPermissionTimestampsAsync(permDto.Id);
+
+        var del = await _client.DeleteAsync($"/api/v1/systems/routes/{routeId}");
+        Assert.Equal(HttpStatusCode.Conflict, del.StatusCode);
+
+        var (routeUpdatedAfter, routeDeletedAfter) = await GetRouteTimestampsAsync(routeId);
+        var (permUpdatedAfter, permDeletedAfter) = await GetPermissionTimestampsAsync(permDto.Id);
+
+        Assert.Equal(routeUpdatedBefore, routeUpdatedAfter);
+        Assert.Equal(routeDeletedBefore, routeDeletedAfter);
+        Assert.Null(routeDeletedAfter);
+
+        Assert.Equal(permUpdatedBefore, permUpdatedAfter);
+        Assert.Equal(permDeletedBefore, permDeletedAfter);
+        Assert.Null(permDeletedAfter);
+    }
+
+    private async Task<Guid> CreateRouteForLinkedPermissionsAsync(Guid systemId, string name, string code, Guid systemTokenTypeId)
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(systemId, name, code, systemTokenTypeId), TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.Created, resp.StatusCode);
+        var dto = await resp.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+        return dto.Id;
+    }
+
+    private async Task<Guid> CreatePermissionTypeForLinkedPermissionsAsync(string code)
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/permissions/types",
+            new { name = code, code, description = (string?)null }, TestApiClient.JsonOptions);
+        Assert.Equal(HttpStatusCode.Created, resp.StatusCode);
+        var dto = await resp.Content.ReadFromJsonAsync<PermissionTypeRefDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+        return dto.Id;
+    }
+
+    private async Task AssertRouteSoftDeletedAsync(Guid routeId, bool expectDeleted)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.Routes.IgnoreQueryFilters().SingleAsync(r => r.Id == routeId);
+        if (expectDeleted)
+            Assert.NotNull(row.DeletedAt);
+        else
+            Assert.Null(row.DeletedAt);
+    }
+
+    private async Task AssertPermissionDeletedAtAsync(Guid permissionId, bool expectDeleted)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.Permissions.IgnoreQueryFilters().SingleAsync(p => p.Id == permissionId);
+        if (expectDeleted)
+            Assert.NotNull(row.DeletedAt);
+        else
+            Assert.Null(row.DeletedAt);
+    }
+
+    private async Task<(DateTime UpdatedAt, DateTime? DeletedAt)> GetRouteTimestampsAsync(Guid routeId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.Routes.IgnoreQueryFilters().SingleAsync(r => r.Id == routeId);
+        return (row.UpdatedAt, row.DeletedAt);
+    }
+
+    private async Task<(DateTime UpdatedAt, DateTime? DeletedAt)> GetPermissionTimestampsAsync(Guid permissionId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.Permissions.IgnoreQueryFilters().SingleAsync(p => p.Id == permissionId);
+        return (row.UpdatedAt, row.DeletedAt);
+    }
+
+    [Fact]
     public async Task Restore_Deleted_ThenAppearsInGetAll_AndGetByIdWorks()
     {
         var sysId = await CreateSystemAsync("RT_SYS_R1");
@@ -852,6 +1075,10 @@ public class RoutesApiTests : IAsyncLifetime
 
     private sealed record SystemRefDto(Guid Id);
     private sealed record TokenTypeRefDto(Guid Id);
+    private sealed record PermissionRefDto(Guid Id);
+    private sealed record PermissionTypeRefDto(Guid Id);
+
+    private sealed record DeleteConflictDto(string Message, int LinkedPermissionsCount);
 
     private sealed record RouteDto(
         Guid Id,
