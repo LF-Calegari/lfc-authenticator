@@ -36,12 +36,25 @@ public class PermissionsApiTests : IAsyncLifetime
 
     private async Task<Guid> CreateRouteAsync(Guid systemId, string code, string name = "Rota")
     {
+        var systemTokenTypeId = await GetDefaultSystemTokenTypeIdAsync();
         var r = await _client.PostAsJsonAsync("/api/v1/systems/routes",
-            new { systemId, name, code, description = (string?)null }, TestApiClient.JsonOptions);
+            new { systemId, name, code, description = (string?)null, systemTokenTypeId }, TestApiClient.JsonOptions);
         r.EnsureSuccessStatusCode();
         var dto = await r.Content.ReadFromJsonAsync<RefDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
         return dto.Id;
+    }
+
+    private async Task<Guid> GetDefaultSystemTokenTypeIdAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var id = await db.SystemTokenTypes
+            .Where(t => t.Code == SystemTokenTypeSeeder.DefaultCode)
+            .Select(t => (Guid?)t.Id)
+            .FirstOrDefaultAsync();
+        Assert.True(id.HasValue && id.Value != Guid.Empty);
+        return id!.Value;
     }
 
     private async Task<Guid> CreatePermissionTypeAsync(string code, string name = "Tipo")

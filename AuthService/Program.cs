@@ -104,6 +104,7 @@ if (!app.Environment.IsEnvironment("Testing"))
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.MigrateAsync();
         await SystemSeeder.EnsureSystemsAsync(db);
+        await SystemTokenTypeSeeder.EnsureSystemTokenTypesAsync(db);
         await AuthenticatorRoutesSeeder.EnsureRoutesAsync(db);
         await PermissionTypeSeeder.EnsurePermissionTypesAsync(db);
         await AuthenticatorPermissionsSeeder.EnsurePermissionsAsync(db);

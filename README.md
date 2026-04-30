@@ -261,18 +261,24 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 
 `systemId` obrigatório; `code` único globalmente. Listagens consideram sistema pai ativo.
 
+**Política JWT alvo (`systemTokenTypeId`)** — toda rota referencia um `SystemTokenType` (`/api/v1/tokens/types`) ativo via FK NOT NULL. O campo é **obrigatório** em `POST` e `PUT`; payloads sem ele retornam **400** com erro em `ModelState["SystemTokenTypeId"]`. `Guid.Empty`, IDs inexistentes ou referenciando registros soft-deletados também retornam **400**. Restaurar uma rota cujo `SystemTokenType` foi removido depois do soft-delete também retorna **400** (mesmo padrão da validação de sistema inativo).
+
+Existe um catálogo canônico garantido pelo `SystemTokenTypeSeeder` na inicialização do serviço, com pelo menos `Code='default'` (`Name='Default'`). Esse é o code usado como fallback no `sync` quando o item não especifica um `systemTokenTypeCode`.
+
+`GET /api/v1/systems/routes` e `GET /api/v1/systems/routes/{id}` retornam, além dos campos da rota, três campos denormalizados via Join: `systemTokenTypeId`, `systemTokenTypeCode`, `systemTokenTypeName`. Os campos `code` e `name` do token type **não** entram no body de `POST`/`PUT` — são apenas leitura.
+
 **`POST /api/v1/systems/routes/sync`** — auto-registro do catálogo de rotas por um sistema-cliente. Body:
 
 ```json
 {
   "systemCode": "kurtto",
   "routes": [
-    { "code": "KURTTO_V1_X_LIST", "name": "GET /api/v1/x", "description": "...", "permissionTypeCode": "read" }
+    { "code": "KURTTO_V1_X_LIST", "name": "GET /api/v1/x", "description": "...", "permissionTypeCode": "read", "systemTokenTypeCode": "default" }
   ]
 }
 ```
 
-Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema que **sumirem** do payload são soft-deletadas junto com suas Permissions vinculadas. Quando `permissionTypeCode` é informado, a `Permission(Route, Type)` correspondente é criada/reativada automaticamente. Resposta: `{ created, updated, reactivated, deleted }`. Erros: 404 (`systemCode` desconhecido), 400 (`permissionTypeCode` desconhecido ou `code` duplicado no payload), 409 (`code` já em uso por outro sistema — `UX_Routes_Code` é unique global).
+Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema que **sumirem** do payload são soft-deletadas junto com suas Permissions vinculadas. Quando `permissionTypeCode` é informado, a `Permission(Route, Type)` correspondente é criada/reativada automaticamente. `systemTokenTypeCode` é **opcional** — quando omitido, o sync usa `default`. Resposta: `{ created, updated, reactivated, deleted }`. Erros: 404 (`systemCode` desconhecido), 400 (`permissionTypeCode` desconhecido, `systemTokenTypeCode` desconhecido — listando os codes inválidos — ou `code` duplicado no payload), 409 (`code` já em uso por outro sistema — `UX_Routes_Code` é unique global).
 
 ### Usuários — `/api/v1/users`
 

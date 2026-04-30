@@ -36,6 +36,9 @@ public class RoutesController : ControllerBase
 
         [MaxLength(500, ErrorMessage = "Description deve ter no máximo 500 caracteres.")]
         public string? Description { get; set; }
+
+        [Required(ErrorMessage = "SystemTokenTypeId é obrigatório.")]
+        public Guid? SystemTokenTypeId { get; set; }
     }
 
     public class UpdateRouteRequest
@@ -53,6 +56,9 @@ public class RoutesController : ControllerBase
 
         [MaxLength(500, ErrorMessage = "Description deve ter no máximo 500 caracteres.")]
         public string? Description { get; set; }
+
+        [Required(ErrorMessage = "SystemTokenTypeId é obrigatório.")]
+        public Guid? SystemTokenTypeId { get; set; }
     }
 
     public record RouteResponse(
@@ -61,13 +67,13 @@ public class RoutesController : ControllerBase
         string Name,
         string Code,
         string? Description,
+        Guid SystemTokenTypeId,
+        string SystemTokenTypeCode,
+        string SystemTokenTypeName,
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt
     );
-
-    private static RouteResponse ToResponse(AppRoute r) =>
-        new(r.Id, r.SystemId, r.Name, r.Code, r.Description, r.CreatedAt, r.UpdatedAt, r.DeletedAt);
 
     private static void ValidateNormalizedFields(
         ModelStateDictionary modelState,
@@ -97,13 +103,48 @@ public class RoutesController : ControllerBase
     private async Task<bool> SystemExistsAndActiveAsync(Guid systemId) =>
         systemId != Guid.Empty && await _db.Systems.AnyAsync(s => s.Id == systemId);
 
+    private async Task<bool> SystemTokenTypeExistsAndActiveAsync(Guid systemTokenTypeId) =>
+        systemTokenTypeId != Guid.Empty
+        && await _db.SystemTokenTypes.AnyAsync(t => t.Id == systemTokenTypeId);
+
     /// <summary>Routes ativas cujo sistema pai ainda está ativo (leitura alinhada a POST/PUT).</summary>
     private IQueryable<AppRoute> ActiveRoutesWithActiveSystem() =>
         _db.Routes.Where(r => _db.Systems.Any(s => s.Id == r.SystemId));
 
+    /// <summary>
+    /// Projeção do response com Join (left) para denormalizar Code/Name do SystemTokenType. Não usa
+    /// <c>IgnoreQueryFilters()</c> em DbSets aninhadas para evitar o efeito colateral do EF Core de
+    /// propagar o "ignore" para os operadores de raiz (que vazaria rotas soft-deletadas). Mantemos o
+    /// vínculo via Join com a tabela ATIVA de SystemTokenTypes — quando o SystemTokenType referenciado
+    /// foi soft-deletado pós-creation, o response mostra strings vazias para Code/Name (Left Join),
+    /// e o controller bloqueia o restore via <see cref="SystemTokenTypeExistsAndActiveAsync"/>.
+    /// </summary>
+    private IQueryable<RouteResponse> ProjectRouteResponses(IQueryable<AppRoute> source) =>
+        from r in source
+        join t in _db.SystemTokenTypes on r.SystemTokenTypeId equals t.Id into tg
+        from t in tg.DefaultIfEmpty()
+        select new RouteResponse(
+            r.Id,
+            r.SystemId,
+            r.Name,
+            r.Code,
+            r.Description,
+            r.SystemTokenTypeId,
+            t != null ? t.Code : string.Empty,
+            t != null ? t.Name : string.Empty,
+            r.CreatedAt,
+            r.UpdatedAt,
+            r.DeletedAt);
+
     private ActionResult InvalidSystemIdResult()
     {
         ModelState.AddModelError(nameof(CreateRouteRequest.SystemId), "SystemId inválido ou sistema inativo.");
+        return ValidationProblem(ModelState);
+    }
+
+    private ActionResult InvalidSystemTokenTypeIdResult()
+    {
+        ModelState.AddModelError(nameof(CreateRouteRequest.SystemTokenTypeId), "SystemTokenTypeId inválido ou inativo.");
         return ValidationProblem(ModelState);
     }
 
@@ -115,9 +156,13 @@ public class RoutesController : ControllerBase
             return ValidationProblem(ModelState);
 
         var systemId = request.SystemId!.Value;
+        var systemTokenTypeId = request.SystemTokenTypeId!.Value;
 
         if (!await SystemExistsAndActiveAsync(systemId))
             return InvalidSystemIdResult();
+
+        if (!await SystemTokenTypeExistsAndActiveAsync(systemTokenTypeId))
+            return InvalidSystemTokenTypeIdResult();
 
         var name = request.Name.Trim();
         var code = request.Code.Trim();
@@ -137,6 +182,7 @@ public class RoutesController : ControllerBase
             Name = name,
             Code = code,
             Description = description,
+            SystemTokenTypeId = systemTokenTypeId,
             CreatedAt = now,
             UpdatedAt = now,
             DeletedAt = null
@@ -156,24 +202,16 @@ public class RoutesController : ControllerBase
             return InvalidSystemIdResult();
         }
 
-        return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
+        var created = await ProjectRouteResponses(_db.Routes.Where(r => r.Id == entity.Id))
+            .FirstAsync();
+        return CreatedAtAction(nameof(GetById), new { id = entity.Id }, created);
     }
 
     [HttpGet]
     [Authorize(Policy = PermissionPolicies.SystemsRoutesRead)]
     public async Task<IActionResult> GetAll()
     {
-        var list = await ActiveRoutesWithActiveSystem()
-            .OrderBy(r => r.CreatedAt)
-            .Select(r => new RouteResponse(
-                r.Id,
-                r.SystemId,
-                r.Name,
-                r.Code,
-                r.Description,
-                r.CreatedAt,
-                r.UpdatedAt,
-                r.DeletedAt))
+        var list = await ProjectRouteResponses(ActiveRoutesWithActiveSystem().OrderBy(r => r.CreatedAt))
             .ToListAsync();
         return Ok(list);
     }
@@ -182,10 +220,11 @@ public class RoutesController : ControllerBase
     [Authorize(Policy = PermissionPolicies.SystemsRoutesRead)]
     public async Task<IActionResult> GetById(Guid id)
     {
-        var entity = await ActiveRoutesWithActiveSystem().FirstOrDefaultAsync(r => r.Id == id);
-        if (entity is null)
+        var dto = await ProjectRouteResponses(ActiveRoutesWithActiveSystem().Where(r => r.Id == id))
+            .FirstOrDefaultAsync();
+        if (dto is null)
             return NotFound(new { message = "Route não encontrada." });
-        return Ok(ToResponse(entity));
+        return Ok(dto);
     }
 
     [HttpPut("{id:guid}")]
@@ -200,9 +239,13 @@ public class RoutesController : ControllerBase
             return NotFound(new { message = "Route não encontrada." });
 
         var systemId = request.SystemId!.Value;
+        var systemTokenTypeId = request.SystemTokenTypeId!.Value;
 
         if (!await SystemExistsAndActiveAsync(systemId))
             return InvalidSystemIdResult();
+
+        if (!await SystemTokenTypeExistsAndActiveAsync(systemTokenTypeId))
+            return InvalidSystemTokenTypeIdResult();
 
         var name = request.Name.Trim();
         var code = request.Code.Trim();
@@ -219,6 +262,7 @@ public class RoutesController : ControllerBase
         entity.Name = name;
         entity.Code = code;
         entity.Description = description;
+        entity.SystemTokenTypeId = systemTokenTypeId;
         entity.UpdatedAt = DateTime.UtcNow;
 
         try
@@ -234,7 +278,9 @@ public class RoutesController : ControllerBase
             return InvalidSystemIdResult();
         }
 
-        return Ok(ToResponse(entity));
+        var updated = await ProjectRouteResponses(_db.Routes.Where(r => r.Id == entity.Id))
+            .FirstAsync();
+        return Ok(updated);
     }
 
     [HttpDelete("{id:guid}")]
@@ -270,6 +316,14 @@ public class RoutesController : ControllerBase
             });
         }
 
+        if (!await SystemTokenTypeExistsAndActiveAsync(entity.SystemTokenTypeId))
+        {
+            return BadRequest(new
+            {
+                message = "Não é possível restaurar a route: o SystemTokenType vinculado está inativo ou foi removido."
+            });
+        }
+
         entity.DeletedAt = null;
         entity.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
@@ -292,6 +346,14 @@ public class RoutesController : ControllerBase
         /// <summary>Code do PermissionType (ex.: read/create). Se informado, cria/reativa a Permission(Route, Type).</summary>
         [MaxLength(50, ErrorMessage = "PermissionTypeCode deve ter no máximo 50 caracteres.")]
         public string? PermissionTypeCode { get; set; }
+
+        /// <summary>
+        /// Code do SystemTokenType ("política JWT alvo"). Opcional: quando omitido, usa o code canônico
+        /// <c>default</c>. Se informado e desconhecido/inativo, o sync inteiro retorna 400 listando os codes
+        /// inválidos (mesmo padrão de PermissionTypeCode).
+        /// </summary>
+        [MaxLength(50, ErrorMessage = "SystemTokenTypeCode deve ter no máximo 50 caracteres.")]
+        public string? SystemTokenTypeCode { get; set; }
     }
 
     public class SyncRoutesRequest
@@ -349,6 +411,39 @@ public class RoutesController : ControllerBase
             return ValidationProblem(ModelState);
         }
 
+        // Resolve SystemTokenType: items podem informar SystemTokenTypeCode (opcional). Quando omitido,
+        // assume "default". Códigos desconhecidos (ou referenciando registros soft-deletados) retornam 400.
+        var explicitTokenCodes = request.Routes
+            .Where(r => !string.IsNullOrWhiteSpace(r.SystemTokenTypeCode))
+            .Select(r => r.SystemTokenTypeCode!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var requiredTokenCodes = explicitTokenCodes.Contains(SystemTokenTypeSeeder.DefaultCode, StringComparer.Ordinal)
+            ? explicitTokenCodes
+            : explicitTokenCodes.Concat(new[] { SystemTokenTypeSeeder.DefaultCode }).ToList();
+
+        var tokenIdByCode = await _db.SystemTokenTypes.AsNoTracking()
+            .Where(t => requiredTokenCodes.Contains(t.Code))
+            .ToDictionaryAsync(t => t.Code, t => t.Id, StringComparer.Ordinal);
+
+        var unknownTokenCodes = explicitTokenCodes
+            .Where(c => !tokenIdByCode.ContainsKey(c))
+            .ToList();
+        if (unknownTokenCodes.Count > 0)
+        {
+            ModelState.AddModelError(nameof(request.Routes),
+                $"SystemTokenTypeCode desconhecido(s): {string.Join(", ", unknownTokenCodes)}.");
+            return ValidationProblem(ModelState);
+        }
+
+        if (!tokenIdByCode.TryGetValue(SystemTokenTypeSeeder.DefaultCode, out var defaultTokenTypeId))
+        {
+            ModelState.AddModelError(nameof(request.Routes),
+                $"SystemTokenType '{SystemTokenTypeSeeder.DefaultCode}' não encontrado. Execute o SystemTokenTypeSeeder.");
+            return ValidationProblem(ModelState);
+        }
+
         var existingRoutes = await _db.Routes.IgnoreQueryFilters()
             .Where(r => r.SystemId == system.Id)
             .ToListAsync();
@@ -363,12 +458,17 @@ public class RoutesController : ControllerBase
 
         foreach (var item in request.Routes)
         {
+            var resolvedTokenTypeId = string.IsNullOrWhiteSpace(item.SystemTokenTypeCode)
+                ? defaultTokenTypeId
+                : tokenIdByCode[item.SystemTokenTypeCode!];
+
             Guid routeId;
             if (existingByCode.TryGetValue(item.Code, out var existing))
             {
                 var changed = false;
                 if (existing.Name != item.Name) { existing.Name = item.Name; changed = true; }
                 if (existing.Description != item.Description) { existing.Description = item.Description; changed = true; }
+                if (existing.SystemTokenTypeId != resolvedTokenTypeId) { existing.SystemTokenTypeId = resolvedTokenTypeId; changed = true; }
                 if (existing.DeletedAt is not null) { existing.DeletedAt = null; reactivated++; }
                 if (changed) updated++;
                 existing.UpdatedAt = utc;
@@ -382,6 +482,7 @@ public class RoutesController : ControllerBase
                     Name = item.Name,
                     Code = item.Code,
                     Description = item.Description,
+                    SystemTokenTypeId = resolvedTokenTypeId,
                     CreatedAt = utc,
                     UpdatedAt = utc,
                     DeletedAt = null
