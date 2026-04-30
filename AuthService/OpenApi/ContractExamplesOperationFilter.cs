@@ -52,6 +52,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             || TryApplyAuthLogoutGet(operation, normalizedPath, method)
             || TryApplySystemsListGet(operation, normalizedPath, method)
             || TryApplyRoutesListGet(operation, normalizedPath, method)
+            || TryApplyRoutesDelete(operation, normalizedPath, method)
             || TryApplyRestorePost(operation, normalizedPath, method);
     }
 
@@ -133,6 +134,33 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             return false;
 
         AddJsonResponse(operation, "200", "Restauracao concluida.", new { message = "Registro restaurado com sucesso." });
+        return true;
+    }
+
+    private static bool TryApplyRoutesDelete(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        // DELETE /systems/routes/{id} (issue #157): documentar o 409 com payload
+        // { message, linkedPermissionsCount } quando há Permissions ativas vinculadas.
+        if (method != "DELETE" || !normalizedPath.StartsWith("/systems/routes/", StringComparison.Ordinal))
+            return false;
+        if (normalizedPath.EndsWith("/restore", StringComparison.Ordinal))
+            return false;
+
+        AddNoContentResponse(operation);
+        AddErrorResponse(
+            operation,
+            "404",
+            "Route nao encontrada.",
+            new { message = "Route não encontrada." });
+        AddErrorResponse(
+            operation,
+            "409",
+            "Route possui Permissions ativas vinculadas; remova as permissoes antes de excluir.",
+            new
+            {
+                message = "Não é possível excluir a rota: existem permissões ativas vinculadas. Remova as permissões antes.",
+                linkedPermissionsCount = 1
+            });
         return true;
     }
 

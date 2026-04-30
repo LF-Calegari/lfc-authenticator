@@ -255,11 +255,13 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 | `GET` | `/api/v1/systems/routes` | Sim | `perm:SystemsRoutes.Read` |
 | `GET` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Read` |
 | `PUT` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Update` |
-| `DELETE` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Delete` |
+| `DELETE` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Delete` (¹) |
 | `POST` | `/api/v1/systems/routes/{id}/restore` | Sim | `perm:SystemsRoutes.Restore` |
 | `POST` | `/api/v1/systems/routes/sync` | Sim | `perm:SystemsRoutes.Update` |
 
 `systemId` obrigatório; `code` único globalmente. Listagens consideram sistema pai ativo.
+
+(¹) **`DELETE /api/v1/systems/routes/{id}`** retorna **409 Conflict** quando a rota tem `Permissions` ativas (`DeletedAt IS NULL`) vinculadas. Payload: `{ "message": "Não é possível excluir a rota: existem permissões ativas vinculadas. Remova as permissões antes.", "linkedPermissionsCount": N }`. No caminho 409, nenhum side-effect é persistido (rota e permissões permanecem inalteradas). Permissões soft-deletadas não bloqueiam o delete. Para forçar a remoção, exclua/soft-delete as Permissions vinculadas antes (ou use `POST /sync?prune=true` para cascade pelo catálogo).
 
 **`GET /api/v1/systems/routes`** suporta filtro/busca/paginação via query string:
 

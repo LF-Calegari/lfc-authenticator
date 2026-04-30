@@ -318,6 +318,9 @@ public class PermissionsApiTests : IAsyncLifetime
     [Fact]
     public async Task GetAll_AndGetById_ExcludeWhenRouteSoftDeleted()
     {
+        // Issue #157 alterou o contrato: rotas com Permissions ativas não podem ser deletadas (409).
+        // Para validar a invariante "permissão some do GET após soft-delete da rota",
+        // o teste primeiro soft-deleta a permissão (liberando a rota para DELETE), depois soft-deleta a rota.
         var sysId = await CreateSystemAsync("PERM_SYS_ORPH");
         var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_ORPH");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_ORPH");
@@ -325,7 +328,8 @@ public class PermissionsApiTests : IAsyncLifetime
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        await _client.DeleteAsync($"/api/v1/systems/routes/{routeId}");
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/api/v1/permissions/{dto.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/api/v1/systems/routes/{routeId}")).StatusCode);
 
         Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/api/v1/permissions/{dto.Id}")).StatusCode);
 

@@ -345,6 +345,14 @@ public class RoutesController : ControllerBase
         return Ok(updated);
     }
 
+    /// <summary>
+    /// Mensagem estável retornada no payload do <c>409</c> quando o soft-delete da rota é
+    /// bloqueado por Permissions ativas vinculadas. Mantida como constante para que testes
+    /// possam validar substring sem depender de literal duplicado.
+    /// </summary>
+    public const string DeleteBlockedByPermissionsMessage =
+        "Não é possível excluir a rota: existem permissões ativas vinculadas. Remova as permissões antes.";
+
     [HttpDelete("{id:guid}")]
     [Authorize(Policy = PermissionPolicies.SystemsRoutesDelete)]
     public async Task<IActionResult> DeleteById(Guid id)
@@ -352,6 +360,21 @@ public class RoutesController : ControllerBase
         var entity = await _db.Routes.FirstOrDefaultAsync(r => r.Id == id);
         if (entity is null)
             return NotFound(new { message = "Route não encontrada." });
+
+        // Bloqueio cooperativo: Permissions ativas (DeletedAt == null) vinculadas a esta rota
+        // impedem o soft-delete (issue #157). Permissions soft-deletadas não bloqueiam, em
+        // consonância com o filtro global do EF — a UX admin já não as enxerga. O caminho 409
+        // não persiste nenhuma alteração (entity permanece com DeletedAt/UpdatedAt originais).
+        var linkedPermissionsCount = await _db.Permissions
+            .CountAsync(p => p.RouteId == id);
+        if (linkedPermissionsCount > 0)
+        {
+            return Conflict(new
+            {
+                message = DeleteBlockedByPermissionsMessage,
+                linkedPermissionsCount
+            });
+        }
 
         entity.DeletedAt = DateTime.UtcNow;
         entity.UpdatedAt = DateTime.UtcNow;
