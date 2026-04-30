@@ -1,5 +1,5 @@
 # Raiz do repositório. Requer arquivo .env (veja .env.example).
-# Rede padrão: externa compartilhada com os demais serviços do ecossistema (ex.: Kurtto); criar antes com `docker network create` (ver README).
+# Rede padrão: externa compartilhada com os demais serviços do ecossistema; criar antes com `docker network create` (ver README).
 # Uso: docker compose up -d
 # Migrações (primeira vez / após mudar migrations): docker compose --profile migrate run --rm migrate
 # Testes de integração (PostgreSQL real): docker compose --profile test run --rm test
@@ -16,8 +16,6 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=AuthenticatorDb;Username=auth;Password=${POSTGRES_PASSWORD}"
       DEFAULT_SYSTEM_USER_PASSWORD: "${DEFAULT_SYSTEM_USER_PASSWORD:-toor}"
-      ADMIN_SYSTEM_USER_PASSWORD: "${ADMIN_SYSTEM_USER_PASSWORD:-admin}"
-      DEFAULT_USER_PASSWORD: "${DEFAULT_USER_PASSWORD:-default}"
     ports:
       - "8080:5042"
     volumes:
@@ -82,8 +80,6 @@ services:
     environment:
       AUTH_SERVICE_TEST_PG_BASE: "Host=db;Port=5432;Username=auth;Password=${POSTGRES_PASSWORD}"
       DEFAULT_SYSTEM_USER_PASSWORD: "${DEFAULT_SYSTEM_USER_PASSWORD:-toor}"
-      ADMIN_SYSTEM_USER_PASSWORD: "${ADMIN_SYSTEM_USER_PASSWORD:-admin}"
-      DEFAULT_USER_PASSWORD: "${DEFAULT_USER_PASSWORD:-default}"
     volumes:
       - .:/workspace
     working_dir: /workspace

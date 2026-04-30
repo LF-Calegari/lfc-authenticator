@@ -56,7 +56,7 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 
 - JWT com validação de **versão de sessão** (`tokenVersion` no banco + *claim* `tv` no token); **logout** invalida tokens anteriores.
 - Políticas `Authorize` no formato `perm:<Recurso>.<Ação>` (ex.: `perm:Systems.Read`), resolvidas para **GUIDs** de permissão no banco.
-- **Catálogo oficial** de sistemas, tipos de permissão e linhas de permissão criado de forma **idempotente** na subida em **Development** e **Production** (não roda no host em ambiente **Testing**; nos testes, o *factory* aplica o mesmo seed após as migrations), incluindo o sistema **Kurtto** e o seed de rotas credenciadas descrito em [Seed do sistema Kurtto](#seed-do-sistema-kurtto-lfc-kurtto).
+- **Catálogo oficial** do sistema **authenticator** (sistemas, rotas, tipos de permissão e linhas de permissão) criado de forma **idempotente** na subida em **Development** e **Production** (não roda no host em ambiente **Testing**; nos testes, o *factory* aplica o mesmo seed após as migrations).
 - CRUD com *soft delete* e `POST`/`PATCH` de restauração nos recursos documentados na [referência de rotas](#referência-de-rotas).
 
 ---
@@ -76,7 +76,7 @@ Ações padrão de permissão: `create`, `read`, `update`, `delete`, `restore`.
 
 ### Opção A — Docker Compose (recomendado para ambiente integrado)
 
-1. **Rede Docker:** crie a rede externa **uma vez** (a mesma usada pelos outros serviços do ecossistema, ex.: Kurtto) — veja [Docker Compose — Rede externa](#rede-externa).
+1. **Rede Docker:** crie a rede externa **uma vez** (a mesma usada pelos outros serviços do ecossistema) — veja [Docker Compose — Rede externa](#rede-externa).
 2. Na **raiz** do repositório: `cp .env.example .env` e ajuste `POSTGRES_PASSWORD` (use uma senha forte em produção).
 3. Subir API + PostgreSQL: `docker compose up -d --build`
 4. Aplicar migrations (primeira vez ou após alteração do modelo):  
@@ -104,8 +104,6 @@ Todas as rotas da API REST ficam sob o prefixo **`/api/v1`** (ex.: `GET http://l
 | `Auth:Jwt:Secret` | Segredo HMAC do JWT; **mínimo 32 caracteres**. Em produção, use segredo forte e armazenamento seguro — **não** commite valores reais. |
 | `Auth:Jwt:ExpirationMinutes` | Validade do access token em minutos. |
 | `DEFAULT_SYSTEM_USER_PASSWORD` | Credencial do usuário `root@email.com.br`. **Obrigatória** em Development e Production; fail-fast se ausente. No Docker Compose o default é `toor`. |
-| `ADMIN_SYSTEM_USER_PASSWORD` | Credencial do usuário `admin@email.com.br`. **Obrigatória** em Development e Production; fail-fast se ausente. No Docker Compose o default é `admin`. |
-| `DEFAULT_USER_PASSWORD` | Credencial do usuário `default@email.com.br`. **Obrigatória** em Development e Production; fail-fast se ausente. No Docker Compose o default é `default`. |
 | `AUTH_SERVICE_TEST_PG_BASE` | Obrigatória para **testes de integração**: connection string **sem** `Database` (o teste cria um banco dedicado por execução). |
 
 Exemplo de override no shell (Linux):
@@ -123,24 +121,15 @@ export Auth__Jwt__Secret="sua-chave-com-pelo-menos-32-caracteres!!"
 2. **Pipeline HTTP** — em ambientes diferentes de **Testing**, `UseHttpsRedirection`. **Swagger** e **Swagger UI** são registrados **antes** de autenticação/autorização, ficando **anônimos**.
 3. **`UseAuthentication`** / **`UseAuthorization`** — JWT *handler* valida cabeçalho `Authorization: Bearer …`, *claims* e coerência com o usuário no banco (`TokenVersion`, ativo).
 4. **`MapGroup("/api/v1").MapControllers()`** — todas as rotas de API ficam versionadas em `/api/v1`.
-5. **Pós-build (Development e Production apenas)** — `OfficialCatalogSeeder.EnsureCatalogAsync` garante o catálogo oficial com apenas os sistemas `authenticator` e `kurtto`, além dos tipos e permissões no banco; em seguida `KurttoAccessSeeder.EnsureKurttoAccessAsync` garante rotas do Kurtto (ver [Seed do sistema Kurtto](#seed-do-sistema-kurtto-lfc-kurtto)); depois `DefaultSystemUserSeeder.EnsureDefaultUserAsync` garante os usuários base `root@email.com.br`, `admin@email.com.br` e `default@email.com.br`, cria as roles `root`, `admin` e `default`, associa as permissões às roles e vincula cada usuário à sua role de forma idempotente. As credenciais são lidas das variáveis de ambiente `DEFAULT_SYSTEM_USER_PASSWORD`, `ADMIN_SYSTEM_USER_PASSWORD` e `DEFAULT_USER_PASSWORD` (fail-fast se ausentes); no banco persiste-se **somente o hash** PBKDF2. **Em produção, defina valores fortes e troque as senhas imediatamente após o primeiro acesso.**
+5. **Pós-build (Development e Production apenas)** — sequência idempotente de seeders, executada nessa ordem:
+   1. `SystemSeeder.EnsureSystemsAsync` garante o sistema `authenticator`.
+   2. `AuthenticatorRoutesSeeder.EnsureRoutesAsync` cadastra o catálogo de rotas autenticadas do authenticator (uma linha por endpoint REST exposto, com `Code` no padrão `AUTH_V1_<RECURSO>_<AÇÃO>`).
+   3. `PermissionTypeSeeder.EnsurePermissionTypesAsync` garante os 5 tipos canônicos (`create`, `read`, `update`, `delete`, `restore`).
+   4. `AuthenticatorPermissionsSeeder.EnsurePermissionsAsync` cria uma linha de `Permissions` por rota do authenticator, ligando-a ao tipo natural inferido pelo sufixo do `Code` da rota.
+   5. `RootUserSeeder.EnsureRootUserAsync` garante o usuário `root@email.com.br`, seu cliente vinculado e a role `root`. A credencial vem de `DEFAULT_SYSTEM_USER_PASSWORD` (fail-fast se ausente); no banco persiste-se **somente o hash** PBKDF2.
+   6. `RootRolePermissionsSeeder.EnsureRootRolePermissionsAsync` vincula a role `root` a **todas** as permissões do sistema authenticator.
 
-### Seed do sistema Kurtto (`lfc-kurtto`)
-
-O repositório **[lfc-kurtto](https://github.com/LF-Calegari/lfc-kurtto)** expõe a API sob `/api/v1`. Hoje, as operações que exigem credencial usam o header **`X-Admin-Secret`** (variável `ADMIN_API_SECRET` no Kurtto), não JWT do auth-service. O seed deste serviço prepara o cadastro para alinhar **permissões `perm:Kurtto.*`** e **rotas** no banco quando um *gateway* ou o próprio Kurtto passar a validar JWT.
-
-Execução: automática após o catálogo oficial (`KurttoAccessSeeder.EnsureKurttoAccessAsync` em `Program.cs` e no *factory* de testes). É **idempotente** (reexecução não duplica rotas).
-
-- **Sistema** `kurtto` (código `kurtto`) e permissões oficiais `create` / `read` / `update` / `delete` / `restore` (políticas `perm:Kurtto.Create`, …, `perm:Kurtto.Restore`).
-- **Rotas cadastradas** (`Routes.Code`), espelhando as superfícies que checam admin no Kurtto (`src/controllers/UrlController.ts`, `requireAdminOperation` de `src/utils/adminAuth.ts`):
-
-| `Routes.Code` | Superfície Kurtto | Política JWT alvo (auth-service) |
-|----------------|-------------------|----------------------------------|
-| `KURTTO_V1_URLS_LIST_INCLUDE_DELETED` | `GET /api/v1/urls` com `include_deleted=true` | `perm:Kurtto.Read` |
-| `KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED` | `GET /api/v1/urls/{code}` com `include_deleted=true` | `perm:Kurtto.Read` |
-| `KURTTO_V1_URLS_PATCH_RESTORE` | `PATCH /api/v1/urls/{code}/restore` | `perm:Kurtto.Restore` |
-
-**Checklist de auditoria (cobertura das rotas credenciadas no Kurtto):** no repositório `lfc-kurtto`, todas as chamadas a `requireAdminOperation` estão no `UrlController` (listagem e leitura com `include_deleted`, e `restore`). Não há outros controllers com esse *gate* na API `/api/v1`. Os demais endpoints de URLs (`POST`, `PATCH` sem restore, `DELETE`) e os *health checks* (`/api/v1/health`, `/live`, `/ready`) permanecem **anônimos** no Kurtto atual; não entram neste seed até haver exigência explícita de credencial nelas.
+   **Em produção, defina uma senha forte para o root e troque imediatamente após o primeiro acesso.** Em ambiente `Testing` o pipeline de seeders é executado pelo `WebApplicationFactory` (não pelo `Program.cs`).
 
 ---
 
@@ -187,6 +176,7 @@ AuthService/
 ### Endpoints somente autenticados (sem política `perm:`)
 
 - `GET /api/v1/auth/verify-token`
+- `GET /api/v1/auth/permissions`
 - `GET /api/v1/auth/logout`
 
 ### Anonimato permitido
@@ -233,7 +223,16 @@ Legenda:
 |--------|----------|------|-----------|
 | `POST` | `/api/v1/auth/login` | Não | — |
 | `GET` | `/api/v1/auth/verify-token` | Sim | — |
+| `GET` | `/api/v1/auth/permissions` | Sim | — |
 | `GET` | `/api/v1/auth/logout` | Sim | — |
+
+**`POST /api/v1/auth/login`** — body: `email`, `password`, `systemId` (todos obrigatórios). Resposta: `{ token }`.
+
+**`GET /api/v1/auth/verify-token`** — headers: `Authorization: Bearer <jwt>`, `X-System-Id: <systemId>`, `X-Route-Code: <codeDaRota>`. Resposta enxuta: `{ valid, issuedAt, expiresAt }`. Devolve 403 quando a rota informada não está no catálogo do usuário.
+
+**`GET /api/v1/auth/permissions`** — headers: `Authorization: Bearer <jwt>`, `X-System-Id: <systemId>`. Resposta: `{ user: { id, name, email, identity }, routes: [<routeCode>, ...] }` listando o catálogo de rotas seedadas do sistema do header.
+
+**`GET /api/v1/auth/logout`** — headers: `Authorization: Bearer <jwt>`. Incrementa `TokenVersion` e invalida tokens anteriores.
 
 ### Sistemas — `/api/v1/systems`
 
@@ -258,8 +257,22 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 | `PUT` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Update` |
 | `DELETE` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Delete` |
 | `POST` | `/api/v1/systems/routes/{id}/restore` | Sim | `perm:SystemsRoutes.Restore` |
+| `POST` | `/api/v1/systems/routes/sync` | Sim | `perm:SystemsRoutes.Update` |
 
 `systemId` obrigatório; `code` único globalmente. Listagens consideram sistema pai ativo.
+
+**`POST /api/v1/systems/routes/sync`** — auto-registro do catálogo de rotas por um sistema-cliente. Body:
+
+```json
+{
+  "systemCode": "kurtto",
+  "routes": [
+    { "code": "KURTTO_V1_X_LIST", "name": "GET /api/v1/x", "description": "...", "permissionTypeCode": "read" }
+  ]
+}
+```
+
+Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema que **sumirem** do payload são soft-deletadas junto com suas Permissions vinculadas. Quando `permissionTypeCode` é informado, a `Permission(Route, Type)` correspondente é criada/reativada automaticamente. Resposta: `{ created, updated, reactivated, deleted }`. Erros: 404 (`systemCode` desconhecido), 400 (`permissionTypeCode` desconhecido ou `code` duplicado no payload), 409 (`code` já em uso por outro sistema — `UX_Routes_Code` é unique global).
 
 ### Usuários — `/api/v1/users`
 
@@ -272,6 +285,10 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 | `PUT` | `/api/v1/users/{id}/password` | Sim | `perm:Users.Update` |
 | `DELETE` | `/api/v1/users/{id}` | Sim | `perm:Users.Delete` |
 | `POST` | `/api/v1/users/{id}/restore` | Sim | `perm:Users.Restore` |
+| `POST` | `/api/v1/users/{id}/permissions` | Sim | `perm:Users.Update` |
+| `DELETE` | `/api/v1/users/{id}/permissions/{permissionId}` | Sim | `perm:Users.Update` |
+| `POST` | `/api/v1/users/{id}/roles` | Sim | `perm:Users.Update` |
+| `DELETE` | `/api/v1/users/{id}/roles/{roleId}` | Sim | `perm:Users.Update` |
 
 **POST:** `name`, `email`, `password`, `identity`, `active` (opcional, padrão `true`). **PUT** usuário: `name`, `email`, `identity`, `active` (sem senha). Email normalizado (ex.: minúsculas).
 
@@ -330,6 +347,8 @@ Regras de negócio principais: `type` imutável (`PF`/`PJ`), validação de CPF/
 | `PUT` | `/api/v1/roles/{id}` | Sim | `perm:Roles.Update` |
 | `DELETE` | `/api/v1/roles/{id}` | Sim | `perm:Roles.Delete` |
 | `POST` | `/api/v1/roles/{id}/restore` | Sim | `perm:Roles.Restore` |
+| `POST` | `/api/v1/roles/{id}/permissions` | Sim | `perm:Roles.Update` |
+| `DELETE` | `/api/v1/roles/{id}/permissions/{permissionId}` | Sim | `perm:Roles.Update` |
 
 ### Permissões — `/api/v1/permissions`
 
@@ -342,7 +361,7 @@ Regras de negócio principais: `type` imutável (`PF`/`PJ`), validação de CPF/
 | `DELETE` | `/api/v1/permissions/{id}` | Sim | `perm:Permissions.Delete` |
 | `POST` | `/api/v1/permissions/{id}/restore` | Sim | `perm:Permissions.Restore` |
 
-Corpo: `systemId`, `permissionTypeId`, `description` (opcional). Restauração exige referências ativas coerentes com as regras do controller.
+Corpo: `routeId`, `permissionTypeId`, `description` (opcional). Restauração exige referências ativas coerentes com as regras do controller.
 
 ---
 
@@ -367,14 +386,26 @@ curl -s "http://localhost:5052/api/v1/systems" \
   -H "Authorization: Bearer SEU_JWT_AQUI"
 ```
 
-**Verificar token e permissões efetivas (ids)**
+**Verificar validade do token e autorização para uma rota**
 
 ```bash
 curl -s "http://localhost:5052/api/v1/auth/verify-token" \
-  -H "Authorization: Bearer SEU_JWT_AQUI"
+  -H "Authorization: Bearer SEU_JWT_AQUI" \
+  -H "X-System-Id: 11111111-1111-1111-1111-111111111111" \
+  -H "X-Route-Code: AUTH_V1_USERS_LIST"
 ```
 
-Resposta (200): objeto com `id`, `name`, `email`, `identity` e `permissions` (lista de GUIDs).
+Resposta (200): `{ valid, issuedAt, expiresAt }`. Devolve **403** se o usuário não tem a rota informada autorizada e **400** se a rota não existe no sistema do header.
+
+**Catálogo de rotas do sistema do usuário**
+
+```bash
+curl -s "http://localhost:5052/api/v1/auth/permissions" \
+  -H "Authorization: Bearer SEU_JWT_AQUI" \
+  -H "X-System-Id: 11111111-1111-1111-1111-111111111111"
+```
+
+Resposta (200): `{ user: { id, name, email, identity }, routes: [<routeCode>, ...] }`.
 
 **Health check**
 
@@ -405,7 +436,7 @@ Mensagens de autenticação e de regra de negócio costumam vir como JSON com pr
 
 O arquivo **`docker-compose.yml`** está na **raiz** do repositório.
 
-Este serviço faz parte de um **sistema maior**: em Docker, ele deve usar a **mesma rede externa** que os demais projetos (por exemplo, **Kurtto Service**) para que os containers se comuniquem por nome de host interno.
+Este serviço faz parte de um **sistema maior**: em Docker, ele deve usar a **mesma rede externa** que os demais projetos para que os containers se comuniquem por nome de host interno.
 
 ### Rede externa
 
@@ -484,7 +515,7 @@ dotnet ef migrations add NomeDescritivoDaMigration \
 dotnet test AuthService.Tests/AuthService.Tests.csproj --filter "FullyQualifiedName~UnitTests"
 ```
 
-- Utilizam **PostgreSQL real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa seeders de catálogo, seed Kurtto (`KurttoAccessSeeder`) e usuários base (`root/admin/default`), e remove o banco ao final.
+- Utilizam **PostgreSQL real**; cada execução cria um banco `auth_svc_it_<guid>`, aplica migrations, executa o pipeline de seeders (`SystemSeeder` → `AuthenticatorRoutesSeeder` → `PermissionTypeSeeder` → `AuthenticatorPermissionsSeeder` → `RootUserSeeder` → `RootRolePermissionsSeeder`) e remove o banco ao final.
 - **Obrigatório** definir `AUTH_SERVICE_TEST_PG_BASE` **sem** `Database`:
 
 ```bash
@@ -515,7 +546,7 @@ Sem essa variável, o `WebApplicationFactory` falha na construção — comporta
 - **Nunca** commitar segredos reais; use variáveis de ambiente ou cofres em produção.
 - Troque `Auth:Jwt:Secret` em qualquer ambiente exposto; o repositório contém valores apenas para desenvolvimento.
 - **HTTPS** em produção; em desenvolvimento local o perfil pode usar só HTTP.
-- Após alterar permissões ou papéis, clientes podem chamar **`/api/v1/auth/verify-token`** para obter a lista atualizada de `permissions`.
+- Após alterar rotas ou permissões, clientes podem chamar **`GET /api/v1/auth/permissions`** para obter o catálogo atualizado de `routes` do sistema; para validar acesso a uma rota concreta, use **`GET /api/v1/auth/verify-token`** com o header `X-Route-Code`.
 - Mantenha o **README** alinhado às rotas ao introduzir novos controllers ou políticas.
 
 ---

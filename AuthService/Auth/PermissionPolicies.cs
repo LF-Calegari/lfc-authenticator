@@ -50,10 +50,4 @@ public static class PermissionPolicies
     public const string RolesUpdate = "perm:Roles.Update";
     public const string RolesDelete = "perm:Roles.Delete";
     public const string RolesRestore = "perm:Roles.Restore";
-
-    public const string KurttoCreate = "perm:Kurtto.Create";
-    public const string KurttoRead = "perm:Kurtto.Read";
-    public const string KurttoUpdate = "perm:Kurtto.Update";
-    public const string KurttoDelete = "perm:Kurtto.Delete";
-    public const string KurttoRestore = "perm:Kurtto.Restore";
 }

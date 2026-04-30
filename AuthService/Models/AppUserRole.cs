@@ -10,8 +10,7 @@ namespace AuthService.Models;
 public class AppUserRole : ISoftDelete
 {
     [Key]
-    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
-    public int Id { get; set; }
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
     public Guid UserId { get; set; }

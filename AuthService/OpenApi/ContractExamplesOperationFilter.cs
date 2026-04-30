@@ -7,9 +7,7 @@ namespace AuthService.OpenApi;
 
 public sealed class ContractExamplesOperationFilter : IOperationFilter
 {
-    private static readonly string[] ExamplePermissions = ["11111111-1111-1111-1111-111111111111"];
-    private static readonly string[] ExamplePermissionCodes = ["perm:Users.Read", "perm:Roles.Read"];
-    private static readonly string[] ExampleRouteCodes = ["KURTTO_V1_URLS_LIST_INCLUDE_DELETED"];
+    private static readonly string[] ExampleRoutes = ["AUTH_V1_USERS_LIST"];
 
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
@@ -46,6 +44,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             || TryApplyAuthVerifyTokenGet(operation, normalizedPath, method)
             || TryApplyAuthPermissionsGet(operation, normalizedPath, method)
             || TryApplyAuthLogoutGet(operation, normalizedPath, method)
+            || TryApplySystemsListGet(operation, normalizedPath, method)
             || TryApplyRestorePost(operation, normalizedPath, method);
     }
 
@@ -97,7 +96,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             return false;
 
         EnsureSystemIdHeaderParameter(operation);
-        AddJsonResponse(operation, "200", "Catalogo de autorizacao do usuario no sistema solicitado.", new
+        AddJsonResponse(operation, "200", "Catalogo de rotas do sistema solicitado.", new
         {
             user = new
             {
@@ -106,9 +105,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
                 email = "user@example.com",
                 identity = 1
             },
-            permissions = ExamplePermissions,
-            permissionCodes = ExamplePermissionCodes,
-            routeCodes = ExampleRouteCodes
+            routes = ExampleRoutes
         });
         AddErrorResponse(operation, "400", "Header X-System-Id ausente ou sistema invalido/inativo.", new { message = "Header X-System-Id é obrigatório." });
         return true;
@@ -130,6 +127,71 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
 
         AddJsonResponse(operation, "200", "Restauracao concluida.", new { message = "Registro restaurado com sucesso." });
         return true;
+    }
+
+    private static bool TryApplySystemsListGet(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        if (normalizedPath != "/systems" || method != "GET")
+            return false;
+
+        EnsureSystemsListQueryParameters(operation);
+
+        AddJsonResponse(operation, "200", "Pagina de sistemas que casam com os filtros aplicados.", new
+        {
+            data = new[]
+            {
+                new
+                {
+                    id = "00000000-0000-0000-0000-000000000000",
+                    name = "Admin GUI",
+                    code = "ADMIN_GUI",
+                    description = "Painel administrativo.",
+                    createdAt = "2026-04-26T18:00:00+00:00",
+                    updatedAt = "2026-04-26T18:00:00+00:00",
+                    deletedAt = (string?)null
+                }
+            },
+            page = 1,
+            pageSize = 20,
+            total = 1
+        });
+        AddErrorResponse(
+            operation,
+            "400",
+            "Parametros de paginacao invalidos (page <= 0 ou pageSize fora do intervalo permitido).",
+            new { message = "pageSize deve estar entre 1 e 100." });
+        return true;
+    }
+
+    private static void EnsureSystemsListQueryParameters(OpenApiOperation operation)
+    {
+        EnsureQueryParameterDescription(
+            operation,
+            "q",
+            "Termo de busca case-insensitive em Name e Code (matching parcial via ILIKE).");
+        EnsureQueryParameterDescription(
+            operation,
+            "page",
+            "Numero da pagina (1-based, default 1). Valores <= 0 retornam 400.");
+        EnsureQueryParameterDescription(
+            operation,
+            "pageSize",
+            "Tamanho da pagina (default 20, maximo 100). Valores <= 0 ou > 100 retornam 400.");
+        EnsureQueryParameterDescription(
+            operation,
+            "includeDeleted",
+            "Quando true, inclui registros soft-deleted (DeletedAt != null). Default false.");
+    }
+
+    private static void EnsureQueryParameterDescription(OpenApiOperation operation, string parameterName, string description)
+    {
+        operation.Parameters ??= [];
+        var existing = operation.Parameters.FirstOrDefault(p =>
+            p.In == ParameterLocation.Query
+            && string.Equals(p.Name, parameterName, StringComparison.OrdinalIgnoreCase));
+
+        if (existing is OpenApiParameter mutable && string.IsNullOrWhiteSpace(mutable.Description))
+            mutable.Description = description;
     }
 
     /// <summary>
@@ -228,8 +290,8 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
         // Parâmetro também gerado automaticamente via [FromHeader] no controller. Aqui apenas
         // garantimos que o header aparece como obrigatório no Swagger e com descrição clara.
         const string headerDescription =
-            "Código da rota concreta a ser autorizada (ex.: KURTTO_V1_URLS_LIST_INCLUDE_DELETED). "
-            + "Deve estar entre as routeCodes do usuário no sistema do header X-System-Id.";
+            "Código da rota concreta a ser autorizada (ex.: AUTH_V1_USERS_LIST). "
+            + "Deve estar entre as routes do usuário no sistema do header X-System-Id.";
 
         EnsureRequiredHeaderParameter(operation, AuthController.RouteCodeHeader, headerDescription);
     }

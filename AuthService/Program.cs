@@ -103,10 +103,12 @@ if (!app.Environment.IsEnvironment("Testing"))
     {
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.MigrateAsync();
-        await OfficialCatalogSeeder.EnsureCatalogAsync(db);
-        await KurttoAccessSeeder.EnsureKurttoAccessAsync(db);
-        await DefaultSystemUserSeeder.EnsureDefaultUserAsync(db);
-        await LegacyUsersClientSeeder.EnsureLegacyUsersHaveClientAsync(db);
+        await SystemSeeder.EnsureSystemsAsync(db);
+        await AuthenticatorRoutesSeeder.EnsureRoutesAsync(db);
+        await PermissionTypeSeeder.EnsurePermissionTypesAsync(db);
+        await AuthenticatorPermissionsSeeder.EnsurePermissionsAsync(db);
+        await RootUserSeeder.EnsureRootUserAsync(db);
+        await RootRolePermissionsSeeder.EnsureRootRolePermissionsAsync(db);
     }
 }
 

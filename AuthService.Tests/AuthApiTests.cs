@@ -17,13 +17,10 @@ namespace AuthService.Tests;
 public class AuthApiTests : IAsyncLifetime
 {
     private const string TestJwtSecret = "integration-tests-jwt-secret-key-32chars!!";
-    private const string KurttoListRoute = "KURTTO_V1_URLS_LIST_INCLUDE_DELETED";
-    private const string KurttoRestoreRoute = "KURTTO_V1_URLS_PATCH_RESTORE";
-    private static readonly string[] ExpectedKurttoReadOnlyCodes = new[] { "perm:Kurtto.Read" };
+    private const string DefaultRouteCode = "AUTH_V1_USERS_LIST";
     private WebAppFactory _factory = null!;
     private HttpClient _admin = null!;
     private HttpClient _anon = null!;
-    private Guid _kurttoSystemId;
     private Guid _authenticatorSystemId;
 
     public async Task InitializeAsync()
@@ -31,7 +28,6 @@ public class AuthApiTests : IAsyncLifetime
         _factory = new WebAppFactory();
         _admin = await TestApiClient.CreateAuthenticatedAsync(_factory);
         _anon = _factory.CreateApiClient();
-        _kurttoSystemId = await TestApiClient.GetSystemIdAsync(_factory, "kurtto");
         _authenticatorSystemId = await TestApiClient.GetSystemIdAsync(_factory, "authenticator");
     }
 
@@ -43,7 +39,7 @@ public class AuthApiTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private object LoginBody(string email, string password) => new { email, password, systemId = _kurttoSystemId };
+    private object LoginBody(string email, string password) => new { email, password, systemId = _authenticatorSystemId };
 
     private static object LoginBodyForSystem(string email, string password, Guid systemId) =>
         new { email, password, systemId };
@@ -71,9 +67,7 @@ public class AuthApiTests : IAsyncLifetime
     private sealed class PermissionsDto
     {
         public PermissionsUserDto? User { get; set; }
-        public List<Guid>? Permissions { get; set; }
-        public List<string>? PermissionCodes { get; set; }
-        public List<string>? RouteCodes { get; set; }
+        public List<string>? Routes { get; set; }
     }
 
     [Fact]
@@ -168,10 +162,10 @@ public class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task VerifyToken_ValidTokenAndAuthorizedRoute_ReturnsMinimalPayload()
     {
-        // Root tem todas as permissões, então a rota seedada do kurtto está autorizada para ele.
+        // Root tem todas as permissões, então a rota seedada do authenticator está autorizada para ele.
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
-        // O _admin já tem Authorization e X-System-Id (kurtto). Falta só X-Route-Code.
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        // O _admin já tem Authorization e X-System-Id (authenticator). Falta só X-Route-Code.
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _admin.SendAsync(req);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -187,7 +181,7 @@ public class AuthApiTests : IAsyncLifetime
     public async Task VerifyToken_PayloadDoesNotExposeUserOrPermissionCatalogs()
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _admin.SendAsync(req);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -198,8 +192,7 @@ public class AuthApiTests : IAsyncLifetime
         Assert.DoesNotContain("\"name\"", raw, StringComparison.Ordinal);
         Assert.DoesNotContain("\"identity\"", raw, StringComparison.Ordinal);
         Assert.DoesNotContain("permissions", raw, StringComparison.Ordinal);
-        Assert.DoesNotContain("permissionCodes", raw, StringComparison.Ordinal);
-        Assert.DoesNotContain("routeCodes", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"routes\"", raw, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -230,94 +223,6 @@ public class AuthApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task VerifyToken_RouteOfDifferentSystem_ReturnsBadRequest()
-    {
-        // Uma rota do kurtto mas o header aponta para o sistema authenticator => 400 (rota desconhecida nesse sistema).
-        using var authClient = await TestApiClient.CreateAuthenticatedAsync(_factory, "authenticator");
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
-        var response = await authClient.SendAsync(req);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task VerifyToken_UserWithoutKurttoPermissions_ReturnsForbidden()
-    {
-        // Cria usuário sem permissões — token válido, mas não tem direito à rota kurtto.
-        await _admin.PostAsJsonAsync("/api/v1/users",
-            new { name = "No Perms", email = "no.perms.verify@example.com", password = "SenhaSegura1!", identity = 1, active = true },
-            TestApiClient.JsonOptions);
-
-        var login = await _anon.PostAsJsonAsync("/api/v1/auth/login",
-            LoginBody("no.perms.verify@example.com", "SenhaSegura1!"), TestApiClient.JsonOptions);
-        var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(loginDto);
-
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
-        req.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
-        var response = await _anon.SendAsync(req);
-
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task VerifyToken_UserWithKurttoReadButNotRestore_ReturnsForbiddenForRestoreRoute()
-    {
-        // Usuário só com kurtto.read — pode acessar rotas read-only do kurtto, mas não a de restore.
-        await _admin.PostAsJsonAsync("/api/v1/users",
-            new { name = "Reader", email = "reader.restore@example.com", password = "SenhaSegura1!", identity = 1, active = true },
-            TestApiClient.JsonOptions);
-
-        await using (var scope = _factory.Services.CreateAsyncScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var user = await db.Users.AsNoTracking().FirstAsync(u => u.Email == "reader.restore@example.com");
-            var kurttoReadId = await db.Permissions.AsNoTracking()
-                .Where(p => p.SystemId == db.Systems.Where(s => s.Code == "kurtto").Select(s => s.Id).First()
-                    && p.PermissionTypeId == db.PermissionTypes.Where(t => t.Code == "read").Select(t => t.Id).First())
-                .Select(p => p.Id)
-                .FirstAsync();
-
-            db.UserPermissions.Add(new AppUserPermission
-            {
-                UserId = user.Id,
-                PermissionId = kurttoReadId,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
-                DeletedAt = null
-            });
-            await db.SaveChangesAsync();
-        }
-
-        var login = await _anon.PostAsJsonAsync("/api/v1/auth/login",
-            LoginBody("reader.restore@example.com", "SenhaSegura1!"), TestApiClient.JsonOptions);
-        var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(loginDto);
-
-        // Read-only consegue listar.
-        using (var listReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token"))
-        {
-            listReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
-            listReq.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
-            listReq.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
-            var listRes = await _anon.SendAsync(listReq);
-            Assert.Equal(HttpStatusCode.OK, listRes.StatusCode);
-        }
-
-        // Read-only NÃO pode acessar restore.
-        using (var restoreReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token"))
-        {
-            restoreReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
-            restoreReq.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
-            restoreReq.Headers.Add(AuthController.RouteCodeHeader, KurttoRestoreRoute);
-            var restoreRes = await _anon.SendAsync(restoreReq);
-            Assert.Equal(HttpStatusCode.Forbidden, restoreRes.StatusCode);
-        }
-    }
-
-    [Fact]
     public async Task Logout_ThenVerifyToken_ReturnsUnauthorized()
     {
         await _admin.PostAsJsonAsync("/api/v1/users",
@@ -340,8 +245,8 @@ public class AuthApiTests : IAsyncLifetime
         using (var verifyReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token"))
         {
             verifyReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            verifyReq.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
-            verifyReq.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+            verifyReq.Headers.Add(AuthController.SystemIdHeader, _authenticatorSystemId.ToString("D"));
+            verifyReq.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
             var verifyRes = await _anon.SendAsync(verifyReq);
             Assert.Equal(HttpStatusCode.Unauthorized, verifyRes.StatusCode);
         }
@@ -410,15 +315,15 @@ public class AuthApiTests : IAsyncLifetime
             {
                 ["sub"] = Guid.NewGuid().ToString("D"),
                 ["tv"] = 0,
-                ["sys"] = _kurttoSystemId.ToString("D"),
+                ["sys"] = _authenticatorSystemId.ToString("D"),
                 ["iat"] = DateTimeOffset.UtcNow.AddMinutes(-65).ToUnixTimeSeconds(),
                 ["exp"] = DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeSeconds()
             });
 
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        req.Headers.Add(AuthController.SystemIdHeader, _authenticatorSystemId.ToString("D"));
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _anon.SendAsync(req);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -432,15 +337,15 @@ public class AuthApiTests : IAsyncLifetime
             {
                 ["sub"] = Guid.NewGuid().ToString("D"),
                 ["tv"] = 0,
-                ["sys"] = _kurttoSystemId.ToString("D"),
+                ["sys"] = _authenticatorSystemId.ToString("D"),
                 ["iat"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 ["exp"] = DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds()
             });
 
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        req.Headers.Add(AuthController.SystemIdHeader, _authenticatorSystemId.ToString("D"));
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _anon.SendAsync(req);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -453,15 +358,15 @@ public class AuthApiTests : IAsyncLifetime
             new Dictionary<string, object>
             {
                 ["tv"] = 0,
-                ["sys"] = _kurttoSystemId.ToString("D"),
+                ["sys"] = _authenticatorSystemId.ToString("D"),
                 ["iat"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 ["exp"] = DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds()
             });
 
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        req.Headers.Add(AuthController.SystemIdHeader, _authenticatorSystemId.ToString("D"));
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _anon.SendAsync(req);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -474,15 +379,15 @@ public class AuthApiTests : IAsyncLifetime
             new Dictionary<string, object>
             {
                 ["sub"] = Guid.NewGuid().ToString("D"),
-                ["sys"] = _kurttoSystemId.ToString("D"),
+                ["sys"] = _authenticatorSystemId.ToString("D"),
                 ["iat"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 ["exp"] = DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds()
             });
 
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        req.Headers.Add(AuthController.SystemIdHeader, _authenticatorSystemId.ToString("D"));
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _anon.SendAsync(req);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -599,7 +504,7 @@ public class AuthApiTests : IAsyncLifetime
             TestApiClient.JsonOptions);
 
         var response = await _anon.PostAsJsonAsync("/api/v1/auth/login",
-            new { email = "sys.ok@example.com", password = "SenhaSegura1!", systemId = _kurttoSystemId },
+            new { email = "sys.ok@example.com", password = "SenhaSegura1!", systemId = _authenticatorSystemId },
             TestApiClient.JsonOptions);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -607,7 +512,7 @@ public class AuthApiTests : IAsyncLifetime
         Assert.NotNull(dto);
 
         var payload = ReadJwtPayload(dto.Token);
-        Assert.Equal(_kurttoSystemId.ToString("D"), payload.GetProperty("sys").GetString());
+        Assert.Equal(_authenticatorSystemId.ToString("D"), payload.GetProperty("sys").GetString());
     }
 
     [Fact]
@@ -625,7 +530,7 @@ public class AuthApiTests : IAsyncLifetime
 
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _anon.SendAsync(req);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -646,7 +551,7 @@ public class AuthApiTests : IAsyncLifetime
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
         req.Headers.Add(AuthController.SystemIdHeader, "not-a-guid");
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _anon.SendAsync(req);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -667,7 +572,7 @@ public class AuthApiTests : IAsyncLifetime
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
         req.Headers.Add(AuthController.SystemIdHeader, Guid.NewGuid().ToString("D"));
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _anon.SendAsync(req);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -707,32 +612,10 @@ public class AuthApiTests : IAsyncLifetime
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
         req.Headers.Add(AuthController.SystemIdHeader, deletedSystemId.ToString("D"));
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _anon.SendAsync(req);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task VerifyToken_CrossSystemToken_ReturnsUnauthorized()
-    {
-        // Login no sistema kurtto e tenta verify com header X-System-Id apontando pro sistema authenticator.
-        await _admin.PostAsJsonAsync("/api/v1/users",
-            new { name = "Cross Sys User", email = "cross.sys@example.com", password = "SenhaSegura1!", identity = 1, active = true },
-            TestApiClient.JsonOptions);
-
-        var login = await _anon.PostAsJsonAsync("/api/v1/auth/login",
-            LoginBodyForSystem("cross.sys@example.com", "SenhaSegura1!", _kurttoSystemId), TestApiClient.JsonOptions);
-        var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(loginDto);
-
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
-        req.Headers.Add(AuthController.SystemIdHeader, _authenticatorSystemId.ToString("D"));
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
-        var response = await _anon.SendAsync(req);
-
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
@@ -751,8 +634,8 @@ public class AuthApiTests : IAsyncLifetime
 
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        req.Headers.Add(AuthController.SystemIdHeader, _authenticatorSystemId.ToString("D"));
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _anon.SendAsync(req);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -768,14 +651,14 @@ public class AuthApiTests : IAsyncLifetime
             {
                 ["sub"] = Guid.NewGuid().ToString("D"),
                 ["tv"] = 0,
-                ["sys"] = _kurttoSystemId.ToString("D"),
+                ["sys"] = _authenticatorSystemId.ToString("D"),
                 ["exp"] = DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds()
             });
 
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
-        req.Headers.Add(AuthController.RouteCodeHeader, KurttoListRoute);
+        req.Headers.Add(AuthController.SystemIdHeader, _authenticatorSystemId.ToString("D"));
+        req.Headers.Add(AuthController.RouteCodeHeader, DefaultRouteCode);
         var response = await _anon.SendAsync(req);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -783,9 +666,9 @@ public class AuthApiTests : IAsyncLifetime
 
     // -----------------------------------------------------------------------
     // GET /auth/permissions — testes do novo endpoint que assume o catálogo
-    // antes embutido no verify-token. Cobertura: 200 (root), 200 (perm:Kurtto.Read),
-    // 200 (sem permissões), 401 (sem token), 401 (cross-system), 401 (logout),
-    // 400 (sem header / malformado / sistema desconhecido / sistema deletado).
+    // antes embutido no verify-token. Cobertura: 200 (root), 200 (sem permissões),
+    // 401 (sem token), 401 (logout), 400 (sem header / malformado /
+    // sistema desconhecido / sistema deletado).
     // -----------------------------------------------------------------------
 
     [Fact]
@@ -797,86 +680,24 @@ public class AuthApiTests : IAsyncLifetime
         var body = await response.Content.ReadFromJsonAsync<PermissionsDto>(TestApiClient.JsonOptions);
         Assert.NotNull(body);
         Assert.NotNull(body.User);
-        Assert.Equal(DefaultSystemUserSeeder.RootEmail, body.User.Email);
-        Assert.NotNull(body.Permissions);
-        Assert.NotEmpty(body.Permissions);
-        Assert.NotNull(body.PermissionCodes);
-        Assert.NotNull(body.RouteCodes);
+        Assert.Equal(RootUserSeeder.RootEmail, body.User.Email);
+        Assert.NotNull(body.Routes);
 
-        var expectedKurttoCodes = new[]
+        var expectedRoutes = new[]
         {
-            "perm:Kurtto.Create", "perm:Kurtto.Read", "perm:Kurtto.Update",
-            "perm:Kurtto.Delete", "perm:Kurtto.Restore"
+            "AUTH_V1_USERS_LIST",
+            "AUTH_V1_AUTH_PERMISSIONS",
+            "AUTH_V1_ROLES_CREATE"
         };
-        foreach (var code in expectedKurttoCodes)
-            Assert.Contains(code, body.PermissionCodes);
-
-        var expectedRouteCodes = new[]
-        {
-            "KURTTO_V1_URLS_GET_BY_CODE_INCLUDE_DELETED",
-            "KURTTO_V1_URLS_LIST_INCLUDE_DELETED",
-            "KURTTO_V1_URLS_PATCH_RESTORE"
-        };
-        foreach (var code in expectedRouteCodes)
-            Assert.Contains(code, body.RouteCodes);
-
-        // Permission codes seguem padrão perm:<Recurso>.<Acao>.
-        foreach (var code in body.PermissionCodes)
-            Assert.StartsWith("perm:", code, StringComparison.Ordinal);
+        foreach (var code in expectedRoutes)
+            Assert.Contains(code, body.Routes);
     }
 
     [Fact]
-    public async Task Permissions_UserWithOnlyKurttoRead_ReturnsKurttoReadCodeOnly()
+    public async Task Permissions_UserWithoutPermissions_ReturnsSystemRouteCatalog()
     {
-        await _admin.PostAsJsonAsync("/api/v1/users",
-            new { name = "Perms Reader", email = "perms.reader@example.com", password = "SenhaSegura1!", identity = 1, active = true },
-            TestApiClient.JsonOptions);
-
-        await using (var scope = _factory.Services.CreateAsyncScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var user = await db.Users.AsNoTracking().FirstAsync(u => u.Email == "perms.reader@example.com");
-            var kurttoReadId = await db.Permissions.AsNoTracking()
-                .Where(p => p.SystemId == db.Systems.Where(s => s.Code == "kurtto").Select(s => s.Id).First()
-                    && p.PermissionTypeId == db.PermissionTypes.Where(t => t.Code == "read").Select(t => t.Id).First())
-                .Select(p => p.Id)
-                .FirstAsync();
-
-            db.UserPermissions.Add(new AppUserPermission
-            {
-                UserId = user.Id,
-                PermissionId = kurttoReadId,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
-                DeletedAt = null
-            });
-            await db.SaveChangesAsync();
-        }
-
-        var login = await _anon.PostAsJsonAsync("/api/v1/auth/login",
-            LoginBody("perms.reader@example.com", "SenhaSegura1!"), TestApiClient.JsonOptions);
-        var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(loginDto);
-
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/permissions");
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
-        req.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
-        var response = await _anon.SendAsync(req);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        var body = await response.Content.ReadFromJsonAsync<PermissionsDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(body);
-        Assert.NotNull(body.User);
-        Assert.Equal("perms.reader@example.com", body.User.Email);
-        Assert.NotNull(body.PermissionCodes);
-        Assert.Equal(ExpectedKurttoReadOnlyCodes, body.PermissionCodes);
-        // Não vaza códigos de outros recursos.
-        Assert.DoesNotContain("perm:Users.Read", body.PermissionCodes);
-    }
-
-    [Fact]
-    public async Task Permissions_UserWithoutPermissions_ReturnsEmptyCatalogs()
-    {
+        // Mesmo sem permissões atribuídas, routes reflete o catálogo do sistema do header
+        // (a resposta não filtra rotas por permissão de usuário hoje).
         await _admin.PostAsJsonAsync("/api/v1/users",
             new { name = "Empty Perms", email = "empty.perms@example.com", password = "SenhaSegura1!", identity = 1, active = true },
             TestApiClient.JsonOptions);
@@ -888,28 +709,24 @@ public class AuthApiTests : IAsyncLifetime
 
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/permissions");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
-        req.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
+        req.Headers.Add(AuthController.SystemIdHeader, _authenticatorSystemId.ToString("D"));
         var response = await _anon.SendAsync(req);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var body = await response.Content.ReadFromJsonAsync<PermissionsDto>(TestApiClient.JsonOptions);
         Assert.NotNull(body);
         Assert.NotNull(body.User);
-        Assert.NotNull(body.Permissions);
-        Assert.Empty(body.Permissions);
-        Assert.NotNull(body.PermissionCodes);
-        Assert.Empty(body.PermissionCodes);
-        Assert.NotNull(body.RouteCodes);
-        Assert.Empty(body.RouteCodes);
+        Assert.NotNull(body.Routes);
+        Assert.Contains(DefaultRouteCode, body.Routes);
     }
 
     [Fact]
-    public async Task Permissions_AuthenticatorSystem_ReturnsEmptyRouteCodes()
+    public async Task Permissions_AuthenticatorSystem_ReturnsAuthenticatorRoutes()
     {
-        // Root tem todas as permissões; quando consulta /auth/permissions com X-System-Id = authenticator,
-        // routeCodes deve ser vazio (authenticator não declara rotas seedadas).
+        // Root tem todas as permissões; consulta /auth/permissions com X-System-Id = authenticator
+        // deve listar as rotas seedadas do authenticator.
         var login = await _anon.PostAsJsonAsync("/api/v1/auth/login",
-            LoginBodyForSystem(DefaultSystemUserSeeder.RootEmail, DefaultSystemUserSeeder.ResolveCredential(), _authenticatorSystemId),
+            LoginBodyForSystem(RootUserSeeder.RootEmail, TestApiClient.RootCredential, _authenticatorSystemId),
             TestApiClient.JsonOptions);
         var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
         Assert.NotNull(loginDto);
@@ -922,9 +739,9 @@ public class AuthApiTests : IAsyncLifetime
 
         var body = await response.Content.ReadFromJsonAsync<PermissionsDto>(TestApiClient.JsonOptions);
         Assert.NotNull(body);
-        Assert.NotNull(body.RouteCodes);
-        Assert.Empty(body.RouteCodes);
-        Assert.DoesNotContain("KURTTO_V1_URLS_LIST_INCLUDE_DELETED", body.RouteCodes);
+        Assert.NotNull(body.Routes);
+        Assert.Contains("AUTH_V1_USERS_LIST", body.Routes);
+        Assert.Contains("AUTH_V1_AUTH_PERMISSIONS", body.Routes);
     }
 
     [Fact]
@@ -991,25 +808,6 @@ public class AuthApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Permissions_CrossSystemToken_ReturnsUnauthorized()
-    {
-        await _admin.PostAsJsonAsync("/api/v1/users",
-            new { name = "Perm Cross", email = "perm.cross@example.com", password = "SenhaSegura1!", identity = 1, active = true },
-            TestApiClient.JsonOptions);
-
-        var login = await _anon.PostAsJsonAsync("/api/v1/auth/login",
-            LoginBodyForSystem("perm.cross@example.com", "SenhaSegura1!", _kurttoSystemId), TestApiClient.JsonOptions);
-        var loginDto = await login.Content.ReadFromJsonAsync<LoginResponseDto>(TestApiClient.JsonOptions);
-        Assert.NotNull(loginDto);
-
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/permissions");
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
-        req.Headers.Add(AuthController.SystemIdHeader, _authenticatorSystemId.ToString("D"));
-        var response = await _anon.SendAsync(req);
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    [Fact]
     public async Task Permissions_AfterLogout_ReturnsUnauthorized()
     {
         await _admin.PostAsJsonAsync("/api/v1/users",
@@ -1031,7 +829,7 @@ public class AuthApiTests : IAsyncLifetime
 
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/permissions");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.Add(AuthController.SystemIdHeader, _kurttoSystemId.ToString("D"));
+        req.Headers.Add(AuthController.SystemIdHeader, _authenticatorSystemId.ToString("D"));
         var response = await _anon.SendAsync(req);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }

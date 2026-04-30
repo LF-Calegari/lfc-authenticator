@@ -11,8 +11,17 @@ namespace AuthService.Tests;
 
 internal static class TestApiClient
 {
-    /// <summary>Code do sistema usado por padrão nos testes de Auth (catálogo oficial seeda kurtto).</summary>
-    internal const string DefaultSystemCode = "kurtto";
+    /// <summary>Code do sistema usado por padrão nos testes de Auth (authenticator é o único sistema seedado).</summary>
+    internal const string DefaultSystemCode = "authenticator";
+
+    private static string ResolveRootCredential()
+    {
+        var value = Environment.GetEnvironmentVariable(WebAppFactory.RootCredentialEnvVar);
+        return string.IsNullOrWhiteSpace(value) ? WebAppFactory.RootCredentialDefault : value;
+    }
+
+    /// <summary>Credencial do usuário root visível para testes que precisam fazer login com ele.</summary>
+    internal static string RootCredential => ResolveRootCredential();
 
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -38,7 +47,7 @@ internal static class TestApiClient
             .SingleAsync();
     }
 
-    /// <summary>Cliente HTTP com JWT do usuário root seedado (todas as permissões oficiais), atrelado ao sistema kurtto e com header X-System-Id já configurado.</summary>
+    /// <summary>Cliente HTTP com JWT do usuário root seedado (todas as permissões oficiais), atrelado ao sistema authenticator e com header X-System-Id já configurado.</summary>
     internal static async Task<HttpClient> CreateAuthenticatedAsync(WebAppFactory factory)
         => await CreateAuthenticatedAsync(factory, DefaultSystemCode);
 
@@ -50,8 +59,8 @@ internal static class TestApiClient
         var login = await client.PostAsJsonAsync("/api/v1/auth/login",
             new
             {
-                email = DefaultSystemUserSeeder.RootEmail,
-                password = DefaultSystemUserSeeder.ResolveCredential(),
+                email = RootUserSeeder.RootEmail,
+                password = ResolveRootCredential(),
                 systemId
             },
             JsonOptions);

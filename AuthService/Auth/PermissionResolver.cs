@@ -36,9 +36,17 @@ public sealed class PermissionResolver(AppDbContext db) : IPermissionResolver
         if (typeId is null)
             return null;
 
+        // Adaptação mecânica pós-FK Permissions→Routes: como uma "ação no recurso" pode existir em
+        // várias rotas do sistema, retornamos a primeira que casar. Redesign pendente do contrato de
+        // /auth/permissions vai redefinir a granularidade efetiva.
         return await _db.Permissions.AsNoTracking()
-            .Where(p => p.SystemId == systemId && p.PermissionTypeId == typeId)
-            .Select(p => (Guid?)p.Id)
+            .Join(
+                _db.Routes.AsNoTracking(),
+                p => p.RouteId,
+                r => r.Id,
+                (p, r) => new { p.Id, p.PermissionTypeId, r.SystemId })
+            .Where(x => x.SystemId == systemId && x.PermissionTypeId == typeId)
+            .Select(x => (Guid?)x.Id)
             .FirstOrDefaultAsync(cancellationToken);
     }
 }

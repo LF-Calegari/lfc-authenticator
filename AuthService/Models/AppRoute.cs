@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace AuthService.Models;
 
 [Index(nameof(Code), IsUnique = true, Name = "UX_Routes_Code")]
+[Index(nameof(SystemId), nameof(Code), IsUnique = true, Name = "UX_Routes_SystemId_Code")]
 [Index(nameof(DeletedAt), Name = "IX_Routes_DeletedAt")]
 [Table("Routes")]
 public class AppRoute : ISoftDelete

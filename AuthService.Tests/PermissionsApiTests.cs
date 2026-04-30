@@ -34,6 +34,16 @@ public class PermissionsApiTests : IAsyncLifetime
         return dto.Id;
     }
 
+    private async Task<Guid> CreateRouteAsync(Guid systemId, string code, string name = "Rota")
+    {
+        var r = await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            new { systemId, name, code, description = (string?)null }, TestApiClient.JsonOptions);
+        r.EnsureSuccessStatusCode();
+        var dto = await r.Content.ReadFromJsonAsync<RefDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+        return dto.Id;
+    }
+
     private async Task<Guid> CreatePermissionTypeAsync(string code, string name = "Tipo")
     {
         var r = await _client.PostAsJsonAsync("/api/v1/permissions/types", new { name, code, description = (string?)null }, TestApiClient.JsonOptions);
@@ -43,25 +53,26 @@ public class PermissionsApiTests : IAsyncLifetime
         return dto.Id;
     }
 
-    private static object PermCreateBody(Guid systemId, Guid permissionTypeId, string? description = null) =>
-        new { systemId, permissionTypeId, description };
+    private static object PermCreateBody(Guid routeId, Guid permissionTypeId, string? description = null) =>
+        new { routeId, permissionTypeId, description };
 
-    private static object PermUpdateBody(Guid systemId, Guid permissionTypeId, string? description = null) =>
-        new { systemId, permissionTypeId, description };
+    private static object PermUpdateBody(Guid routeId, Guid permissionTypeId, string? description = null) =>
+        new { routeId, permissionTypeId, description };
 
     [Fact]
     public async Task Create_Post_WithValidReferences_ReturnsCreated_UtcAndNullDeletedAt()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_1");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_1");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_1");
 
         var response = await _client.PostAsJsonAsync("/api/v1/permissions",
-            PermCreateBody(sysId, typeId, "Opcional"), TestApiClient.JsonOptions);
+            PermCreateBody(routeId, typeId, "Opcional"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
         var dto = await response.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
-        Assert.Equal(sysId, dto.SystemId);
+        Assert.Equal(routeId, dto.RouteId);
         Assert.Equal(typeId, dto.PermissionTypeId);
         Assert.Equal("Opcional", dto.Description);
         Assert.Null(dto.DeletedAt);
@@ -73,10 +84,11 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task Create_WithoutDescription_NormalizesToNull()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_ND");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_ND");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_ND");
 
         var response = await _client.PostAsJsonAsync("/api/v1/permissions",
-            PermCreateBody(sysId, typeId, "   "), TestApiClient.JsonOptions);
+            PermCreateBody(routeId, typeId, "   "), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
         var dto = await response.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
@@ -85,9 +97,9 @@ public class PermissionsApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Create_WithInvalidSystemId_ReturnsBadRequest()
+    public async Task Create_WithInvalidRouteId_ReturnsBadRequest()
     {
-        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_INV_S");
+        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_INV_R");
 
         var response = await _client.PostAsJsonAsync("/api/v1/permissions",
             PermCreateBody(Guid.NewGuid(), typeId), TestApiClient.JsonOptions);
@@ -95,12 +107,12 @@ public class PermissionsApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Create_WithoutSystemId_ReturnsBadRequest()
+    public async Task Create_WithoutRouteId_ReturnsBadRequest()
     {
-        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_MISSING_SYS");
+        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_MISSING_ROUTE");
 
         var response = await _client.PostAsJsonAsync("/api/v1/permissions",
-            new { permissionTypeId = typeId, description = "sem sistema" }, TestApiClient.JsonOptions);
+            new { permissionTypeId = typeId, description = "sem rota" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -108,9 +120,10 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task Create_WithInvalidPermissionTypeId_ReturnsBadRequest()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_INV_T");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_INV_T");
 
         var response = await _client.PostAsJsonAsync("/api/v1/permissions",
-            PermCreateBody(sysId, Guid.NewGuid()), TestApiClient.JsonOptions);
+            PermCreateBody(routeId, Guid.NewGuid()), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -118,11 +131,12 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task Create_DescriptionExceedsMaxLength_ReturnsBadRequest()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_LEN");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_LEN");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_LEN");
         var longDesc = new string('d', 501);
 
         var response = await _client.PostAsJsonAsync("/api/v1/permissions",
-            PermCreateBody(sysId, typeId, longDesc), TestApiClient.JsonOptions);
+            PermCreateBody(routeId, typeId, longDesc), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -130,8 +144,9 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task Restore_ActivePermission_ReturnsNotFound()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_AR");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_AR");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_AR");
-        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
@@ -143,12 +158,13 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task GetAll_ReturnsOnlyActivePermissions()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_GA");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_GA");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_GA");
-        var firstRes = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId, null), TestApiClient.JsonOptions);
+        var firstRes = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId, null), TestApiClient.JsonOptions);
         var firstDto = await firstRes.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(firstDto);
 
-        var other = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId, "b"), TestApiClient.JsonOptions);
+        var other = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId, "b"), TestApiClient.JsonOptions);
         var toDelete = await other.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(toDelete);
         await _client.DeleteAsync($"/api/v1/permissions/{toDelete.Id}");
@@ -166,8 +182,9 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task GetById_Active_ReturnsOk_Deleted_Returns404()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_G1");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_G1");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_G1");
-        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
@@ -181,27 +198,29 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task Update_Active_ReturnsOk_Deleted_Returns404()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_U1");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_U1");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_U1");
-        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId, "a"), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId, "a"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         var putOk = await _client.PutAsJsonAsync($"/api/v1/permissions/{dto.Id}",
-            PermUpdateBody(sysId, typeId, "b"), TestApiClient.JsonOptions);
+            PermUpdateBody(routeId, typeId, "b"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.OK, putOk.StatusCode);
 
         await _client.DeleteAsync($"/api/v1/permissions/{dto.Id}");
         var put404 = await _client.PutAsJsonAsync($"/api/v1/permissions/{dto.Id}",
-            PermUpdateBody(sysId, typeId, "c"), TestApiClient.JsonOptions);
+            PermUpdateBody(routeId, typeId, "c"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.NotFound, put404.StatusCode);
     }
 
     [Fact]
-    public async Task Update_WithInvalidSystemId_ReturnsBadRequest()
+    public async Task Update_WithInvalidRouteId_ReturnsBadRequest()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_UINV");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_UINV");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_UINV");
-        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
@@ -214,13 +233,14 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task Update_WithoutPermissionTypeId_ReturnsBadRequest()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_MISSING_TYPE");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_MISSING_TYPE");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_MISSING_TYPE");
-        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         var put = await _client.PutAsJsonAsync($"/api/v1/permissions/{dto.Id}",
-            new { systemId = sysId, description = "sem tipo" }, TestApiClient.JsonOptions);
+            new { routeId, description = "sem tipo" }, TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
     }
 
@@ -228,8 +248,9 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task Delete_SoftDelete_ThenDeleteAgain_Returns404()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_D1");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_D1");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_D1");
-        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
@@ -249,8 +270,9 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task Restore_Deleted_ThenGetByIdWorks()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_R1");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_R1");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_R1");
-        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
@@ -268,27 +290,29 @@ public class PermissionsApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Create_WithDeletedSystem_ReturnsBadRequest()
+    public async Task Create_WithDeletedRoute_ReturnsBadRequest()
     {
-        var sysId = await CreateSystemAsync("PERM_SYS_DELSYS");
-        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_DELSYS");
-        await _client.DeleteAsync($"/api/v1/systems/{sysId}");
+        var sysId = await CreateSystemAsync("PERM_SYS_DELROUTE");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_DELROUTE");
+        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_DELROUTE");
+        await _client.DeleteAsync($"/api/v1/systems/routes/{routeId}");
 
         var response = await _client.PostAsJsonAsync("/api/v1/permissions",
-            PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+            PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
-    public async Task GetAll_AndGetById_ExcludeWhenSystemSoftDeleted()
+    public async Task GetAll_AndGetById_ExcludeWhenRouteSoftDeleted()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_ORPH");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_ORPH");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_ORPH");
-        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        await _client.DeleteAsync($"/api/v1/systems/{sysId}");
+        await _client.DeleteAsync($"/api/v1/systems/routes/{routeId}");
 
         Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/api/v1/permissions/{dto.Id}")).StatusCode);
 
@@ -303,8 +327,9 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task GetAll_AndGetById_ExcludeWhenPermissionTypeSoftDeleted()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_PT");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_PT");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_PT");
-        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
@@ -320,16 +345,17 @@ public class PermissionsApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Restore_WhenSystemSoftDeleted_ReturnsBadRequest()
+    public async Task Restore_WhenRouteSoftDeleted_ReturnsBadRequest()
     {
-        var sysId = await CreateSystemAsync("PERM_SYS_RSYS");
-        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_RSYS");
-        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+        var sysId = await CreateSystemAsync("PERM_SYS_RROUTE");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_RROUTE");
+        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_RROUTE");
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
         await _client.DeleteAsync($"/api/v1/permissions/{dto.Id}");
-        await _client.DeleteAsync($"/api/v1/systems/{sysId}");
+        await _client.DeleteAsync($"/api/v1/systems/routes/{routeId}");
 
         var patch = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Post, $"/api/v1/permissions/{dto.Id}/restore"));
         Assert.Equal(HttpStatusCode.BadRequest, patch.StatusCode);
@@ -339,11 +365,12 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task Create_WithDeletedPermissionType_ReturnsBadRequest()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_DELPT");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_DELPT");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_DELPT");
         await _client.DeleteAsync($"/api/v1/permissions/types/{typeId}");
 
         var response = await _client.PostAsJsonAsync("/api/v1/permissions",
-            PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+            PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -351,8 +378,9 @@ public class PermissionsApiTests : IAsyncLifetime
     public async Task Restore_WhenPermissionTypeSoftDeleted_ReturnsBadRequest()
     {
         var sysId = await CreateSystemAsync("PERM_SYS_RPT");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_RPT");
         var typeId = await CreatePermissionTypeAsync("PERM_TYPE_RPT");
-        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(sysId, typeId), TestApiClient.JsonOptions);
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
@@ -367,7 +395,7 @@ public class PermissionsApiTests : IAsyncLifetime
 
     private sealed record PermissionDto(
         Guid Id,
-        Guid SystemId,
+        Guid RouteId,
         Guid PermissionTypeId,
         string? Description,
         DateTime CreatedAt,
