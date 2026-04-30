@@ -73,6 +73,7 @@ public class WebAppFactory : WebApplicationFactory<Program>
         // Em "Testing" o Program.cs não roda os seeders — replicamos a mesma sequência usada em produção
         // para que os testes de integração tenham o catálogo do authenticator e o usuário root prontos.
         SystemSeeder.EnsureSystemsAsync(db).GetAwaiter().GetResult();
+        SystemTokenTypeSeeder.EnsureSystemTokenTypesAsync(db).GetAwaiter().GetResult();
         AuthenticatorRoutesSeeder.EnsureRoutesAsync(db).GetAwaiter().GetResult();
         PermissionTypeSeeder.EnsurePermissionTypesAsync(db).GetAwaiter().GetResult();
         AuthenticatorPermissionsSeeder.EnsurePermissionsAsync(db).GetAwaiter().GetResult();
