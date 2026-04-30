@@ -696,8 +696,7 @@ public class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task Permissions_UserWithoutPermissions_ReturnsSystemRouteCatalog()
     {
-        // Mesmo sem permissões atribuídas, routes reflete o catálogo do sistema do header
-        // (a resposta não filtra rotas por permissão de usuário hoje).
+        // Usuário sem permissões recebe routes vazio (rotas são filtradas por permissão).
         await _admin.PostAsJsonAsync("/api/v1/users",
             new { name = "Empty Perms", email = "empty.perms@example.com", password = "SenhaSegura1!", identity = 1, active = true },
             TestApiClient.JsonOptions);
@@ -717,7 +716,7 @@ public class AuthApiTests : IAsyncLifetime
         Assert.NotNull(body);
         Assert.NotNull(body.User);
         Assert.NotNull(body.Routes);
-        Assert.Contains(DefaultRouteCode, body.Routes);
+        Assert.Empty(body.Routes);
     }
 
     [Fact]
