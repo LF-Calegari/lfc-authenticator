@@ -261,6 +261,18 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 
 `systemId` obrigatório; `code` único globalmente. Listagens consideram sistema pai ativo.
 
+**`GET /api/v1/systems/routes`** suporta filtro/busca/paginação via query string:
+
+| Param | Default | Notas |
+|-------|---------|-------|
+| `systemId` | _ausente_ | Quando informado, restringe à `SystemId` indicada. `Guid.Empty` retorna **400**; `systemId` válido apontando para sistema inexistente retorna **200** com `data: []`. |
+| `q` | `""` | Busca case-insensitive (ILIKE) com matching parcial em `Code` **e** `Name` (OR). Caracteres `%`, `_` e `\` são escapados (literais). |
+| `page` | `1` | 1-based. `<= 0` retorna **400**. |
+| `pageSize` | `20` | Máximo `100`. `<= 0` ou `> 100` retornam **400**. |
+| `includeDeleted` | `false` | Quando `true`, inclui rotas soft-deletadas **e** rotas cujo sistema pai foi soft-deletado (cenário admin). Default mantém o filtro `ActiveRoutesWithActiveSystem`. |
+
+Resposta paginada: `{ data, page, pageSize, total }`. `total` reflete o total após filtros, antes de `Skip/Take`. Ordenação determinística por `Code` ascendente, com `Id` como desempate. Página além do total retorna **200** com `data: []`.
+
 **Política JWT alvo (`systemTokenTypeId`)** — toda rota referencia um `SystemTokenType` (`/api/v1/tokens/types`) ativo via FK NOT NULL. O campo é **obrigatório** em `POST` e `PUT`; payloads sem ele retornam **400** com erro em `ModelState["SystemTokenTypeId"]`. `Guid.Empty`, IDs inexistentes ou referenciando registros soft-deletados também retornam **400**. Restaurar uma rota cujo `SystemTokenType` foi removido depois do soft-delete também retorna **400** (mesmo padrão da validação de sistema inativo).
 
 Existe um catálogo canônico garantido pelo `SystemTokenTypeSeeder` na inicialização do serviço, com pelo menos `Code='default'` (`Name='Default'`). Esse é o code usado como fallback no `sync` quando o item não especifica um `systemTokenTypeCode`.
