@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using AuthService.Auth;
+using AuthService.Controllers.Common;
 using AuthService.Data;
 using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -207,13 +208,74 @@ public class RoutesController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, created);
     }
 
+    /// <summary>Tamanho de página default quando o cliente não envia <c>pageSize</c>.</summary>
+    public const int DefaultPageSize = 20;
+
+    /// <summary>Limite superior para <c>pageSize</c>; valores acima retornam 400.</summary>
+    public const int MaxPageSize = 100;
+
     [HttpGet]
     [Authorize(Policy = PermissionPolicies.SystemsRoutesRead)]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        [FromQuery] Guid? systemId = null,
+        [FromQuery] string? q = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = DefaultPageSize,
+        [FromQuery] bool includeDeleted = false)
     {
-        var list = await ProjectRouteResponses(ActiveRoutesWithActiveSystem().OrderBy(r => r.CreatedAt))
-            .ToListAsync();
-        return Ok(list);
+        if (page <= 0)
+            ModelState.AddModelError(nameof(page), "page deve ser maior ou igual a 1.");
+
+        if (pageSize <= 0 || pageSize > MaxPageSize)
+            ModelState.AddModelError(nameof(pageSize), $"pageSize deve estar entre 1 e {MaxPageSize}.");
+
+        if (systemId.HasValue && systemId.Value == Guid.Empty)
+            ModelState.AddModelError(nameof(systemId), "systemId inválido.");
+
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        // Quando includeDeleted=true, a lista admin precisa enxergar tudo: rotas soft-deletadas
+        // (ignorando o query filter global de soft-delete) e rotas cujo sistema pai também foi
+        // soft-deletado (dispensando o filtro ActiveRoutesWithActiveSystem). Caso contrário,
+        // mantemos o filtro de sistema pai ativo aplicado pelas demais leituras do controller.
+        IQueryable<AppRoute> query = includeDeleted
+            ? _db.Routes.IgnoreQueryFilters()
+            : ActiveRoutesWithActiveSystem();
+
+        if (systemId.HasValue)
+            query = query.Where(r => r.SystemId == systemId.Value);
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var pattern = $"%{EscapeLikePattern(q.Trim())}%";
+            query = query.Where(r =>
+                EF.Functions.ILike(r.Code, pattern, "\\") || EF.Functions.ILike(r.Name, pattern, "\\"));
+        }
+
+        var total = await query.CountAsync();
+
+        var paged = query
+            .OrderBy(r => r.Code)
+            .ThenBy(r => r.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize);
+
+        var data = await ProjectRouteResponses(paged).ToListAsync();
+
+        return Ok(new PagedResponse<RouteResponse>(data, page, pageSize, total));
+    }
+
+    /// <summary>
+    /// Escapa caracteres curinga (<c>%</c>, <c>_</c>) e o caractere de escape (<c>\</c>) na entrada do usuário
+    /// para evitar que sejam interpretados como wildcards no <c>ILIKE</c>. Mantém o termo como busca literal parcial.
+    /// </summary>
+    private static string EscapeLikePattern(string value)
+    {
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("%", "\\%")
+            .Replace("_", "\\_");
     }
 
     [HttpGet("{id:guid}")]

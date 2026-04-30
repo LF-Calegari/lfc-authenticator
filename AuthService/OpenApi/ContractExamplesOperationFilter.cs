@@ -9,6 +9,12 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
 {
     private static readonly string[] ExampleRoutes = ["AUTH_V1_USERS_LIST"];
 
+    /// <summary>Timestamp ilustrativo reutilizado nos exemplos OpenAPI (CreatedAt/UpdatedAt/issuedAt).</summary>
+    private const string ExampleTimestamp = "2026-04-26T18:00:00+00:00";
+
+    /// <summary>Guid placeholder reutilizado em ids de exemplo nas respostas OpenAPI.</summary>
+    private const string EmptyGuidExample = "00000000-0000-0000-0000-000000000000";
+
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
         AddDefaultErrorResponses(operation);
@@ -45,6 +51,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             || TryApplyAuthPermissionsGet(operation, normalizedPath, method)
             || TryApplyAuthLogoutGet(operation, normalizedPath, method)
             || TryApplySystemsListGet(operation, normalizedPath, method)
+            || TryApplyRoutesListGet(operation, normalizedPath, method)
             || TryApplyRestorePost(operation, normalizedPath, method);
     }
 
@@ -78,7 +85,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
         AddJsonResponse(operation, "200", "Token valido e rota autorizada.", new
         {
             valid = true,
-            issuedAt = "2026-04-26T18:00:00+00:00",
+            issuedAt = ExampleTimestamp,
             expiresAt = "2026-04-26T19:00:00+00:00"
         });
         AddErrorResponse(
@@ -100,7 +107,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
         {
             user = new
             {
-                id = "00000000-0000-0000-0000-000000000000",
+                id = EmptyGuidExample,
                 name = "User Name",
                 email = "user@example.com",
                 identity = 1
@@ -142,12 +149,12 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             {
                 new
                 {
-                    id = "00000000-0000-0000-0000-000000000000",
+                    id = EmptyGuidExample,
                     name = "Admin GUI",
                     code = "ADMIN_GUI",
                     description = "Painel administrativo.",
-                    createdAt = "2026-04-26T18:00:00+00:00",
-                    updatedAt = "2026-04-26T18:00:00+00:00",
+                    createdAt = ExampleTimestamp,
+                    updatedAt = ExampleTimestamp,
                     deletedAt = (string?)null
                 }
             },
@@ -183,6 +190,68 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             "Quando true, inclui registros soft-deleted (DeletedAt != null). Default false.");
     }
 
+    private static bool TryApplyRoutesListGet(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        if (normalizedPath != "/systems/routes" || method != "GET")
+            return false;
+
+        EnsureRoutesListQueryParameters(operation);
+
+        AddJsonResponse(operation, "200", "Pagina de rotas que casam com os filtros aplicados.", new
+        {
+            data = new[]
+            {
+                new
+                {
+                    id = EmptyGuidExample,
+                    systemId = "11111111-1111-1111-1111-111111111111",
+                    name = "Listar usuarios",
+                    code = "AUTH_V1_USERS_LIST",
+                    description = (string?)null,
+                    systemTokenTypeId = "22222222-2222-2222-2222-222222222222",
+                    systemTokenTypeCode = "default",
+                    systemTokenTypeName = "Default",
+                    createdAt = ExampleTimestamp,
+                    updatedAt = ExampleTimestamp,
+                    deletedAt = (string?)null
+                }
+            },
+            page = 1,
+            pageSize = 20,
+            total = 1
+        });
+        AddErrorResponse(
+            operation,
+            "400",
+            "Parametros de paginacao/filtro invalidos (page <= 0, pageSize fora do intervalo permitido ou systemId = Guid.Empty).",
+            new { message = "pageSize deve estar entre 1 e 100." });
+        return true;
+    }
+
+    private static void EnsureRoutesListQueryParameters(OpenApiOperation operation)
+    {
+        EnsureQueryParameterDescription(
+            operation,
+            "systemId",
+            "Quando informado, restringe a listagem as rotas do sistema indicado. systemId = Guid.Empty retorna 400.");
+        EnsureQueryParameterDescription(
+            operation,
+            "q",
+            "Termo de busca case-insensitive em Code e Name (matching parcial via ILIKE; %, _ e \\ sao tratados como literais).");
+        EnsureQueryParameterDescription(
+            operation,
+            "page",
+            "Numero da pagina (1-based, default 1). Valores <= 0 retornam 400.");
+        EnsureQueryParameterDescription(
+            operation,
+            "pageSize",
+            "Tamanho da pagina (default 20, maximo 100). Valores <= 0 ou > 100 retornam 400.");
+        EnsureQueryParameterDescription(
+            operation,
+            "includeDeleted",
+            "Quando true, inclui rotas soft-deletadas e rotas cujo sistema pai foi soft-deletado (cenario admin). Default false.");
+    }
+
     private static void EnsureQueryParameterDescription(OpenApiOperation operation, string parameterName, string description)
     {
         operation.Parameters ??= [];
@@ -207,7 +276,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
         switch (method)
         {
             case "POST":
-                AddJsonResponse(operation, "201", "Registro criado.", new { id = "00000000-0000-0000-0000-000000000000" });
+                AddJsonResponse(operation, "201", "Registro criado.", new { id = EmptyGuidExample });
                 break;
             case "GET":
                 AddJsonResponse(operation, "200", "Leitura concluida.", new { message = "Consulta realizada com sucesso." });

@@ -161,7 +161,7 @@ public class SystemsController : ControllerBase
         {
             var pattern = $"%{EscapeLikePattern(q.Trim())}%";
             query = query.Where(s =>
-                EF.Functions.ILike(s.Name, pattern) || EF.Functions.ILike(s.Code, pattern));
+                EF.Functions.ILike(s.Name, pattern, "\\") || EF.Functions.ILike(s.Code, pattern, "\\"));
         }
 
         var total = await query.CountAsync();

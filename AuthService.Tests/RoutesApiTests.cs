@@ -202,15 +202,14 @@ public class RoutesApiTests : IAsyncLifetime
         Assert.NotNull(otherDto);
         await _client.DeleteAsync($"/api/v1/systems/routes/{otherDto.Id}");
 
-        var listResp = await _client.GetAsync("/api/v1/systems/routes");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<RouteDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        Assert.All(list, r => Assert.Null(r.DeletedAt));
-        Assert.All(list, r => Assert.False(string.IsNullOrWhiteSpace(r.SystemTokenTypeCode)));
-        Assert.All(list, r => Assert.False(string.IsNullOrWhiteSpace(r.SystemTokenTypeName)));
-        Assert.Contains(list, r => r.Code == "RT_ATIVA");
-        Assert.DoesNotContain(list, r => r.Code == "RT_OUTRA");
+        var page = await GetRoutesPageAsync("/api/v1/systems/routes?pageSize=100");
+        Assert.Equal(1, page.Page);
+        Assert.Equal(100, page.PageSize);
+        Assert.All(page.Data, r => Assert.Null(r.DeletedAt));
+        Assert.All(page.Data, r => Assert.False(string.IsNullOrWhiteSpace(r.SystemTokenTypeCode)));
+        Assert.All(page.Data, r => Assert.False(string.IsNullOrWhiteSpace(r.SystemTokenTypeName)));
+        Assert.Contains(page.Data, r => r.Code == "RT_ATIVA");
+        Assert.DoesNotContain(page.Data, r => r.Code == "RT_OUTRA");
     }
 
     [Fact]
@@ -379,11 +378,8 @@ public class RoutesApiTests : IAsyncLifetime
         Assert.NotNull(restored);
         Assert.Null(restored.DeletedAt);
 
-        var listResp = await _client.GetAsync("/api/v1/systems/routes");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<RouteDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        Assert.Contains(list, r => r.Id == dto.Id);
+        var page = await GetRoutesPageAsync("/api/v1/systems/routes?pageSize=100");
+        Assert.Contains(page.Data, r => r.Id == dto.Id);
     }
 
     [Fact]
@@ -412,11 +408,8 @@ public class RoutesApiTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/api/v1/systems/routes/{dto.Id}")).StatusCode);
 
-        var listResp = await _client.GetAsync("/api/v1/systems/routes");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<RouteDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        Assert.DoesNotContain(list, r => r.Id == dto.Id);
+        var page = await GetRoutesPageAsync("/api/v1/systems/routes?pageSize=100");
+        Assert.DoesNotContain(page.Data, r => r.Id == dto.Id);
     }
 
     [Fact]
@@ -524,6 +517,339 @@ public class RoutesApiTests : IAsyncLifetime
         Assert.Equal(customSttId, route.SystemTokenTypeId);
     }
 
+    [Fact]
+    public async Task GetAll_NoFilters_UsesDefaultEnvelope()
+    {
+        var page = await GetRoutesPageAsync("/api/v1/systems/routes");
+        Assert.Equal(1, page.Page);
+        Assert.Equal(20, page.PageSize);
+        Assert.True(page.Total >= page.Data.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_WithSystemIdEmpty_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync($"/api/v1/systems/routes?systemId={Guid.Empty}");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithSystemIdUnknown_ReturnsOkAndEmptyData()
+    {
+        var page = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={Guid.NewGuid()}");
+        Assert.Empty(page.Data);
+        Assert.Equal(0, page.Total);
+    }
+
+    [Fact]
+    public async Task GetAll_WithSystemIdFilter_ReturnsOnlyRoutesOfThatSystem()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysA = await CreateSystemAsync("RT_FILT_SYS_A", "Sistema A");
+        var sysB = await CreateSystemAsync("RT_FILT_SYS_B", "Sistema B");
+
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysA, "Rota A1", "RT_FILT_A1", sttId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysA, "Rota A2", "RT_FILT_A2", sttId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysB, "Rota B1", "RT_FILT_B1", sttId), TestApiClient.JsonOptions);
+
+        var page = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysA}&pageSize=100");
+        Assert.All(page.Data, r => Assert.Equal(sysA, r.SystemId));
+        Assert.Contains(page.Data, r => r.Code == "RT_FILT_A1");
+        Assert.Contains(page.Data, r => r.Code == "RT_FILT_A2");
+        Assert.DoesNotContain(page.Data, r => r.Code == "RT_FILT_B1");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_PartialMatchOnCode()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_Q_CODE_SYS");
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Listar usuarios", "USERS_LIST", sttId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Outra", "OUTRO_RT", sttId), TestApiClient.JsonOptions);
+
+        var page = await GetRoutesPageAsync("/api/v1/systems/routes?q=USERS&pageSize=100");
+        Assert.Contains(page.Data, r => r.Code == "USERS_LIST");
+        Assert.DoesNotContain(page.Data, r => r.Code == "OUTRO_RT");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_PartialMatchOnName()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_Q_NAME_SYS");
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Pagina de relatorios", "REL_PAGE", sttId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Outra", "DIF_PAGE", sttId), TestApiClient.JsonOptions);
+
+        var page = await GetRoutesPageAsync("/api/v1/systems/routes?q=relat&pageSize=100");
+        Assert.Contains(page.Data, r => r.Code == "REL_PAGE");
+        Assert.DoesNotContain(page.Data, r => r.Code == "DIF_PAGE");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_IsCaseInsensitive()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_Q_CI_SYS");
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Admin Page", "ADMIN_PAGE_RT", sttId), TestApiClient.JsonOptions);
+
+        var lower = await GetRoutesPageAsync("/api/v1/systems/routes?q=admin&pageSize=100");
+        var upper = await GetRoutesPageAsync("/api/v1/systems/routes?q=ADMIN&pageSize=100");
+        var mixed = await GetRoutesPageAsync("/api/v1/systems/routes?q=AdMiN&pageSize=100");
+
+        Assert.Contains(lower.Data, r => r.Code == "ADMIN_PAGE_RT");
+        Assert.Contains(upper.Data, r => r.Code == "ADMIN_PAGE_RT");
+        Assert.Contains(mixed.Data, r => r.Code == "ADMIN_PAGE_RT");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_EscapesUnderscoreLiteral()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_Q_ESC_SYS");
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Liter A", "ESC_LIT_AAA", sttId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Liter B", "ESCXLITXBBB", sttId), TestApiClient.JsonOptions);
+
+        // O usuario busca pela substring "_LIT_" literal. Sem o escape, "_" viraria wildcard
+        // ILIKE e casaria tambem o code "ESCXLITXBBB" (qualquer caractere no lugar dos "_").
+        // Com o escape correto, somente o code que contem "_LIT_" literalmente deve aparecer.
+        var page = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&q=_LIT_&pageSize=100");
+        Assert.Contains(page.Data, r => r.Code == "ESC_LIT_AAA");
+        Assert.DoesNotContain(page.Data, r => r.Code == "ESCXLITXBBB");
+    }
+
+    [Fact]
+    public async Task GetAll_WithPagination_ReturnsCorrectSubset()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_PAGE_SYS");
+        for (var i = 1; i <= 5; i++)
+        {
+            await _client.PostAsJsonAsync("/api/v1/systems/routes",
+                RouteCreateBody(sysId, $"Rota {i:D2}", $"PG_RT_{i:D2}", sttId), TestApiClient.JsonOptions);
+        }
+
+        var first = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&page=1&pageSize=2");
+        var second = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&page=2&pageSize=2");
+        var third = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&page=3&pageSize=2");
+
+        Assert.Equal(2, first.Data.Count);
+        Assert.Equal(2, second.Data.Count);
+        Assert.Single(third.Data);
+        Assert.Equal(5, first.Total);
+        Assert.Equal(5, second.Total);
+        Assert.Equal(5, third.Total);
+
+        var firstCodes = first.Data.Select(s => s.Code).ToList();
+        var secondCodes = second.Data.Select(s => s.Code).ToList();
+        var thirdCodes = third.Data.Select(s => s.Code).ToList();
+        Assert.Empty(firstCodes.Intersect(secondCodes));
+        Assert.Empty(secondCodes.Intersect(thirdCodes));
+        Assert.Empty(firstCodes.Intersect(thirdCodes));
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeAboveLimit_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/systems/routes?pageSize=101");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeZero_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/systems/routes?pageSize=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeNegative_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/systems/routes?pageSize=-3");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageZero_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/systems/routes?page=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageNegative_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/systems/routes?page=-1");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithIncludeDeletedTrue_ReturnsActiveAndDeleted()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_INC_SYS");
+        var activeResp = await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Ativa", "RT_INC_ACTIVE", sttId), TestApiClient.JsonOptions);
+        activeResp.EnsureSuccessStatusCode();
+        var deletedCreate = await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Deletada", "RT_INC_DELETED", sttId), TestApiClient.JsonOptions);
+        var deletedDto = await deletedCreate.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(deletedDto);
+        await _client.DeleteAsync($"/api/v1/systems/routes/{deletedDto.Id}");
+
+        var page = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&includeDeleted=true&pageSize=100");
+        Assert.Contains(page.Data, r => r.Code == "RT_INC_ACTIVE" && r.DeletedAt == null);
+        Assert.Contains(page.Data, r => r.Code == "RT_INC_DELETED" && r.DeletedAt != null);
+    }
+
+    [Fact]
+    public async Task GetAll_WithIncludeDeletedTrue_ReturnsRoutesOfSoftDeletedSystem()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_INC_DEL_SYS");
+        var routeResp = await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Rota Orfa", "RT_INC_ORPH", sttId), TestApiClient.JsonOptions);
+        var routeDto = await routeResp.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(routeDto);
+
+        // Soft-delete do sistema pai. A rota fica orfa: includeDeleted=false a esconde,
+        // includeDeleted=true a expoe (cenario admin de auditoria).
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/api/v1/systems/{sysId}")).StatusCode);
+
+        var hidden = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&pageSize=100");
+        Assert.DoesNotContain(hidden.Data, r => r.Id == routeDto.Id);
+
+        var visible = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&includeDeleted=true&pageSize=100");
+        Assert.Contains(visible.Data, r => r.Id == routeDto.Id);
+    }
+
+    [Fact]
+    public async Task GetAll_WithIncludeDeletedDefault_HidesSoftDeleted()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_HID_SYS");
+        var resp = await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Para deletar", "RT_HID_DELETED", sttId), TestApiClient.JsonOptions);
+        var dto = await resp.Content.ReadFromJsonAsync<RouteDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+        await _client.DeleteAsync($"/api/v1/systems/routes/{dto.Id}");
+
+        var page = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&pageSize=100");
+        Assert.DoesNotContain(page.Data, r => r.Code == "RT_HID_DELETED");
+    }
+
+    [Fact]
+    public async Task GetAll_TotalReflectsFilters_BeforePagination()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_TOT_SYS");
+        for (var i = 1; i <= 3; i++)
+        {
+            await _client.PostAsJsonAsync("/api/v1/systems/routes",
+                RouteCreateBody(sysId, $"Filtro {i}", $"FILTOTRT{i}", sttId), TestApiClient.JsonOptions);
+        }
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Outro", "OUTROTOTRT", sttId), TestApiClient.JsonOptions);
+
+        var page = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&q=Filtro&page=1&pageSize=2");
+        Assert.Equal(3, page.Total);
+        Assert.Equal(2, page.Data.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_PageBeyondTotal_ReturnsEmptyDataAnd200()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_BEYOND_SYS");
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Unico", "RT_BEYOND_A", sttId), TestApiClient.JsonOptions);
+
+        var resp = await _client.GetAsync($"/api/v1/systems/routes?systemId={sysId}&page=99&pageSize=10");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var page = await resp.Content.ReadFromJsonAsync<PagedRoutesDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        Assert.Empty(page.Data);
+        Assert.Equal(1, page.Total);
+    }
+
+    [Fact]
+    public async Task GetAll_OrderingIsStable_NoDuplicatesAcrossPages()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_ORD_SYS");
+        for (var i = 0; i < 7; i++)
+        {
+            await _client.PostAsJsonAsync("/api/v1/systems/routes",
+                RouteCreateBody(sysId, $"Ordem {i:D2}", $"RT_ORD_{i:D2}", sttId), TestApiClient.JsonOptions);
+        }
+
+        var first = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&page=1&pageSize=3");
+        var second = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&page=2&pageSize=3");
+        var third = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&page=3&pageSize=3");
+
+        var collected = first.Data.Concat(second.Data).Concat(third.Data)
+            .Select(r => r.Code)
+            .ToList();
+        Assert.Equal(collected.Count, collected.Distinct().Count());
+        Assert.Equal(7, collected.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_OrderedByCode_Ascending()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysId = await CreateSystemAsync("RT_ORDA_SYS");
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "Z", "RT_ORDA_ZZZ", sttId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "A", "RT_ORDA_AAA", sttId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysId, "M", "RT_ORDA_MMM", sttId), TestApiClient.JsonOptions);
+
+        var page = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysId}&pageSize=100");
+        var codes = page.Data.Where(r => r.Code.StartsWith("RT_ORDA_", StringComparison.Ordinal))
+            .Select(r => r.Code)
+            .ToList();
+        var sorted = codes.OrderBy(c => c, StringComparer.Ordinal).ToList();
+        Assert.Equal(sorted, codes);
+    }
+
+    [Fact]
+    public async Task GetAll_CombinedFilters_ApplyTogether()
+    {
+        var sttId = await GetDefaultSystemTokenTypeIdAsync();
+        var sysA = await CreateSystemAsync("RT_COMB_A");
+        var sysB = await CreateSystemAsync("RT_COMB_B");
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysA, "Listar usuarios", "RT_COMB_A_USERS", sttId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysA, "Outra", "RT_COMB_A_OTHER", sttId), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/systems/routes",
+            RouteCreateBody(sysB, "Listar usuarios", "RT_COMB_B_USERS", sttId), TestApiClient.JsonOptions);
+
+        var page = await GetRoutesPageAsync($"/api/v1/systems/routes?systemId={sysA}&q=USERS&pageSize=100");
+        Assert.Single(page.Data);
+        Assert.Equal("RT_COMB_A_USERS", page.Data[0].Code);
+    }
+
+    private async Task<PagedRoutesDto> GetRoutesPageAsync(string url)
+    {
+        var resp = await _client.GetAsync(url);
+        resp.EnsureSuccessStatusCode();
+        var page = await resp.Content.ReadFromJsonAsync<PagedRoutesDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        return page;
+    }
+
     private sealed record SystemRefDto(Guid Id);
     private sealed record TokenTypeRefDto(Guid Id);
 
@@ -539,4 +865,10 @@ public class RoutesApiTests : IAsyncLifetime
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt);
+
+    private sealed record PagedRoutesDto(
+        List<RouteDto> Data,
+        int Page,
+        int PageSize,
+        int Total);
 }
