@@ -84,7 +84,7 @@ public partial class UsersController : ControllerBase
     }
 
     public record UserRoleLinkResponse(
-        int Id,
+        Guid Id,
         Guid UserId,
         Guid RoleId,
         DateTime CreatedAt,
@@ -433,11 +433,41 @@ public partial class UsersController : ControllerBase
     [Authorize(Policy = PermissionPolicies.UsersRead)]
     public async Task<IActionResult> GetById(Guid id)
     {
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
+        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == id);
         if (user is null)
             return NotFound(new { message = UserNotFoundMessage });
 
-        return Ok(new UserMinimalResponse(user.Id, user.Name, user.Email));
+        // Vínculos ativos: link com DeletedAt IS NULL E entidade alvo (Role / Permission) também
+        // ativa (sem IgnoreQueryFilters → o query filter global já remove soft-deletados nas
+        // entidades alvo). Usamos EXISTS com o DbSet correspondente para evitar trazer a entidade
+        // alvo no payload e manter as projeções planas.
+        var roles = await _db.UserRoles.AsNoTracking()
+            .Where(ur => ur.UserId == id && _db.Roles.Any(r => r.Id == ur.RoleId))
+            .OrderBy(ur => ur.CreatedAt)
+            .ThenBy(ur => ur.Id)
+            .Select(ur => new UserRoleLinkResponse(
+                ur.Id,
+                ur.UserId,
+                ur.RoleId,
+                ur.CreatedAt,
+                ur.UpdatedAt,
+                ur.DeletedAt))
+            .ToListAsync();
+
+        var permissions = await _db.UserPermissions.AsNoTracking()
+            .Where(up => up.UserId == id && _db.Permissions.Any(p => p.Id == up.PermissionId))
+            .OrderBy(up => up.CreatedAt)
+            .ThenBy(up => up.Id)
+            .Select(up => new UserPermissionLinkResponse(
+                up.Id,
+                up.UserId,
+                up.PermissionId,
+                up.CreatedAt,
+                up.UpdatedAt,
+                up.DeletedAt))
+            .ToListAsync();
+
+        return Ok(ToResponse(user, roles, permissions));
     }
 
     [HttpPut("{id:guid}")]
@@ -591,6 +621,221 @@ public partial class UsersController : ControllerBase
         Level = LogLevel.Information,
         Message = "ForceLogout: target {UserId}, by {CallerId}, newTokenVersion={NewTokenVersion}")]
     private partial void LogForceLogoutCompleted(Guid userId, Guid callerId, int newTokenVersion);
+
+    /// <summary>
+    /// Origem de uma permissão na resposta de <see cref="GetEffectivePermissions"/>: <c>direct</c>
+    /// (vinculada diretamente ao usuário) ou <c>role</c> (herdada de uma role do usuário).
+    /// Os campos <c>RoleId</c>, <c>RoleCode</c> e <c>RoleName</c> são preenchidos somente quando
+    /// <c>Kind = "role"</c>.
+    /// </summary>
+    public record EffectivePermissionSource(
+        string Kind,
+        Guid? RoleId = null,
+        string? RoleCode = null,
+        string? RoleName = null);
+
+    public record EffectivePermissionResponse(
+        Guid PermissionId,
+        string RouteCode,
+        string RouteName,
+        string PermissionTypeCode,
+        string PermissionTypeName,
+        Guid SystemId,
+        string SystemCode,
+        string SystemName,
+        IReadOnlyList<EffectivePermissionSource> Sources);
+
+    /// <summary>
+    /// Retorna a união consolidada das permissões efetivas do usuário (diretas + via roles), com
+    /// a origem agregada por permissão. Apenas vínculos ativos (<c>DeletedAt IS NULL</c> nos links
+    /// e nas entidades alvo) compõem o resultado: o filtro global já esconde Permissions, Routes,
+    /// Systems, PermissionTypes e Roles soft-deletados; os links UserPermissions/UserRoles/RolePermissions
+    /// recebem o predicado <c>DeletedAt == null</c> explícito porque ainda não têm query filter global.
+    ///
+    /// Filtro opcional <c>?systemId=</c> restringe pelas permissões cuja rota pertence ao sistema.
+    /// Ordenação determinística: <c>SystemCode</c>, <c>RouteCode</c>, <c>PermissionTypeCode</c>.
+    /// 404 quando o usuário não existe ou está soft-deletado. Política <c>perm:Users.Read</c>.
+    /// </summary>
+    [HttpGet("{id:guid}/effective-permissions")]
+    [Authorize(Policy = PermissionPolicies.UsersRead)]
+    public async Task<IActionResult> GetEffectivePermissions(
+        Guid id,
+        [FromQuery] Guid? systemId = null)
+    {
+        if (systemId.HasValue && systemId.Value == Guid.Empty)
+        {
+            ModelState.AddModelError(nameof(systemId), "systemId inválido.");
+            return ValidationProblem(ModelState);
+        }
+
+        var userExists = await _db.Users.AsNoTracking().AnyAsync(u => u.Id == id);
+        if (!userExists)
+            return NotFound(new { message = UserNotFoundMessage });
+
+        // Direct: permissions vinculadas ao usuário (link ativo + permission ativa).
+        // O filtro global em Permissions/Routes/Systems/PermissionTypes garante que só ativos
+        // são acessíveis sem IgnoreQueryFilters; aqui aplicamos `up.DeletedAt == null` no link.
+        var directBase =
+            from up in _db.UserPermissions.AsNoTracking()
+            where up.UserId == id && up.DeletedAt == null
+            join p in _db.Permissions.AsNoTracking() on up.PermissionId equals p.Id
+            join r in _db.Routes.AsNoTracking() on p.RouteId equals r.Id
+            join s in _db.Systems.AsNoTracking() on r.SystemId equals s.Id
+            join t in _db.PermissionTypes.AsNoTracking() on p.PermissionTypeId equals t.Id
+            select new
+            {
+                PermissionId = p.Id,
+                RouteCode = r.Code,
+                RouteName = r.Name,
+                PermissionTypeCode = t.Code,
+                PermissionTypeName = t.Name,
+                SystemId = s.Id,
+                SystemCode = s.Code,
+                SystemName = s.Name
+            };
+
+        if (systemId.HasValue)
+            directBase = directBase.Where(x => x.SystemId == systemId.Value);
+
+        // Role-based: permissions herdadas via UserRoles → RolePermissions. Filtra link ativo
+        // tanto em UserRoles quanto em RolePermissions; a Role precisa estar ativa (filter global).
+        var roleBase =
+            from ur in _db.UserRoles.AsNoTracking()
+            where ur.UserId == id && ur.DeletedAt == null
+            join role in _db.Roles.AsNoTracking() on ur.RoleId equals role.Id
+            join rp in _db.RolePermissions.AsNoTracking() on role.Id equals rp.RoleId
+            where rp.DeletedAt == null
+            join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+            join r in _db.Routes.AsNoTracking() on p.RouteId equals r.Id
+            join s in _db.Systems.AsNoTracking() on r.SystemId equals s.Id
+            join t in _db.PermissionTypes.AsNoTracking() on p.PermissionTypeId equals t.Id
+            select new
+            {
+                PermissionId = p.Id,
+                RouteCode = r.Code,
+                RouteName = r.Name,
+                PermissionTypeCode = t.Code,
+                PermissionTypeName = t.Name,
+                SystemId = s.Id,
+                SystemCode = s.Code,
+                SystemName = s.Name,
+                RoleId = role.Id,
+                RoleCode = role.Code,
+                RoleName = role.Name
+            };
+
+        if (systemId.HasValue)
+            roleBase = roleBase.Where(x => x.SystemId == systemId.Value);
+
+        // Materializa as duas faces em paralelo (duas queries independentes, sem UNION SQL para
+        // evitar limitações de tradução com tipos heterogêneos). O agrupamento por PermissionId e
+        // a consolidação do array `sources` ocorre em memória — N proporcional ao total de linhas
+        // efetivas (sem N+1; cada DbSet é tocado no máximo duas vezes em todo o handler).
+        var directList = await directBase.ToListAsync();
+        var roleList = await roleBase.ToListAsync();
+
+        var rows = new List<EffectivePermissionRow>(directList.Count + roleList.Count);
+        foreach (var d in directList)
+        {
+            rows.Add(new EffectivePermissionRow(
+                d.PermissionId,
+                d.RouteCode,
+                d.RouteName,
+                d.PermissionTypeCode,
+                d.PermissionTypeName,
+                d.SystemId,
+                d.SystemCode,
+                d.SystemName,
+                "direct",
+                null,
+                null,
+                null));
+        }
+        foreach (var rrow in roleList)
+        {
+            rows.Add(new EffectivePermissionRow(
+                rrow.PermissionId,
+                rrow.RouteCode,
+                rrow.RouteName,
+                rrow.PermissionTypeCode,
+                rrow.PermissionTypeName,
+                rrow.SystemId,
+                rrow.SystemCode,
+                rrow.SystemName,
+                "role",
+                rrow.RoleId,
+                rrow.RoleCode,
+                rrow.RoleName));
+        }
+
+        var result = rows
+            .GroupBy(x => x.PermissionId)
+            .Select(g =>
+            {
+                var first = g.First();
+                var sources = g
+                    .Select(BuildSource)
+                    .Distinct(EffectivePermissionSourceComparer.Instance)
+                    .OrderBy(s => s.Kind, StringComparer.Ordinal)
+                    .ThenBy(s => s.RoleCode, StringComparer.Ordinal)
+                    .ToList();
+                return new EffectivePermissionResponse(
+                    first.PermissionId,
+                    first.RouteCode,
+                    first.RouteName,
+                    first.PermissionTypeCode,
+                    first.PermissionTypeName,
+                    first.SystemId,
+                    first.SystemCode,
+                    first.SystemName,
+                    sources);
+            })
+            .OrderBy(p => p.SystemCode, StringComparer.Ordinal)
+            .ThenBy(p => p.RouteCode, StringComparer.Ordinal)
+            .ThenBy(p => p.PermissionTypeCode, StringComparer.Ordinal)
+            .ToList();
+
+        return Ok(result);
+    }
+
+    private static EffectivePermissionSource BuildSource(EffectivePermissionRow row) =>
+        row.SourceKind == "role"
+            ? new EffectivePermissionSource(row.SourceKind, row.RoleId, row.RoleCode, row.RoleName)
+            : new EffectivePermissionSource(row.SourceKind);
+
+    /// <summary>
+    /// Linha plana intermediária entre a query SQL e o agrupamento por <c>PermissionId</c>. Cada
+    /// permissão pode aparecer múltiplas vezes (uma por origem); a consolidação acontece em memória.
+    /// </summary>
+    private sealed record EffectivePermissionRow(
+        Guid PermissionId,
+        string RouteCode,
+        string RouteName,
+        string PermissionTypeCode,
+        string PermissionTypeName,
+        Guid SystemId,
+        string SystemCode,
+        string SystemName,
+        string SourceKind,
+        Guid? RoleId,
+        string? RoleCode,
+        string? RoleName);
+
+    private sealed class EffectivePermissionSourceComparer : IEqualityComparer<EffectivePermissionSource>
+    {
+        public static readonly EffectivePermissionSourceComparer Instance = new();
+
+        public bool Equals(EffectivePermissionSource? x, EffectivePermissionSource? y)
+        {
+            if (ReferenceEquals(x, y)) return true;
+            if (x is null || y is null) return false;
+            return string.Equals(x.Kind, y.Kind, StringComparison.Ordinal)
+                && Nullable.Equals(x.RoleId, y.RoleId);
+        }
+
+        public int GetHashCode(EffectivePermissionSource obj) =>
+            HashCode.Combine(obj.Kind, obj.RoleId);
+    }
 
     public class AssignPermissionRequest
     {

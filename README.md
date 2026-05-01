@@ -301,6 +301,7 @@ Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema qu
 | `POST` | `/api/v1/users` | Sim | `perm:Users.Create` |
 | `GET` | `/api/v1/users` | Sim | `perm:Users.Read` |
 | `GET` | `/api/v1/users/{id}` | Sim | `perm:Users.Read` |
+| `GET` | `/api/v1/users/{id}/effective-permissions` | Sim | `perm:Users.Read` |
 | `PUT` | `/api/v1/users/{id}` | Sim | `perm:Users.Update` |
 | `PUT` | `/api/v1/users/{id}/password` | Sim | `perm:Users.Update` |
 | `DELETE` | `/api/v1/users/{id}` | Sim | `perm:Users.Delete` |
@@ -313,7 +314,9 @@ Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema qu
 
 **POST:** `name`, `email`, `password`, `identity`, `active` (opcional, padrão `true`). **PUT** usuário: `name`, `email`, `identity`, `active` (sem senha). Email normalizado (ex.: minúsculas).
 
-**GET** `/api/v1/users/{id}` retorna também os vínculos ativos **`roles`** (lista com `id` inteiro, `userId`, `roleId`, auditoria e `deletedAt`) e **`permissions`** (lista com `id` GUID, `userId`, `permissionId`, auditoria e `deletedAt`). Listagens **`GET /api/v1/users`** e respostas de criação/atualização devolvem `roles` e `permissions` como arrays vazios.
+**GET** `/api/v1/users/{id}` retorna o `UserResponse` completo com `id`, `name`, `email`, `clientId`, `identity`, `active`, auditoria e os vínculos ativos **`roles`** (lista com `id` GUID, `userId`, `roleId`, auditoria e `deletedAt`) e **`permissions`** (lista com `id` GUID, `userId`, `permissionId`, auditoria e `deletedAt`). Apenas vínculos ativos aparecem (link e entidade alvo com `DeletedAt IS NULL`). Listagens **`GET /api/v1/users`** e respostas de criação/atualização devolvem `roles` e `permissions` como arrays vazios.
+
+**`GET /api/v1/users/{id}/effective-permissions`** retorna a união consolidada das permissões efetivas do usuário, juntando permissões diretas (`UserPermissions`) e herdadas via roles (`UserRoles → RolePermissions`), com a origem agregada por permissão. Apenas vínculos ativos compõem o resultado (link e entidade alvo com `DeletedAt IS NULL`). Cada item traz a permissão denormalizada (`routeCode`, `routeName`, `permissionTypeCode`, `permissionTypeName`, `systemId`, `systemCode`, `systemName`) e um array `sources` com todas as origens — uma permissão pode aparecer simultaneamente como `{ "kind": "direct" }` e como `{ "kind": "role", "roleId", "roleCode", "roleName" }` (uma entrada por role). Filtro opcional `?systemId=<guid>` restringe pelas permissões cuja rota pertence ao sistema (`Guid.Empty` retorna **400**). Ordenação determinística: `systemCode`, `routeCode`, `permissionTypeCode`. **404** quando o usuário não existe ou está soft-deletado. Usuário sem permissões diretas e sem roles ativas retorna `[]`.
 
 **`GET /api/v1/users`** suporta dois modos:
 
