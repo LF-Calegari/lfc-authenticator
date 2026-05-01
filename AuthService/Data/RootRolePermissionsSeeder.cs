@@ -14,15 +14,6 @@ public static class RootRolePermissionsSeeder
 
     public static async Task EnsureRootRolePermissionsAsync(AppDbContext db, CancellationToken cancellationToken = default)
     {
-        var rootRoleId = await db.Roles.AsNoTracking()
-            .Where(r => r.Code == RootUserSeeder.RootRoleCode)
-            .Select(r => (Guid?)r.Id)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (rootRoleId is null || rootRoleId == Guid.Empty)
-            throw new InvalidOperationException(
-                $"Role '{RootUserSeeder.RootRoleCode}' não encontrada. Execute o RootUserSeeder antes do RootRolePermissionsSeeder.");
-
         var systemId = await db.Systems.AsNoTracking()
             .Where(s => s.Code == SystemCode)
             .Select(s => (Guid?)s.Id)
@@ -31,6 +22,15 @@ public static class RootRolePermissionsSeeder
         if (systemId is null || systemId == Guid.Empty)
             throw new InvalidOperationException(
                 $"Sistema '{SystemCode}' não encontrado. Execute o SystemSeeder antes do RootRolePermissionsSeeder.");
+
+        var rootRoleId = await db.Roles.AsNoTracking()
+            .Where(r => r.SystemId == systemId.Value && r.Code == RootUserSeeder.RootRoleCode)
+            .Select(r => (Guid?)r.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (rootRoleId is null || rootRoleId == Guid.Empty)
+            throw new InvalidOperationException(
+                $"Role '{RootUserSeeder.RootRoleCode}' não encontrada no sistema '{SystemCode}'. Execute o RootUserSeeder antes do RootRolePermissionsSeeder.");
 
         var permissionIds = await (
             from p in db.Permissions

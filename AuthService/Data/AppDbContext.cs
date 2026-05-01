@@ -37,6 +37,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<AppRole>(entity =>
+        {
+            entity.HasOne<AppSystem>()
+                .WithMany()
+                .HasForeignKey(r => r.SystemId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         modelBuilder.Entity<Client>(entity =>
         {
             entity.HasIndex(c => c.Cpf)
