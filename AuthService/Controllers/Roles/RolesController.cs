@@ -60,28 +60,6 @@ public partial class RolesController : ControllerBase
     private static RoleResponse ToResponse(AppRole e) =>
         new(e.Id, e.SystemId, e.Name, e.Code, e.Description, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
 
-    private static void ValidateNormalizedFields(
-        ModelStateDictionary modelState,
-        string name,
-        string code,
-        string? descriptionOrNull)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-            modelState.AddModelError(nameof(CreateRoleRequest.Name), "Name é obrigatório e não pode ser apenas espaços.");
-
-        if (string.IsNullOrWhiteSpace(code))
-            modelState.AddModelError(nameof(CreateRoleRequest.Code), "Code é obrigatório e não pode ser apenas espaços.");
-
-        if (name.Length > 80)
-            modelState.AddModelError(nameof(CreateRoleRequest.Name), "Name deve ter no máximo 80 caracteres.");
-
-        if (code.Length > 50)
-            modelState.AddModelError(nameof(CreateRoleRequest.Code), "Code deve ter no máximo 50 caracteres.");
-
-        if (descriptionOrNull is { Length: > 500 })
-            modelState.AddModelError(nameof(CreateRoleRequest.Description), "Description deve ter no máximo 500 caracteres.");
-    }
-
     private const string RoleNotFoundMessage = "Role não encontrado.";
 
     private static ConflictObjectResult UniqueConflictResult() =>
@@ -115,7 +93,7 @@ public partial class RolesController : ControllerBase
         var code = request.Code.Trim();
         var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
 
-        ValidateNormalizedFields(ModelState, name, code, description);
+        PagingQueryHelper.ValidateNameCodeDescription(ModelState, name, code, description);
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
@@ -171,15 +149,8 @@ public partial class RolesController : ControllerBase
         [FromQuery] int pageSize = DefaultPageSize,
         [FromQuery] bool includeDeleted = false)
     {
-        if (page <= 0)
-            ModelState.AddModelError(nameof(page), "page deve ser maior ou igual a 1.");
-
-        if (pageSize <= 0 || pageSize > MaxPageSize)
-            ModelState.AddModelError(nameof(pageSize), $"pageSize deve estar entre 1 e {MaxPageSize}.");
-
-        if (systemId.HasValue && systemId.Value == Guid.Empty)
-            ModelState.AddModelError(nameof(systemId), "systemId inválido.");
-
+        PagingQueryHelper.ValidatePaging(ModelState, page, pageSize, MaxPageSize);
+        PagingQueryHelper.ValidateOptionalSystemId(ModelState, systemId);
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
@@ -192,7 +163,7 @@ public partial class RolesController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(q))
         {
-            var pattern = $"%{EscapeLikePattern(q.Trim())}%";
+            var pattern = $"%{PagingQueryHelper.EscapeLikePattern(q.Trim())}%";
             query = query.Where(r =>
                 EF.Functions.ILike(r.Code, pattern, "\\") || EF.Functions.ILike(r.Name, pattern, "\\"));
         }
@@ -216,18 +187,6 @@ public partial class RolesController : ControllerBase
             .ToListAsync();
 
         return Ok(new PagedResponse<RoleResponse>(data, page, pageSize, total));
-    }
-
-    /// <summary>
-    /// Escapa caracteres curinga (<c>%</c>, <c>_</c>) e o caractere de escape (<c>\</c>) na entrada do usuário
-    /// para evitar que sejam interpretados como wildcards no <c>ILIKE</c>. Mantém o termo como busca literal parcial.
-    /// </summary>
-    private static string EscapeLikePattern(string value)
-    {
-        return value
-            .Replace("\\", "\\\\")
-            .Replace("%", "\\%")
-            .Replace("_", "\\_");
     }
 
     [HttpGet("{id:guid}")]
@@ -265,7 +224,7 @@ public partial class RolesController : ControllerBase
         var code = request.Code.Trim();
         var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
 
-        ValidateNormalizedFields(ModelState, name, code, description);
+        PagingQueryHelper.ValidateNameCodeDescription(ModelState, name, code, description);
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
