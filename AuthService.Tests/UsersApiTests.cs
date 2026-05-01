@@ -164,13 +164,10 @@ public class UsersApiTests : IAsyncLifetime
         Assert.NotNull(toDelete);
         await _client.DeleteAsync($"/api/v1/users/{toDelete.Id}");
 
-        var listResp = await _client.GetAsync("/api/v1/users");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<UserDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        Assert.All(list, u => Assert.Null(u.DeletedAt));
-        Assert.Contains(list, u => u.Email == "ativo@example.com");
-        Assert.DoesNotContain(list, u => u.Email == "outro@example.com");
+        var listPage = await GetUsersPageAsync("/api/v1/users?pageSize=100");
+        Assert.All(listPage.Data, u => Assert.Null(u.DeletedAt));
+        Assert.Contains(listPage.Data, u => u.Email == "ativo@example.com");
+        Assert.DoesNotContain(listPage.Data, u => u.Email == "outro@example.com");
     }
 
     [Fact]
@@ -337,11 +334,8 @@ public class UsersApiTests : IAsyncLifetime
         Assert.NotNull(restored);
         Assert.Null(restored.DeletedAt);
 
-        var listResp = await _client.GetAsync("/api/v1/users");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<UserDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        Assert.Contains(list, u => u.Id == dto.Id);
+        var listPage = await GetUsersPageAsync("/api/v1/users?pageSize=100");
+        Assert.Contains(listPage.Data, u => u.Id == dto.Id);
     }
 
     [Fact]
@@ -404,11 +398,8 @@ public class UsersApiTests : IAsyncLifetime
     public async Task GetAll_ReturnsEmptyRolesAndPermissions_OnEachUser()
     {
         await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("Lista", "list.empty@example.com"), TestApiClient.JsonOptions);
-        var listResp = await _client.GetAsync("/api/v1/users");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<UserDetailDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        var row = list.First(u => u.Email == "list.empty@example.com");
+        var page = await GetUsersDetailPageAsync("/api/v1/users?pageSize=100");
+        var row = page.Data.First(u => u.Email == "list.empty@example.com");
         Assert.Empty(row.Roles);
         Assert.Empty(row.Permissions);
     }
@@ -565,6 +556,381 @@ public class UsersApiTests : IAsyncLifetime
         var response = await anon.SendAsync(req);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
+
+    [Fact]
+    public async Task GetAll_NoFilters_UsesDefaultEnvelope()
+    {
+        var page = await GetUsersPageAsync("/api/v1/users");
+        Assert.Equal(1, page.Page);
+        Assert.Equal(20, page.PageSize);
+        Assert.True(page.Total >= page.Data.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPagination_ReturnsCorrectSubset()
+    {
+        for (var i = 0; i < 5; i++)
+        {
+            await _client.PostAsJsonAsync("/api/v1/users",
+                UserCreateBody($"Pag User {i:D2}", $"pag.user.{i:D2}@example.com"),
+                TestApiClient.JsonOptions);
+        }
+
+        var first = await GetUsersPageAsync("/api/v1/users?q=Pag%20User&page=1&pageSize=2");
+        var second = await GetUsersPageAsync("/api/v1/users?q=Pag%20User&page=2&pageSize=2");
+        var third = await GetUsersPageAsync("/api/v1/users?q=Pag%20User&page=3&pageSize=2");
+
+        Assert.Equal(2, first.Data.Count);
+        Assert.Equal(2, second.Data.Count);
+        Assert.Single(third.Data);
+        Assert.Equal(5, first.Total);
+        Assert.Equal(5, second.Total);
+        Assert.Equal(5, third.Total);
+
+        var ids = first.Data.Concat(second.Data).Concat(third.Data).Select(u => u.Id).ToList();
+        Assert.Equal(ids.Count, ids.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_PartialMatchOnName()
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Aparecida Silva Q", "aparecida.q@example.com"),
+            TestApiClient.JsonOptions);
+        resp.EnsureSuccessStatusCode();
+
+        var page = await GetUsersPageAsync("/api/v1/users?q=Aparecida&pageSize=100");
+        Assert.Contains(page.Data, u => u.Email == "aparecida.q@example.com");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_PartialMatchOnEmail()
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Email Match", "email.match.unique@example.com"),
+            TestApiClient.JsonOptions);
+        resp.EnsureSuccessStatusCode();
+
+        var page = await GetUsersPageAsync("/api/v1/users?q=email.match.unique&pageSize=100");
+        Assert.Contains(page.Data, u => u.Email == "email.match.unique@example.com");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_IsCaseInsensitive()
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Roberto Oliveira Q", "roberto.q@example.com"),
+            TestApiClient.JsonOptions);
+        resp.EnsureSuccessStatusCode();
+
+        var lower = await GetUsersPageAsync("/api/v1/users?q=roberto&pageSize=100");
+        var upper = await GetUsersPageAsync("/api/v1/users?q=ROBERTO&pageSize=100");
+        var mixed = await GetUsersPageAsync("/api/v1/users?q=RoBeRtO&pageSize=100");
+
+        Assert.Contains(lower.Data, u => u.Email == "roberto.q@example.com");
+        Assert.Contains(upper.Data, u => u.Email == "roberto.q@example.com");
+        Assert.Contains(mixed.Data, u => u.Email == "roberto.q@example.com");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_EscapesUnderscoreLiteral()
+    {
+        // Sem o escape, "_" viraria wildcard ILIKE e casaria qualquer caractere unico no lugar.
+        var resp1 = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Foo_Lit_BarUser", "foo.litbar1@example.com"),
+            TestApiClient.JsonOptions);
+        resp1.EnsureSuccessStatusCode();
+        var resp2 = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("FooXLitXBarUser", "foo.litbar2@example.com"),
+            TestApiClient.JsonOptions);
+        resp2.EnsureSuccessStatusCode();
+
+        var page = await GetUsersPageAsync("/api/v1/users?q=_Lit_&pageSize=100");
+        Assert.Contains(page.Data, u => u.Name == "Foo_Lit_BarUser");
+        Assert.DoesNotContain(page.Data, u => u.Name == "FooXLitXBarUser");
+    }
+
+    [Fact]
+    public async Task GetAll_WithClientIdFilter_ReturnsOnlyMatching()
+    {
+        // Cria dois usuários, cada um vinculado ao seu próprio cliente auto-gerado pelo POST /users.
+        var aResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ClientFilter A", "client.filter.a@example.com"),
+            TestApiClient.JsonOptions);
+        aResp.EnsureSuccessStatusCode();
+        var aDto = await aResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(aDto);
+        Assert.NotNull(aDto.ClientId);
+
+        var bResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ClientFilter B", "client.filter.b@example.com"),
+            TestApiClient.JsonOptions);
+        bResp.EnsureSuccessStatusCode();
+        var bDto = await bResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(bDto);
+        Assert.NotNull(bDto.ClientId);
+
+        var page = await GetUsersPageAsync($"/api/v1/users?clientId={aDto.ClientId}&pageSize=100");
+        Assert.All(page.Data, u => Assert.Equal(aDto.ClientId, u.ClientId));
+        Assert.Contains(page.Data, u => u.Id == aDto.Id);
+        Assert.DoesNotContain(page.Data, u => u.Id == bDto.Id);
+    }
+
+    [Fact]
+    public async Task GetAll_WithClientIdEmpty_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync($"/api/v1/users?clientId={Guid.Empty}");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithClientIdNonExistent_ReturnsEmpty()
+    {
+        var page = await GetUsersPageAsync($"/api/v1/users?clientId={Guid.NewGuid()}&pageSize=100");
+        Assert.Empty(page.Data);
+        Assert.Equal(0, page.Total);
+    }
+
+    [Fact]
+    public async Task GetAll_WithActiveTrue_ReturnsOnlyActive()
+    {
+        var activeResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ActiveTrue Stay", "active.true.stay@example.com"),
+            TestApiClient.JsonOptions);
+        activeResp.EnsureSuccessStatusCode();
+        var activeDto = await activeResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(activeDto);
+
+        var deletedResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ActiveTrue Gone", "active.true.gone@example.com"),
+            TestApiClient.JsonOptions);
+        deletedResp.EnsureSuccessStatusCode();
+        var deletedDto = await deletedResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(deletedDto);
+        await _client.DeleteAsync($"/api/v1/users/{deletedDto.Id}");
+
+        var page = await GetUsersPageAsync("/api/v1/users?active=true&pageSize=100");
+        Assert.Contains(page.Data, u => u.Id == activeDto.Id);
+        Assert.DoesNotContain(page.Data, u => u.Id == deletedDto.Id);
+    }
+
+    [Fact]
+    public async Task GetAll_WithActiveFalse_ReturnsOnlySoftDeleted()
+    {
+        var activeResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ActiveFalse Stay", "active.false.stay@example.com"),
+            TestApiClient.JsonOptions);
+        activeResp.EnsureSuccessStatusCode();
+        var activeDto = await activeResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(activeDto);
+
+        var deletedResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ActiveFalse Gone", "active.false.gone@example.com"),
+            TestApiClient.JsonOptions);
+        deletedResp.EnsureSuccessStatusCode();
+        var deletedDto = await deletedResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(deletedDto);
+        await _client.DeleteAsync($"/api/v1/users/{deletedDto.Id}");
+
+        var page = await GetUsersPageAsync("/api/v1/users?active=false&pageSize=100");
+        Assert.Contains(page.Data, u => u.Id == deletedDto.Id);
+        Assert.DoesNotContain(page.Data, u => u.Id == activeDto.Id);
+    }
+
+    [Fact]
+    public async Task GetAll_WithIncludeDeletedTrue_ReturnsActiveAndSoftDeleted()
+    {
+        var activeResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Incl Active", "incl.active.user@example.com"),
+            TestApiClient.JsonOptions);
+        activeResp.EnsureSuccessStatusCode();
+        var activeDto = await activeResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(activeDto);
+
+        var deletedResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Incl Deleted", "incl.deleted.user@example.com"),
+            TestApiClient.JsonOptions);
+        deletedResp.EnsureSuccessStatusCode();
+        var deletedDto = await deletedResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(deletedDto);
+        await _client.DeleteAsync($"/api/v1/users/{deletedDto.Id}");
+
+        var page = await GetUsersPageAsync("/api/v1/users?includeDeleted=true&pageSize=100");
+        Assert.Contains(page.Data, u => u.Id == activeDto.Id && u.DeletedAt == null);
+        Assert.Contains(page.Data, u => u.Id == deletedDto.Id && u.DeletedAt != null);
+    }
+
+    [Fact]
+    public async Task GetAll_WithActiveAndIncludeDeleted_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/users?active=true&includeDeleted=true");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeAboveLimit_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/users?pageSize=101");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeZero_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/users?pageSize=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageZero_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/users?page=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_PageBeyondTotal_ReturnsEmptyDataAnd200()
+    {
+        await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Beyond Unico", "beyond.unico@example.com"),
+            TestApiClient.JsonOptions);
+
+        var resp = await _client.GetAsync("/api/v1/users?q=beyond.unico&page=99&pageSize=10");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var page = await resp.Content.ReadFromJsonAsync<PagedUsersDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        Assert.Empty(page.Data);
+        Assert.Equal(1, page.Total);
+    }
+
+    [Fact]
+    public async Task GetAll_OrderedByCreatedAt_Descending()
+    {
+        var first = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Order User AAA", "order.user.aaa@example.com"),
+            TestApiClient.JsonOptions);
+        first.EnsureSuccessStatusCode();
+        var firstDto = await first.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(firstDto);
+
+        await Task.Delay(20);
+
+        var second = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Order User BBB", "order.user.bbb@example.com"),
+            TestApiClient.JsonOptions);
+        second.EnsureSuccessStatusCode();
+        var secondDto = await second.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(secondDto);
+
+        var page = await GetUsersPageAsync("/api/v1/users?q=Order%20User&pageSize=100");
+        var ordered = page.Data
+            .Where(u => u.Name.StartsWith("Order User", StringComparison.Ordinal))
+            .Select(u => u.Id)
+            .ToList();
+        Assert.Equal(secondDto.Id, ordered[0]);
+        Assert.Equal(firstDto.Id, ordered[1]);
+    }
+
+    [Fact]
+    public async Task GetAll_TotalReflectsFilters_BeforePagination()
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            await _client.PostAsJsonAsync("/api/v1/users",
+                UserCreateBody($"FiltroTot {i}", $"filtrotot.{i}@example.com"),
+                TestApiClient.JsonOptions);
+        }
+        await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Outro Nome U", "outro.nome.u@example.com"),
+            TestApiClient.JsonOptions);
+
+        var page = await GetUsersPageAsync("/api/v1/users?q=FiltroTot&page=1&pageSize=2");
+        Assert.Equal(3, page.Total);
+        Assert.Equal(2, page.Data.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_CombinedFilters_ApplyTogether()
+    {
+        var aResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Combo Maria User", "combo.maria.user@example.com"),
+            TestApiClient.JsonOptions);
+        aResp.EnsureSuccessStatusCode();
+        var aDto = await aResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(aDto);
+        Assert.NotNull(aDto.ClientId);
+
+        await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Combo Maria Outro", "combo.maria.outro@example.com"),
+            TestApiClient.JsonOptions);
+
+        var page = await GetUsersPageAsync(
+            $"/api/v1/users?q=Combo%20Maria&clientId={aDto.ClientId}&active=true&pageSize=100");
+        Assert.All(page.Data, u => Assert.Equal(aDto.ClientId, u.ClientId));
+        Assert.Contains(page.Data, u => u.Id == aDto.Id);
+        Assert.DoesNotContain(page.Data, u => u.Email == "combo.maria.outro@example.com");
+    }
+
+    [Fact]
+    public async Task GetAll_WithIdsPresent_PreservesMinimalProjectionContract()
+    {
+        // Mesmo passando page/pageSize e demais filtros, o caminho `?ids=` deve permanecer
+        // retornando o array minimal na ordem solicitada (sem envelope paginado).
+        var aResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("IdsKeep One", "ids.keep.one@example.com"),
+            TestApiClient.JsonOptions);
+        aResp.EnsureSuccessStatusCode();
+        var aDto = await aResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(aDto);
+
+        var bResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("IdsKeep Two", "ids.keep.two@example.com"),
+            TestApiClient.JsonOptions);
+        bResp.EnsureSuccessStatusCode();
+        var bDto = await bResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(bDto);
+
+        var resp = await _client.GetAsync(
+            $"/api/v1/users?ids={bDto.Id},{aDto.Id}&page=1&pageSize=20&q=ignored");
+        resp.EnsureSuccessStatusCode();
+        using var payload = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        Assert.Equal(JsonValueKind.Array, payload.RootElement.ValueKind);
+        var rows = payload.RootElement.EnumerateArray().ToList();
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(bDto.Id, rows[0].GetProperty("id").GetGuid());
+        Assert.Equal(aDto.Id, rows[1].GetProperty("id").GetGuid());
+        Assert.Equal(3, rows[0].EnumerateObject().Count());
+    }
+
+    private async Task<PagedUsersDto> GetUsersPageAsync(string url)
+    {
+        var resp = await _client.GetAsync(url);
+        resp.EnsureSuccessStatusCode();
+        var page = await resp.Content.ReadFromJsonAsync<PagedUsersDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        return page;
+    }
+
+    private async Task<PagedUsersDetailDto> GetUsersDetailPageAsync(string url)
+    {
+        var resp = await _client.GetAsync(url);
+        resp.EnsureSuccessStatusCode();
+        var page = await resp.Content.ReadFromJsonAsync<PagedUsersDetailDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        return page;
+    }
+
+    private sealed record PagedUsersDto(
+        List<UserDto> Data,
+        int Page,
+        int PageSize,
+        int Total);
+
+    private sealed record PagedUsersDetailDto(
+        List<UserDetailDto> Data,
+        int Page,
+        int PageSize,
+        int Total);
 
     private sealed record LoginDto(string Token);
 
