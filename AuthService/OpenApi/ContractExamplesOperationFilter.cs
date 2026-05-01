@@ -53,6 +53,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             || TryApplySystemsListGet(operation, normalizedPath, method)
             || TryApplyRoutesListGet(operation, normalizedPath, method)
             || TryApplyRoutesDelete(operation, normalizedPath, method)
+            || TryApplyUsersForceLogoutPost(operation, normalizedPath, method)
             || TryApplyRestorePost(operation, normalizedPath, method);
     }
 
@@ -134,6 +135,34 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             return false;
 
         AddJsonResponse(operation, "200", "Restauracao concluida.", new { message = "Registro restaurado com sucesso." });
+        return true;
+    }
+
+    private static bool TryApplyUsersForceLogoutPost(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        // POST /users/{id}/force-logout (issue #168): admin invalida sessões ativas do usuário-alvo
+        // incrementando o TokenVersion. Self-target retorna 400, soft-deleted/inexistente retorna 404.
+        if (method != "POST" || !normalizedPath.StartsWith("/users/", StringComparison.Ordinal))
+            return false;
+        if (!normalizedPath.EndsWith("/force-logout", StringComparison.Ordinal))
+            return false;
+
+        AddJsonResponse(operation, "200", "Sessoes do usuario invalidadas com sucesso.", new
+        {
+            message = "Sessões do usuário invalidadas com sucesso.",
+            userId = EmptyGuidExample,
+            newTokenVersion = 1
+        });
+        AddErrorResponse(
+            operation,
+            "400",
+            "Caller tentou forcar logout de si mesmo (use GET /auth/logout em vez disso).",
+            new { message = "Não é possível forçar logout de si mesmo por este endpoint. Utilize GET /auth/logout." });
+        AddErrorResponse(
+            operation,
+            "404",
+            "Usuario nao encontrado ou soft-deletado.",
+            new { message = "Usuário não encontrado." });
         return true;
     }
 

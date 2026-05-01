@@ -102,6 +102,7 @@ public class ApiVersioningAndDocsTests : IAsyncLifetime
             "/api/v1/tokens/types/{id}/restore",
             "/api/v1/users",
             "/api/v1/users/{id}",
+            "/api/v1/users/{id}/force-logout",
             "/api/v1/users/{id}/password",
             "/api/v1/users/{id}/restore",
             "/api/v1/users/{userId}/permissions",

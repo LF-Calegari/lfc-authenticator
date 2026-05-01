@@ -305,6 +305,7 @@ Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema qu
 | `PUT` | `/api/v1/users/{id}/password` | Sim | `perm:Users.Update` |
 | `DELETE` | `/api/v1/users/{id}` | Sim | `perm:Users.Delete` |
 | `POST` | `/api/v1/users/{id}/restore` | Sim | `perm:Users.Restore` |
+| `POST` | `/api/v1/users/{id}/force-logout` | Sim | `perm:Users.Update` |
 | `POST` | `/api/v1/users/{id}/permissions` | Sim | `perm:Users.Update` |
 | `DELETE` | `/api/v1/users/{id}/permissions/{permissionId}` | Sim | `perm:Users.Update` |
 | `POST` | `/api/v1/users/{id}/roles` | Sim | `perm:Users.Update` |
@@ -313,6 +314,18 @@ Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema qu
 **POST:** `name`, `email`, `password`, `identity`, `active` (opcional, padrão `true`). **PUT** usuário: `name`, `email`, `identity`, `active` (sem senha). Email normalizado (ex.: minúsculas).
 
 **GET** `/api/v1/users/{id}` retorna também os vínculos ativos **`roles`** (lista com `id` inteiro, `userId`, `roleId`, auditoria e `deletedAt`) e **`permissions`** (lista com `id` GUID, `userId`, `permissionId`, auditoria e `deletedAt`). Listagens **`GET /api/v1/users`** e respostas de criação/atualização devolvem `roles` e `permissions` como arrays vazios.
+
+**`POST /api/v1/users/{id}/force-logout`** — admin invalida todas as sessões ativas do usuário-alvo incrementando o `TokenVersion`. Mesmo mecanismo do `GET /auth/logout`, porém aplicado a um terceiro. Caller precisa de `perm:Users.Update`. O `JwtBearerHandler` valida o claim `tv` contra o banco a cada request, então tokens emitidos antes da chamada passam a falhar com 401 automaticamente. Self-target (`id` igual ao caller do JWT) retorna 400 e orienta a usar `/auth/logout`. Usuário inexistente ou soft-deletado retorna 404. Resposta `200 OK`:
+
+```json
+{
+  "message": "Sessões do usuário invalidadas com sucesso.",
+  "userId": "<guid>",
+  "newTokenVersion": 1
+}
+```
+
+A operação é idempotente em re-execução: cada chamada incrementa o contador (sessões emitidas entre as chamadas continuam válidas até o próximo incremento) e gera log estruturado `Information` `ForceLogout: target {UserId}, by {CallerId}, newTokenVersion={N}` para auditoria.
 
 ### Clientes — `/api/v1/clients`
 

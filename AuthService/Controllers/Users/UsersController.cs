@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Security.Claims;
 using AuthService.Auth;
 using AuthService.Data;
 using AuthService.Models;
@@ -14,16 +15,21 @@ namespace AuthService.Controllers.Users;
 
 [ApiController]
 [Route("users")]
-public class UsersController : ControllerBase
+public partial class UsersController : ControllerBase
 {
     private const string UserNotFoundMessage = "Usuário não encontrado.";
+    private const string ForceLogoutSelfMessage =
+        "Não é possível forçar logout de si mesmo por este endpoint. Utilize GET /auth/logout.";
+    private const string InvalidCallerTokenMessage = "Token do chamador inválido.";
     private const int MaxBatchIds = 100;
 
     private readonly AppDbContext _db;
+    private readonly ILogger<UsersController> _logger;
 
-    public UsersController(AppDbContext db)
+    public UsersController(AppDbContext db, ILogger<UsersController> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     public class CreateUserRequest
@@ -444,6 +450,45 @@ public class UsersController : ControllerBase
         await _db.SaveChangesAsync();
         return Ok(new { message = "Usuário restaurado com sucesso." });
     }
+
+    public record ForceLogoutResponse(string Message, Guid UserId, int NewTokenVersion);
+
+    /// <summary>
+    /// Invalida todas as sessões ativas do usuário-alvo incrementando o <c>TokenVersion</c>.
+    /// Caller deve possuir <c>perm:Users.Update</c>. Self-target retorna 400 (orienta uso de
+    /// <c>GET /auth/logout</c>). Usuário inexistente ou soft-deletado retorna 404.
+    /// </summary>
+    [HttpPost("{id:guid}/force-logout")]
+    [Authorize(Policy = PermissionPolicies.UsersUpdate)]
+    public async Task<IActionResult> ForceLogout(Guid id)
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(sub) || !Guid.TryParse(sub, out var callerId))
+            return Unauthorized(new { message = InvalidCallerTokenMessage });
+
+        if (callerId == id)
+            return BadRequest(new { message = ForceLogoutSelfMessage });
+
+        // Query filter global já remove soft-deletados (DeletedAt != null) → 404 esperado.
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id);
+        if (user is null)
+            return NotFound(new { message = UserNotFoundMessage });
+
+        user.TokenVersion++;
+        user.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        LogForceLogoutCompleted(user.Id, callerId, user.TokenVersion);
+        return Ok(new ForceLogoutResponse(
+            "Sessões do usuário invalidadas com sucesso.",
+            user.Id,
+            user.TokenVersion));
+    }
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "ForceLogout: target {UserId}, by {CallerId}, newTokenVersion={NewTokenVersion}")]
+    private partial void LogForceLogoutCompleted(Guid userId, Guid callerId, int newTokenVersion);
 
     public class AssignPermissionRequest
     {
