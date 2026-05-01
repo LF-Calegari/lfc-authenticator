@@ -149,6 +149,8 @@ public static class AuthenticatorRoutesSeeder
             "Remove (soft-delete) um usuário."),
         ("AUTH_V1_USERS_RESTORE", "POST /api/v1/users/{id}/restore",
             "Restaura um usuário previamente removido."),
+        ("AUTH_V1_USERS_FORCE_LOGOUT", "POST /api/v1/users/{id}/force-logout",
+            "Invalida todas as sessões ativas do usuário-alvo (admin) via incremento do TokenVersion."),
         ("AUTH_V1_USERS_PERMISSIONS_ASSIGN", "POST /api/v1/users/{id}/permissions",
             "Vincula uma permissão diretamente ao usuário."),
         ("AUTH_V1_USERS_PERMISSIONS_REMOVE", "DELETE /api/v1/users/{id}/permissions/{permissionId}",

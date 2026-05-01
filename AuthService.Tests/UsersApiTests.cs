@@ -1,6 +1,8 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AuthService.Controllers.Auth;
 using AuthService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -417,6 +419,154 @@ public class UsersApiTests : IAsyncLifetime
         var response = await _client.GetAsync($"/api/v1/users/{Guid.NewGuid()}");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
+
+    [Fact]
+    public async Task ForceLogout_HappyPath_OldTokenStartsToFailWith401_AndIncrementsTokenVersion()
+    {
+        // Cria target e faz login para obter um token "antigo".
+        await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Force Target", "force.target@example.com"), TestApiClient.JsonOptions);
+
+        var systemId = await TestApiClient.GetSystemIdAsync(_factory, TestApiClient.DefaultSystemCode);
+        var anon = _factory.CreateApiClient();
+        var login = await anon.PostAsJsonAsync("/api/v1/auth/login",
+            new { email = "force.target@example.com", password = "SenhaSegura1!", systemId },
+            TestApiClient.JsonOptions);
+        login.EnsureSuccessStatusCode();
+        var loginDto = await login.Content.ReadFromJsonAsync<LoginDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(loginDto);
+        var oldToken = loginDto.Token;
+
+        // Resolve o id do target para enviar à API.
+        Guid targetId;
+        int beforeTokenVersion;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.Users.AsNoTracking().FirstAsync(u => u.Email == "force.target@example.com");
+            targetId = row.Id;
+            beforeTokenVersion = row.TokenVersion;
+        }
+
+        var force = await _client.PostAsync($"/api/v1/users/{targetId}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.OK, force.StatusCode);
+
+        using var payload = JsonDocument.Parse(await force.Content.ReadAsStringAsync());
+        var root = payload.RootElement;
+        Assert.Equal("Sessões do usuário invalidadas com sucesso.", root.GetProperty("message").GetString());
+        Assert.Equal(targetId, root.GetProperty("userId").GetGuid());
+        Assert.Equal(beforeTokenVersion + 1, root.GetProperty("newTokenVersion").GetInt32());
+
+        // Persistência: TokenVersion incrementado.
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.Users.AsNoTracking().FirstAsync(u => u.Id == targetId);
+            Assert.Equal(beforeTokenVersion + 1, row.TokenVersion);
+        }
+
+        // Token antigo deve falhar com 401 ao chamar endpoint protegido (claim tv não bate mais).
+        using var verifyReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
+        verifyReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", oldToken);
+        verifyReq.Headers.Add(AuthController.SystemIdHeader, systemId.ToString("D"));
+        verifyReq.Headers.Add(AuthController.RouteCodeHeader, "AUTH_V1_USERS_LIST");
+        var verifyRes = await anon.SendAsync(verifyReq);
+        Assert.Equal(HttpStatusCode.Unauthorized, verifyRes.StatusCode);
+    }
+
+    [Fact]
+    public async Task ForceLogout_Idempotent_EachCallIncrementsTokenVersion()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Force Idem", "force.idem@example.com"), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+
+        var first = await _client.PostAsync($"/api/v1/users/{dto.Id}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var second = await _client.PostAsync($"/api/v1/users/{dto.Id}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.Users.AsNoTracking().FirstAsync(u => u.Id == dto.Id);
+        Assert.Equal(2, row.TokenVersion);
+    }
+
+    [Fact]
+    public async Task ForceLogout_SelfTarget_ReturnsBadRequest()
+    {
+        // Resolve o id do caller atual (root) consultando o banco.
+        Guid callerId;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.Users.AsNoTracking().FirstAsync(u => u.Email == RootUserSeeder.RootEmail);
+            callerId = row.Id;
+        }
+
+        var force = await _client.PostAsync($"/api/v1/users/{callerId}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.BadRequest, force.StatusCode);
+
+        using var payload = JsonDocument.Parse(await force.Content.ReadAsStringAsync());
+        var message = payload.RootElement.GetProperty("message").GetString();
+        Assert.Contains("/auth/logout", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ForceLogout_TargetNotFound_Returns404()
+    {
+        var force = await _client.PostAsync($"/api/v1/users/{Guid.NewGuid()}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.NotFound, force.StatusCode);
+    }
+
+    [Fact]
+    public async Task ForceLogout_TargetSoftDeleted_Returns404()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Force Deleted", "force.deleted@example.com"), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+
+        var del = await _client.DeleteAsync($"/api/v1/users/{dto.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, del.StatusCode);
+
+        var force = await _client.PostAsync($"/api/v1/users/{dto.Id}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.NotFound, force.StatusCode);
+    }
+
+    [Fact]
+    public async Task ForceLogout_CallerWithoutPermission_Returns403()
+    {
+        // Cria usuário-target.
+        var createTarget = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Target Privilege", "force.target.priv@example.com"), TestApiClient.JsonOptions);
+        var target = await createTarget.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(target);
+
+        // Cria caller sem nenhuma role/permissão (user comum) e faz login com ele.
+        await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Caller No Perm", "caller.noperm@example.com"), TestApiClient.JsonOptions);
+
+        var systemId = await TestApiClient.GetSystemIdAsync(_factory, TestApiClient.DefaultSystemCode);
+        var anon = _factory.CreateApiClient();
+        var login = await anon.PostAsJsonAsync("/api/v1/auth/login",
+            new { email = "caller.noperm@example.com", password = "SenhaSegura1!", systemId },
+            TestApiClient.JsonOptions);
+        login.EnsureSuccessStatusCode();
+        var loginDto = await login.Content.ReadFromJsonAsync<LoginDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(loginDto);
+
+        using var req = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/users/{target.Id}/force-logout");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
+        req.Headers.Add(AuthController.SystemIdHeader, systemId.ToString("D"));
+        var response = await anon.SendAsync(req);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    private sealed record LoginDto(string Token);
 
     private sealed record UserDto(
         Guid Id,
