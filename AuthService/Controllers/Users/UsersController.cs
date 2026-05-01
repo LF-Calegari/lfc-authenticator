@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using AuthService.Auth;
+using AuthService.Controllers.Common;
 using AuthService.Data;
 using AuthService.Models;
 using AuthService.Security;
@@ -295,9 +296,22 @@ public partial class UsersController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = user.Id }, ToResponse(user));
     }
 
+    /// <summary>Tamanho de página default quando o cliente não envia <c>pageSize</c>.</summary>
+    public const int DefaultPageSize = 20;
+
+    /// <summary>Limite superior para <c>pageSize</c>; valores acima retornam 400.</summary>
+    public const int MaxPageSize = 100;
+
     [HttpGet]
     [Authorize(Policy = PermissionPolicies.UsersRead)]
-    public async Task<IActionResult> GetAll([FromQuery] string[]? ids = null)
+    public async Task<IActionResult> GetAll(
+        [FromQuery] string[]? ids = null,
+        [FromQuery] string? q = null,
+        [FromQuery] Guid? clientId = null,
+        [FromQuery] bool? active = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = DefaultPageSize,
+        [FromQuery] bool includeDeleted = false)
     {
         if (ids is { Length: > 0 })
         {
@@ -321,10 +335,98 @@ public partial class UsersController : ControllerBase
             return Ok(ordered);
         }
 
-        var users = await _db.Users
-            .OrderBy(u => u.CreatedAt)
+        ValidateGetAllQueryParams(page, pageSize, clientId, active, includeDeleted);
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        var query = BuildUsersListingQuery(q, clientId, active, includeDeleted);
+
+        // Query 1: COUNT pré-paginação refletindo todos os filtros aplicados.
+        var total = await query.CountAsync();
+
+        // Query 2: página corrente, ordenada determinísticamente (CreatedAt DESC com Id como
+        // desempate estável, evitando saltos/duplicação entre páginas em ties de timestamp).
+        var pageUsers = await query
+            .OrderByDescending(u => u.CreatedAt)
+            .ThenBy(u => u.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .AsNoTracking()
             .ToListAsync();
-        return Ok(users.Select(u => ToResponse(u)).ToList());
+
+        var data = pageUsers.Select(u => ToResponse(u)).ToList();
+        return Ok(new PagedResponse<UserResponse>(data, page, pageSize, total));
+    }
+
+    /// <summary>
+    /// Valida os query params de <see cref="GetAll"/> em modo listagem (sem <c>ids</c>) e
+    /// acumula erros em <c>ModelState</c> para resposta unificada via <c>ValidationProblem</c>.
+    /// </summary>
+    private void ValidateGetAllQueryParams(int page, int pageSize, Guid? clientId, bool? active, bool includeDeleted)
+    {
+        if (page <= 0)
+            ModelState.AddModelError(nameof(page), "page deve ser maior ou igual a 1.");
+
+        if (pageSize <= 0 || pageSize > MaxPageSize)
+            ModelState.AddModelError(nameof(pageSize), $"pageSize deve estar entre 1 e {MaxPageSize}.");
+
+        if (clientId.HasValue && clientId.Value == Guid.Empty)
+            ModelState.AddModelError(nameof(clientId), "clientId não pode ser Guid.Empty.");
+
+        if (active.HasValue && includeDeleted)
+        {
+            ModelState.AddModelError(
+                nameof(includeDeleted),
+                "active e includeDeleted são mutuamente excludentes.");
+        }
+    }
+
+    /// <summary>
+    /// Compõe o <see cref="IQueryable{User}"/> base aplicando a flag de soft-delete (via
+    /// <c>IgnoreQueryFilters</c>) e os filtros <c>active</c>, <c>clientId</c> e busca textual <c>q</c>.
+    /// </summary>
+    /// <remarks>
+    /// includeDeleted=true expõe soft-deletados; active=false força <c>IgnoreQueryFilters</c> porque
+    /// o query filter global esconderia os registros que ele pretende selecionar. Quando nenhum dos
+    /// dois é informado, o filtro global age e a leitura permanece restrita a usuários ativos.
+    /// </remarks>
+    private IQueryable<UserEntity> BuildUsersListingQuery(string? q, Guid? clientId, bool? active, bool includeDeleted)
+    {
+        IQueryable<UserEntity> query = (includeDeleted || active == false)
+            ? _db.Users.IgnoreQueryFilters()
+            : _db.Users;
+
+        if (active.HasValue)
+        {
+            query = active.Value
+                ? query.Where(u => u.DeletedAt == null)
+                : query.Where(u => u.DeletedAt != null);
+        }
+
+        if (clientId.HasValue)
+            query = query.Where(u => u.ClientId == clientId.Value);
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var pattern = $"%{EscapeLikePattern(q.Trim())}%";
+            query = query.Where(u =>
+                EF.Functions.ILike(u.Name, pattern, "\\")
+                || EF.Functions.ILike(u.Email, pattern, "\\"));
+        }
+
+        return query;
+    }
+
+    /// <summary>
+    /// Escapa caracteres curinga (<c>%</c>, <c>_</c>) e o caractere de escape (<c>\</c>) na entrada
+    /// do usuário para evitar que sejam interpretados como wildcards no <c>ILIKE</c>.
+    /// </summary>
+    private static string EscapeLikePattern(string value)
+    {
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("%", "\\%")
+            .Replace("_", "\\_");
     }
 
     [HttpGet("{id:guid}")]

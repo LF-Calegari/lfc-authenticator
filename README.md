@@ -315,6 +315,22 @@ Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema qu
 
 **GET** `/api/v1/users/{id}` retorna também os vínculos ativos **`roles`** (lista com `id` inteiro, `userId`, `roleId`, auditoria e `deletedAt`) e **`permissions`** (lista com `id` GUID, `userId`, `permissionId`, auditoria e `deletedAt`). Listagens **`GET /api/v1/users`** e respostas de criação/atualização devolvem `roles` e `permissions` como arrays vazios.
 
+**`GET /api/v1/users`** suporta dois modos:
+
+- **Batch lookup por `ids`** — quando `?ids=<guid>,<guid>...` é informado, retorna um array de objetos `{ id, name, email }` na ordem dos ids enviados (máximo 100 ids por requisição). Demais query params são ignorados.
+- **Listagem paginada** — quando `ids` não é informado, retorna `PagedResponse<UserResponse>` com filtros/busca/paginação server-side via query string:
+
+| Param | Default | Notas |
+|-------|---------|-------|
+| `q` | `""` | Busca case-insensitive (ILIKE) com matching parcial em `Name` e `Email` (OR). Caracteres `%`, `_` e `\` são escapados (literais). |
+| `clientId` | _ausente_ | Filtra por usuários vinculados ao cliente informado. `Guid.Empty` retorna **400**. |
+| `active` | _ausente_ | `true` retorna apenas ativos (`DeletedAt IS NULL`); `false` retorna apenas soft-deletados. Mutuamente excludente com `includeDeleted` (combinar retorna **400**). |
+| `page` | `1` | 1-based. `<= 0` retorna **400**. |
+| `pageSize` | `20` | Máximo `100`. `<= 0` ou `> 100` retornam **400**. |
+| `includeDeleted` | `false` | Quando `true`, inclui usuários soft-deletados (`DeletedAt != null`). Mutuamente excludente com `active`. |
+
+Resposta paginada: `{ data, page, pageSize, total }`. `total` reflete o total após filtros, antes de `Skip/Take`. Ordenação determinística por `CreatedAt` descendente, com `Id` como desempate. Página além do total retorna **200** com `data: []`. Os itens em `data` continuam expondo `roles: []` e `permissions: []` na listagem (como na resposta de criação/atualização) — os vínculos só são hidratados pelo endpoint `GET /api/v1/users/{id}`.
+
 **`POST /api/v1/users/{id}/force-logout`** — admin invalida todas as sessões ativas do usuário-alvo incrementando o `TokenVersion`. Mesmo mecanismo do `GET /auth/logout`, porém aplicado a um terceiro. Caller precisa de `perm:Users.Update`. O `JwtBearerHandler` valida o claim `tv` contra o banco a cada request, então tokens emitidos antes da chamada passam a falhar com 401 automaticamente. Self-target (`id` igual ao caller do JWT) retorna 400 e orienta a usar `/auth/logout`. Usuário inexistente ou soft-deletado retorna 404. Resposta `200 OK`:
 
 ```json
