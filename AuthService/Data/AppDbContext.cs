@@ -24,11 +24,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     {
         base.OnModelCreating(modelBuilder);
 
-        modelBuilder.Entity<AppRoute>()
-            .HasOne<AppSystem>()
-            .WithMany()
-            .HasForeignKey(r => r.SystemId)
-            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<AppRoute>(entity =>
+        {
+            entity.HasOne<AppSystem>()
+                .WithMany()
+                .HasForeignKey(r => r.SystemId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne<AppSystemTokenType>()
+                .WithMany()
+                .HasForeignKey(r => r.SystemTokenTypeId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<AppRole>(entity =>
+        {
+            entity.HasOne<AppSystem>()
+                .WithMany()
+                .HasForeignKey(r => r.SystemId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
 
         modelBuilder.Entity<Client>(entity =>
         {

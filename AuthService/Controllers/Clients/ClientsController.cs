@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.RegularExpressions;
 using AuthService.Auth;
+using AuthService.Controllers.Common;
 using AuthService.Data;
 using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -17,6 +18,13 @@ public class ClientsController : ControllerBase
     private const string ClientWithCpfAlreadyExistsMessage = "Já existe cliente com este CPF.";
     private const string ClientWithCnpjAlreadyExistsMessage = "Já existe cliente com este CNPJ.";
     private const string ClientNotFoundMessage = "Cliente não encontrado.";
+
+    /// <summary>Discriminator usado em <see cref="ClientPhone.Type"/> para celulares.</summary>
+    private const string PhoneTypeMobile = "mobile";
+
+    /// <summary>Discriminator usado em <see cref="ClientPhone.Type"/> para telefones fixos.</summary>
+    private const string PhoneTypeLandline = "phone";
+
     private static readonly EmailAddressAttribute EmailValidator = new();
     private static readonly Regex PhoneRegex = new(
         @"^\+[1-9]\d{11,14}$",
@@ -128,20 +136,210 @@ public class ClientsController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, await BuildResponseAsync(entity));
     }
 
+    /// <summary>Tamanho de página default quando o cliente não envia <c>pageSize</c>.</summary>
+    public const int DefaultPageSize = 20;
+
+    /// <summary>Limite superior para <c>pageSize</c>; valores acima retornam 400.</summary>
+    public const int MaxPageSize = 100;
+
     [HttpGet]
     [Authorize(Policy = PermissionPolicies.ClientsRead)]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        [FromQuery] string? q = null,
+        [FromQuery] string? type = null,
+        [FromQuery] bool? active = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = DefaultPageSize,
+        [FromQuery] bool includeDeleted = false)
     {
-        var clients = await _db.Clients
+        var normalizedType = ValidateGetAllQueryParams(page, pageSize, type, active, includeDeleted);
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        var query = BuildClientsListingQuery(q, normalizedType, active, includeDeleted);
+
+        // Query 1: COUNT pre-paginação (refletindo todos os filtros aplicados).
+        var total = await query.CountAsync();
+
+        // Query 2: página corrente, ordenada determinísticamente (CreatedAt DESC com Id como desempate
+        // estável para evitar duplicação/saltos entre páginas em ties de timestamp).
+        var pageClients = await query
+            .OrderByDescending(c => c.CreatedAt)
+            .ThenBy(c => c.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .AsNoTracking()
-            .OrderBy(c => c.CreatedAt)
             .ToListAsync();
 
-        var result = new List<ClientResponse>(clients.Count);
-        foreach (var client in clients)
-            result.Add(await BuildResponseAsync(client));
+        var data = await BuildResponsesBatchAsync(pageClients);
 
-        return Ok(result);
+        return Ok(new PagedResponse<ClientResponse>(data, page, pageSize, total));
+    }
+
+    /// <summary>
+    /// Valida os query params de <see cref="GetAll"/> e retorna o <c>type</c> normalizado (uppercase trimmed)
+    /// quando informado. Erros são acumulados em <c>ModelState</c> para resposta unificada via
+    /// <c>ValidationProblem</c>.
+    /// </summary>
+    private string? ValidateGetAllQueryParams(int page, int pageSize, string? type, bool? active, bool includeDeleted)
+    {
+        if (page <= 0)
+            ModelState.AddModelError(nameof(page), "page deve ser maior ou igual a 1.");
+
+        if (pageSize <= 0 || pageSize > MaxPageSize)
+            ModelState.AddModelError(nameof(pageSize), $"pageSize deve estar entre 1 e {MaxPageSize}.");
+
+        string? normalizedType = null;
+        if (type is not null)
+        {
+            normalizedType = type.Trim().ToUpperInvariant();
+            if (normalizedType != "PF" && normalizedType != "PJ")
+                ModelState.AddModelError(nameof(type), "type deve ser PF ou PJ.");
+        }
+
+        if (active.HasValue && includeDeleted)
+        {
+            ModelState.AddModelError(
+                nameof(includeDeleted),
+                "active e includeDeleted são mutuamente excludentes.");
+        }
+
+        return normalizedType;
+    }
+
+    /// <summary>
+    /// Compõe o <see cref="IQueryable{Client}"/> base aplicando a flag de soft-delete (via
+    /// <c>IgnoreQueryFilters</c>) e os filtros de <c>active</c>, <c>type</c> e busca textual <c>q</c>.
+    /// </summary>
+    /// <remarks>
+    /// includeDeleted=true expõe soft-deletados; active=false força <c>IgnoreQueryFilters</c> porque
+    /// o query filter global esconderia os registros que ele pretende selecionar. Quando nenhum dos
+    /// dois é informado, o filtro global age e a leitura permanece restrita a registros ativos.
+    /// </remarks>
+    private IQueryable<Client> BuildClientsListingQuery(string? q, string? normalizedType, bool? active, bool includeDeleted)
+    {
+        IQueryable<Client> query = (includeDeleted || active == false)
+            ? _db.Clients.IgnoreQueryFilters()
+            : _db.Clients;
+
+        if (active.HasValue)
+        {
+            query = active.Value
+                ? query.Where(c => c.DeletedAt == null)
+                : query.Where(c => c.DeletedAt != null);
+        }
+
+        if (normalizedType is not null)
+            query = query.Where(c => c.Type == normalizedType);
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var pattern = $"%{EscapeLikePattern(q.Trim())}%";
+            query = query.Where(c =>
+                (c.FullName != null && EF.Functions.ILike(c.FullName, pattern, "\\"))
+                || (c.CorporateName != null && EF.Functions.ILike(c.CorporateName, pattern, "\\"))
+                || (c.Cpf != null && EF.Functions.ILike(c.Cpf, pattern, "\\"))
+                || (c.Cnpj != null && EF.Functions.ILike(c.Cnpj, pattern, "\\")));
+        }
+
+        return query;
+    }
+
+    /// <summary>
+    /// Escapa caracteres curinga (<c>%</c>, <c>_</c>) e o caractere de escape (<c>\</c>) na entrada do usuário
+    /// para evitar que sejam interpretados como wildcards no <c>ILIKE</c>. Mantém o termo como busca literal parcial.
+    /// </summary>
+    private static string EscapeLikePattern(string value)
+    {
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("%", "\\%")
+            .Replace("_", "\\_");
+    }
+
+    /// <summary>
+    /// Hidrata <see cref="ClientResponse"/> para uma página corrente em batch (3 queries IN), evitando o
+    /// N+1 do <see cref="BuildResponseAsync"/> (4 queries por cliente). A listagem total fica em
+    /// 5 queries (1 count + 1 page + 3 batch IN para users/emails/phones), independente do tamanho da página.
+    /// </summary>
+    private async Task<List<ClientResponse>> BuildResponsesBatchAsync(List<Client> clients)
+    {
+        if (clients.Count == 0)
+            return new List<ClientResponse>(0);
+
+        var clientIds = clients.Select(c => c.Id).ToList();
+
+        // Query 3: UserIds por cliente (Users tem soft-delete; mantemos query filter global ativo,
+        // que esconde soft-deleted — alinhado ao comportamento atual de BuildResponseAsync).
+        var userRows = await _db.Users.AsNoTracking()
+            .Where(u => u.ClientId != null && clientIds.Contains(u.ClientId.Value))
+            .OrderBy(u => u.CreatedAt)
+            .Select(u => new { u.Id, ClientId = u.ClientId!.Value })
+            .ToListAsync();
+        var userIdsByClient = userRows
+            .GroupBy(r => r.ClientId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<Guid>)g.Select(x => x.Id).ToList());
+
+        // Query 4: emails extras por cliente.
+        var emailRows = await _db.ClientEmails.AsNoTracking()
+            .Where(e => clientIds.Contains(e.ClientId))
+            .OrderBy(e => e.CreatedAt)
+            .Select(e => new { e.ClientId, e.Id, e.Email, e.CreatedAt })
+            .ToListAsync();
+        var emailsByClient = emailRows
+            .GroupBy(r => r.ClientId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<ClientEmailResponse>)g
+                    .Select(x => new ClientEmailResponse(x.Id, x.Email, x.CreatedAt))
+                    .ToList());
+
+        // Query 5: telefones por cliente (mobile + landline juntos; particionados em memória).
+        var phoneRows = await _db.ClientPhones.AsNoTracking()
+            .Where(p => clientIds.Contains(p.ClientId))
+            .OrderBy(p => p.CreatedAt)
+            .Select(p => new { p.ClientId, p.Type, p.Id, p.Number, p.CreatedAt })
+            .ToListAsync();
+        var mobilesByClient = phoneRows
+            .Where(r => r.Type == PhoneTypeMobile)
+            .GroupBy(r => r.ClientId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<ClientPhoneResponse>)g
+                    .Select(x => new ClientPhoneResponse(x.Id, x.Number, x.CreatedAt))
+                    .ToList());
+        var landlinesByClient = phoneRows
+            .Where(r => r.Type == PhoneTypeLandline)
+            .GroupBy(r => r.ClientId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<ClientPhoneResponse>)g
+                    .Select(x => new ClientPhoneResponse(x.Id, x.Number, x.CreatedAt))
+                    .ToList());
+
+        var emptyGuids = (IReadOnlyList<Guid>)Array.Empty<Guid>();
+        var emptyEmails = (IReadOnlyList<ClientEmailResponse>)Array.Empty<ClientEmailResponse>();
+        var emptyPhones = (IReadOnlyList<ClientPhoneResponse>)Array.Empty<ClientPhoneResponse>();
+
+        var result = new List<ClientResponse>(clients.Count);
+        foreach (var c in clients)
+        {
+            result.Add(new ClientResponse(
+                c.Id,
+                c.Type,
+                c.Cpf,
+                c.FullName,
+                c.Cnpj,
+                c.CorporateName,
+                c.CreatedAt,
+                c.UpdatedAt,
+                c.DeletedAt,
+                userIdsByClient.GetValueOrDefault(c.Id, emptyGuids),
+                emailsByClient.GetValueOrDefault(c.Id, emptyEmails),
+                mobilesByClient.GetValueOrDefault(c.Id, emptyPhones),
+                landlinesByClient.GetValueOrDefault(c.Id, emptyPhones)));
+        }
+        return result;
     }
 
     [HttpGet("{id:guid}")]
@@ -292,22 +490,22 @@ public class ClientsController : ControllerBase
     [HttpPost("{id:guid}/mobiles")]
     [Authorize(Policy = PermissionPolicies.ClientsUpdate)]
     public Task<IActionResult> AddMobile(Guid id, [FromBody] AddPhoneRequest request) =>
-        AddPhoneInternal(id, request, "mobile", "Limite de 3 celulares por cliente.");
+        AddPhoneInternal(id, request, PhoneTypeMobile, "Limite de 3 celulares por cliente.");
 
     [HttpDelete("{id:guid}/mobiles/{phoneId:guid}")]
     [Authorize(Policy = PermissionPolicies.ClientsUpdate)]
     public Task<IActionResult> RemoveMobile(Guid id, Guid phoneId) =>
-        RemovePhoneInternal(id, phoneId, "mobile");
+        RemovePhoneInternal(id, phoneId, PhoneTypeMobile);
 
     [HttpPost("{id:guid}/phones")]
     [Authorize(Policy = PermissionPolicies.ClientsUpdate)]
     public Task<IActionResult> AddLandline(Guid id, [FromBody] AddPhoneRequest request) =>
-        AddPhoneInternal(id, request, "phone", "Limite de 3 telefones por cliente.");
+        AddPhoneInternal(id, request, PhoneTypeLandline, "Limite de 3 telefones por cliente.");
 
     [HttpDelete("{id:guid}/phones/{phoneId:guid}")]
     [Authorize(Policy = PermissionPolicies.ClientsUpdate)]
     public Task<IActionResult> RemoveLandline(Guid id, Guid phoneId) =>
-        RemovePhoneInternal(id, phoneId, "phone");
+        RemovePhoneInternal(id, phoneId, PhoneTypeLandline);
 
     private async Task<IActionResult> AddPhoneInternal(Guid clientId, AddPhoneRequest request, string type, string limitMessage)
     {
@@ -368,13 +566,13 @@ public class ClientsController : ControllerBase
             .ToListAsync();
 
         var mobiles = await _db.ClientPhones.AsNoTracking()
-            .Where(p => p.ClientId == client.Id && p.Type == "mobile")
+            .Where(p => p.ClientId == client.Id && p.Type == PhoneTypeMobile)
             .OrderBy(p => p.CreatedAt)
             .Select(p => new ClientPhoneResponse(p.Id, p.Number, p.CreatedAt))
             .ToListAsync();
 
         var phones = await _db.ClientPhones.AsNoTracking()
-            .Where(p => p.ClientId == client.Id && p.Type == "phone")
+            .Where(p => p.ClientId == client.Id && p.Type == PhoneTypeLandline)
             .OrderBy(p => p.CreatedAt)
             .Select(p => new ClientPhoneResponse(p.Id, p.Number, p.CreatedAt))
             .ToListAsync();

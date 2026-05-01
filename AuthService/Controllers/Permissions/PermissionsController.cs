@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using AuthService.Auth;
+using AuthService.Controllers.Common;
 using AuthService.Data;
 using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -50,15 +51,53 @@ public partial class PermissionsController : ControllerBase
     public record PermissionResponse(
         Guid Id,
         Guid RouteId,
+        string RouteCode,
+        string RouteName,
+        Guid SystemId,
+        string SystemCode,
+        string SystemName,
         Guid PermissionTypeId,
+        string PermissionTypeCode,
+        string PermissionTypeName,
         string? Description,
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt
     );
 
-    private static PermissionResponse ToResponse(AppPermission e) =>
-        new(e.Id, e.RouteId, e.PermissionTypeId, e.Description, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
+    /// <summary>
+    /// Projeção compartilhada por <see cref="GetById"/>, <see cref="Create"/> e <see cref="UpdateById"/>.
+    /// Denormaliza <c>Route</c>, <c>System</c> (via <c>Route.SystemId</c>) e <c>PermissionType</c> em
+    /// uma única query com Joins (sem N+1). Não aplica <c>IgnoreQueryFilters()</c> nos DbSets
+    /// aninhados — o filtro global de soft-delete já garante que rotas/sistemas/tipos soft-deletados
+    /// fiquem fora dos caminhos sem <c>includeDeleted</c>. Left Join devolve string vazia /
+    /// <see cref="Guid.Empty"/> nos campos quando o lado direito não casa. <see cref="GetAll"/>
+    /// usa <see cref="OrderProjectAndPaginate"/>, que aplica a ordenação determinística sobre as
+    /// colunas nativas dos Joins (necessário para o EF traduzir o ORDER BY em SQL).
+    /// </summary>
+    private IQueryable<PermissionResponse> ProjectPermissionResponses(IQueryable<AppPermission> source) =>
+        from p in source
+        join r in _db.Routes on p.RouteId equals r.Id into rg
+        from r in rg.DefaultIfEmpty()
+        join s in _db.Systems on (r != null ? r.SystemId : Guid.Empty) equals s.Id into sg
+        from s in sg.DefaultIfEmpty()
+        join t in _db.PermissionTypes on p.PermissionTypeId equals t.Id into tg
+        from t in tg.DefaultIfEmpty()
+        select new PermissionResponse(
+            p.Id,
+            p.RouteId,
+            r != null ? r.Code : string.Empty,
+            r != null ? r.Name : string.Empty,
+            r != null ? r.SystemId : Guid.Empty,
+            s != null ? s.Code : string.Empty,
+            s != null ? s.Name : string.Empty,
+            p.PermissionTypeId,
+            t != null ? t.Code : string.Empty,
+            t != null ? t.Name : string.Empty,
+            p.Description,
+            p.CreatedAt,
+            p.UpdatedAt,
+            p.DeletedAt);
 
     private static void ValidateDescription(ModelStateDictionary modelState, string? descriptionOrNull, string descriptionPropertyKey)
     {
@@ -137,35 +176,154 @@ public partial class PermissionsController : ControllerBase
         }
 
         LogPermissionCreated(entity.Id);
-        return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
+        var created = await ProjectPermissionResponses(_db.Permissions.Where(p => p.Id == entity.Id))
+            .FirstAsync();
+        return CreatedAtAction(nameof(GetById), new { id = entity.Id }, created);
     }
+
+    /// <summary>Tamanho de página default quando o cliente não envia <c>pageSize</c>.</summary>
+    public const int DefaultPageSize = 20;
+
+    /// <summary>Limite superior para <c>pageSize</c>; valores acima retornam 400.</summary>
+    public const int MaxPageSize = 100;
 
     [HttpGet]
     [Authorize(Policy = PermissionPolicies.PermissionsRead)]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        [FromQuery] Guid? systemId = null,
+        [FromQuery] Guid? routeId = null,
+        [FromQuery] Guid? permissionTypeId = null,
+        [FromQuery] string? q = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = DefaultPageSize,
+        [FromQuery] bool includeDeleted = false)
     {
-        var list = await ActivePermissionsWithActiveParents()
-            .OrderBy(p => p.CreatedAt)
-            .Select(p => new PermissionResponse(
-                p.Id,
-                p.RouteId,
-                p.PermissionTypeId,
-                p.Description,
-                p.CreatedAt,
-                p.UpdatedAt,
-                p.DeletedAt))
+        PagingQueryHelper.ValidatePaging(ModelState, page, pageSize, MaxPageSize);
+        PagingQueryHelper.ValidateOptionalSystemId(ModelState, systemId);
+
+        if (routeId.HasValue && routeId.Value == Guid.Empty)
+            ModelState.AddModelError(nameof(routeId), "routeId inválido.");
+
+        if (permissionTypeId.HasValue && permissionTypeId.Value == Guid.Empty)
+            ModelState.AddModelError(nameof(permissionTypeId), "permissionTypeId inválido.");
+
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        // Quando includeDeleted=true, listamos tudo: permissões soft-deletadas e permissões cuja
+        // rota/tipo foram soft-deletados. Caso contrário, usamos o filtro padrão que exige rota
+        // e tipo ativos (mesmo critério de leitura aplicado pelas demais leituras do controller).
+        IQueryable<AppPermission> query = includeDeleted
+            ? _db.Permissions.IgnoreQueryFilters()
+            : ActivePermissionsWithActiveParents();
+
+        if (systemId.HasValue)
+        {
+            // Filtra via Routes.SystemId. Quando includeDeleted=true precisamos enxergar permissões
+            // cuja rota foi soft-deletada — daí o IgnoreQueryFilters() na subquery; quando false, o
+            // filtro global já garante que apenas rotas ativas casem.
+            var sid = systemId.Value;
+            query = includeDeleted
+                ? query.Where(p => _db.Routes.IgnoreQueryFilters().Any(r => r.Id == p.RouteId && r.SystemId == sid))
+                : query.Where(p => _db.Routes.Any(r => r.Id == p.RouteId && r.SystemId == sid));
+        }
+
+        if (routeId.HasValue)
+            query = query.Where(p => p.RouteId == routeId.Value);
+
+        if (permissionTypeId.HasValue)
+            query = query.Where(p => p.PermissionTypeId == permissionTypeId.Value);
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var pattern = $"%{PagingQueryHelper.EscapeLikePattern(q.Trim())}%";
+            // ILIKE em RouteCode, RouteName e Description. Usamos a mesma fonte de Routes que a
+            // projeção (com/sem IgnoreQueryFilters() conforme includeDeleted) para que a busca
+            // case com os campos exibidos.
+            var routesSource = includeDeleted ? _db.Routes.IgnoreQueryFilters() : _db.Routes;
+            query = query.Where(p =>
+                routesSource.Any(r => r.Id == p.RouteId
+                    && (EF.Functions.ILike(r.Code, pattern, "\\") || EF.Functions.ILike(r.Name, pattern, "\\")))
+                || (p.Description != null && EF.Functions.ILike(p.Description, pattern, "\\")));
+        }
+
+        var total = await query.CountAsync();
+
+        // Ordenação determinística cruzando Routes/Systems/PermissionTypes: aplicamos sobre a
+        // projeção plana (com colunas nativas das tabelas Joinadas) para que o EF traduza o
+        // ORDER BY direto em SQL — usar colunas do `record` PermissionResponse no OrderBy faz
+        // o EF abrir mão da tradução. Em seguida, materializamos cada linha no record final.
+        var data = await OrderProjectAndPaginate(query, page, pageSize, includeDeleted)
             .ToListAsync();
-        return Ok(list);
+
+        return Ok(new PagedResponse<PermissionResponse>(data, page, pageSize, total));
+    }
+
+    /// <summary>
+    /// Aplica a projeção plana (colunas nativas dos Joins) com a ordenação determinística e
+    /// <c>Skip</c>/<c>Take</c> traduzidos em SQL. A materialização final no <see cref="PermissionResponse"/>
+    /// é feita após o ORDER BY/OFFSET para manter a query 100% server-side e sem N+1.
+    /// </summary>
+    private IQueryable<PermissionResponse> OrderProjectAndPaginate(
+        IQueryable<AppPermission> source, int page, int pageSize, bool includeDeleted)
+    {
+        var routes = includeDeleted ? _db.Routes.IgnoreQueryFilters() : _db.Routes;
+        var systems = includeDeleted ? _db.Systems.IgnoreQueryFilters() : _db.Systems;
+        var types = includeDeleted ? _db.PermissionTypes.IgnoreQueryFilters() : _db.PermissionTypes;
+
+        var flat =
+            from p in source
+            join r in routes on p.RouteId equals r.Id into rg
+            from r in rg.DefaultIfEmpty()
+            join s in systems on (r != null ? r.SystemId : Guid.Empty) equals s.Id into sg
+            from s in sg.DefaultIfEmpty()
+            join t in types on p.PermissionTypeId equals t.Id into tg
+            from t in tg.DefaultIfEmpty()
+            select new
+            {
+                Permission = p,
+                RouteCode = r != null ? r.Code : string.Empty,
+                RouteName = r != null ? r.Name : string.Empty,
+                SystemId = r != null ? r.SystemId : Guid.Empty,
+                SystemCode = s != null ? s.Code : string.Empty,
+                SystemName = s != null ? s.Name : string.Empty,
+                PermissionTypeCode = t != null ? t.Code : string.Empty,
+                PermissionTypeName = t != null ? t.Name : string.Empty
+            };
+
+        return flat
+            .OrderBy(x => x.SystemCode)
+            .ThenBy(x => x.RouteCode)
+            .ThenBy(x => x.PermissionTypeCode)
+            .ThenBy(x => x.Permission.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(x => new PermissionResponse(
+                x.Permission.Id,
+                x.Permission.RouteId,
+                x.RouteCode,
+                x.RouteName,
+                x.SystemId,
+                x.SystemCode,
+                x.SystemName,
+                x.Permission.PermissionTypeId,
+                x.PermissionTypeCode,
+                x.PermissionTypeName,
+                x.Permission.Description,
+                x.Permission.CreatedAt,
+                x.Permission.UpdatedAt,
+                x.Permission.DeletedAt));
     }
 
     [HttpGet("{id:guid}")]
     [Authorize(Policy = PermissionPolicies.PermissionsRead)]
     public async Task<IActionResult> GetById(Guid id)
     {
-        var entity = await ActivePermissionsWithActiveParents().FirstOrDefaultAsync(p => p.Id == id);
-        if (entity is null)
+        var dto = await ProjectPermissionResponses(ActivePermissionsWithActiveParents().Where(p => p.Id == id))
+            .FirstOrDefaultAsync();
+        if (dto is null)
             return NotFound(new { message = "Permissão não encontrada." });
-        return Ok(ToResponse(entity));
+        return Ok(dto);
     }
 
     [HttpPut("{id:guid}")]
@@ -215,7 +373,9 @@ public partial class PermissionsController : ControllerBase
         }
 
         LogPermissionUpdated(id);
-        return Ok(ToResponse(entity));
+        var updated = await ProjectPermissionResponses(_db.Permissions.Where(p => p.Id == entity.Id))
+            .FirstAsync();
+        return Ok(updated);
     }
 
     [HttpDelete("{id:guid}")]

@@ -255,11 +255,31 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 | `GET` | `/api/v1/systems/routes` | Sim | `perm:SystemsRoutes.Read` |
 | `GET` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Read` |
 | `PUT` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Update` |
-| `DELETE` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Delete` |
+| `DELETE` | `/api/v1/systems/routes/{id}` | Sim | `perm:SystemsRoutes.Delete` (¹) |
 | `POST` | `/api/v1/systems/routes/{id}/restore` | Sim | `perm:SystemsRoutes.Restore` |
 | `POST` | `/api/v1/systems/routes/sync` | Sim | `perm:SystemsRoutes.Update` |
 
 `systemId` obrigatório; `code` único globalmente. Listagens consideram sistema pai ativo.
+
+(¹) **`DELETE /api/v1/systems/routes/{id}`** retorna **409 Conflict** quando a rota tem `Permissions` ativas (`DeletedAt IS NULL`) vinculadas. Payload: `{ "message": "Não é possível excluir a rota: existem permissões ativas vinculadas. Remova as permissões antes.", "linkedPermissionsCount": N }`. No caminho 409, nenhum side-effect é persistido (rota e permissões permanecem inalteradas). Permissões soft-deletadas não bloqueiam o delete. Para forçar a remoção, exclua/soft-delete as Permissions vinculadas antes (ou use `POST /sync?prune=true` para cascade pelo catálogo).
+
+**`GET /api/v1/systems/routes`** suporta filtro/busca/paginação via query string:
+
+| Param | Default | Notas |
+|-------|---------|-------|
+| `systemId` | _ausente_ | Quando informado, restringe à `SystemId` indicada. `Guid.Empty` retorna **400**; `systemId` válido apontando para sistema inexistente retorna **200** com `data: []`. |
+| `q` | `""` | Busca case-insensitive (ILIKE) com matching parcial em `Code` **e** `Name` (OR). Caracteres `%`, `_` e `\` são escapados (literais). |
+| `page` | `1` | 1-based. `<= 0` retorna **400**. |
+| `pageSize` | `20` | Máximo `100`. `<= 0` ou `> 100` retornam **400**. |
+| `includeDeleted` | `false` | Quando `true`, inclui rotas soft-deletadas **e** rotas cujo sistema pai foi soft-deletado (cenário admin). Default mantém o filtro `ActiveRoutesWithActiveSystem`. |
+
+Resposta paginada: `{ data, page, pageSize, total }`. `total` reflete o total após filtros, antes de `Skip/Take`. Ordenação determinística por `Code` ascendente, com `Id` como desempate. Página além do total retorna **200** com `data: []`.
+
+**Política JWT alvo (`systemTokenTypeId`)** — toda rota referencia um `SystemTokenType` (`/api/v1/tokens/types`) ativo via FK NOT NULL. O campo é **obrigatório** em `POST` e `PUT`; payloads sem ele retornam **400** com erro em `ModelState["SystemTokenTypeId"]`. `Guid.Empty`, IDs inexistentes ou referenciando registros soft-deletados também retornam **400**. Restaurar uma rota cujo `SystemTokenType` foi removido depois do soft-delete também retorna **400** (mesmo padrão da validação de sistema inativo).
+
+Existe um catálogo canônico garantido pelo `SystemTokenTypeSeeder` na inicialização do serviço, com pelo menos `Code='default'` (`Name='Default'`). Esse é o code usado como fallback no `sync` quando o item não especifica um `systemTokenTypeCode`.
+
+`GET /api/v1/systems/routes` e `GET /api/v1/systems/routes/{id}` retornam, além dos campos da rota, três campos denormalizados via Join: `systemTokenTypeId`, `systemTokenTypeCode`, `systemTokenTypeName`. Os campos `code` e `name` do token type **não** entram no body de `POST`/`PUT` — são apenas leitura.
 
 **`POST /api/v1/systems/routes/sync`** — auto-registro do catálogo de rotas por um sistema-cliente. Body:
 
@@ -267,12 +287,12 @@ Corpo típico de criação/atualização: `name`, `code`, `description` (opciona
 {
   "systemCode": "kurtto",
   "routes": [
-    { "code": "KURTTO_V1_X_LIST", "name": "GET /api/v1/x", "description": "...", "permissionTypeCode": "read" }
+    { "code": "KURTTO_V1_X_LIST", "name": "GET /api/v1/x", "description": "...", "permissionTypeCode": "read", "systemTokenTypeCode": "default" }
   ]
 }
 ```
 
-Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema que **sumirem** do payload são soft-deletadas junto com suas Permissions vinculadas. Quando `permissionTypeCode` é informado, a `Permission(Route, Type)` correspondente é criada/reativada automaticamente. Resposta: `{ created, updated, reactivated, deleted }`. Erros: 404 (`systemCode` desconhecido), 400 (`permissionTypeCode` desconhecido ou `code` duplicado no payload), 409 (`code` já em uso por outro sistema — `UX_Routes_Code` é unique global).
+Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema que **sumirem** do payload são soft-deletadas junto com suas Permissions vinculadas. Quando `permissionTypeCode` é informado, a `Permission(Route, Type)` correspondente é criada/reativada automaticamente. `systemTokenTypeCode` é **opcional** — quando omitido, o sync usa `default`. Resposta: `{ created, updated, reactivated, deleted }`. Erros: 404 (`systemCode` desconhecido), 400 (`permissionTypeCode` desconhecido, `systemTokenTypeCode` desconhecido — listando os codes inválidos — ou `code` duplicado no payload), 409 (`code` já em uso por outro sistema — `UX_Routes_Code` é unique global).
 
 ### Usuários — `/api/v1/users`
 
@@ -281,10 +301,12 @@ Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema qu
 | `POST` | `/api/v1/users` | Sim | `perm:Users.Create` |
 | `GET` | `/api/v1/users` | Sim | `perm:Users.Read` |
 | `GET` | `/api/v1/users/{id}` | Sim | `perm:Users.Read` |
+| `GET` | `/api/v1/users/{id}/effective-permissions` | Sim | `perm:Users.Read` |
 | `PUT` | `/api/v1/users/{id}` | Sim | `perm:Users.Update` |
 | `PUT` | `/api/v1/users/{id}/password` | Sim | `perm:Users.Update` |
 | `DELETE` | `/api/v1/users/{id}` | Sim | `perm:Users.Delete` |
 | `POST` | `/api/v1/users/{id}/restore` | Sim | `perm:Users.Restore` |
+| `POST` | `/api/v1/users/{id}/force-logout` | Sim | `perm:Users.Update` |
 | `POST` | `/api/v1/users/{id}/permissions` | Sim | `perm:Users.Update` |
 | `DELETE` | `/api/v1/users/{id}/permissions/{permissionId}` | Sim | `perm:Users.Update` |
 | `POST` | `/api/v1/users/{id}/roles` | Sim | `perm:Users.Update` |
@@ -292,7 +314,37 @@ Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema qu
 
 **POST:** `name`, `email`, `password`, `identity`, `active` (opcional, padrão `true`). **PUT** usuário: `name`, `email`, `identity`, `active` (sem senha). Email normalizado (ex.: minúsculas).
 
-**GET** `/api/v1/users/{id}` retorna também os vínculos ativos **`roles`** (lista com `id` inteiro, `userId`, `roleId`, auditoria e `deletedAt`) e **`permissions`** (lista com `id` GUID, `userId`, `permissionId`, auditoria e `deletedAt`). Listagens **`GET /api/v1/users`** e respostas de criação/atualização devolvem `roles` e `permissions` como arrays vazios.
+**GET** `/api/v1/users/{id}` retorna o `UserResponse` completo com `id`, `name`, `email`, `clientId`, `identity`, `active`, auditoria e os vínculos ativos **`roles`** (lista com `id` GUID, `userId`, `roleId`, auditoria e `deletedAt`) e **`permissions`** (lista com `id` GUID, `userId`, `permissionId`, auditoria e `deletedAt`). Apenas vínculos ativos aparecem (link e entidade alvo com `DeletedAt IS NULL`). Listagens **`GET /api/v1/users`** e respostas de criação/atualização devolvem `roles` e `permissions` como arrays vazios.
+
+**`GET /api/v1/users/{id}/effective-permissions`** retorna a união consolidada das permissões efetivas do usuário, juntando permissões diretas (`UserPermissions`) e herdadas via roles (`UserRoles → RolePermissions`), com a origem agregada por permissão. Apenas vínculos ativos compõem o resultado (link e entidade alvo com `DeletedAt IS NULL`). Cada item traz a permissão denormalizada (`routeCode`, `routeName`, `permissionTypeCode`, `permissionTypeName`, `systemId`, `systemCode`, `systemName`) e um array `sources` com todas as origens — uma permissão pode aparecer simultaneamente como `{ "kind": "direct" }` e como `{ "kind": "role", "roleId", "roleCode", "roleName" }` (uma entrada por role). Filtro opcional `?systemId=<guid>` restringe pelas permissões cuja rota pertence ao sistema (`Guid.Empty` retorna **400**). Ordenação determinística: `systemCode`, `routeCode`, `permissionTypeCode`. **404** quando o usuário não existe ou está soft-deletado. Usuário sem permissões diretas e sem roles ativas retorna `[]`.
+
+**`GET /api/v1/users`** suporta dois modos:
+
+- **Batch lookup por `ids`** — quando `?ids=<guid>,<guid>...` é informado, retorna um array de objetos `{ id, name, email }` na ordem dos ids enviados (máximo 100 ids por requisição). Demais query params são ignorados.
+- **Listagem paginada** — quando `ids` não é informado, retorna `PagedResponse<UserResponse>` com filtros/busca/paginação server-side via query string:
+
+| Param | Default | Notas |
+|-------|---------|-------|
+| `q` | `""` | Busca case-insensitive (ILIKE) com matching parcial em `Name` e `Email` (OR). Caracteres `%`, `_` e `\` são escapados (literais). |
+| `clientId` | _ausente_ | Filtra por usuários vinculados ao cliente informado. `Guid.Empty` retorna **400**. |
+| `active` | _ausente_ | `true` retorna apenas ativos (`DeletedAt IS NULL`); `false` retorna apenas soft-deletados. Mutuamente excludente com `includeDeleted` (combinar retorna **400**). |
+| `page` | `1` | 1-based. `<= 0` retorna **400**. |
+| `pageSize` | `20` | Máximo `100`. `<= 0` ou `> 100` retornam **400**. |
+| `includeDeleted` | `false` | Quando `true`, inclui usuários soft-deletados (`DeletedAt != null`). Mutuamente excludente com `active`. |
+
+Resposta paginada: `{ data, page, pageSize, total }`. `total` reflete o total após filtros, antes de `Skip/Take`. Ordenação determinística por `CreatedAt` descendente, com `Id` como desempate. Página além do total retorna **200** com `data: []`. Os itens em `data` continuam expondo `roles: []` e `permissions: []` na listagem (como na resposta de criação/atualização) — os vínculos só são hidratados pelo endpoint `GET /api/v1/users/{id}`.
+
+**`POST /api/v1/users/{id}/force-logout`** — admin invalida todas as sessões ativas do usuário-alvo incrementando o `TokenVersion`. Mesmo mecanismo do `GET /auth/logout`, porém aplicado a um terceiro. Caller precisa de `perm:Users.Update`. O `JwtBearerHandler` valida o claim `tv` contra o banco a cada request, então tokens emitidos antes da chamada passam a falhar com 401 automaticamente. Self-target (`id` igual ao caller do JWT) retorna 400 e orienta a usar `/auth/logout`. Usuário inexistente ou soft-deletado retorna 404. Resposta `200 OK`:
+
+```json
+{
+  "message": "Sessões do usuário invalidadas com sucesso.",
+  "userId": "<guid>",
+  "newTokenVersion": 1
+}
+```
+
+A operação é idempotente em re-execução: cada chamada incrementa o contador (sessões emitidas entre as chamadas continuam válidas até o próximo incremento) e gera log estruturado `Information` `ForceLogout: target {UserId}, by {CallerId}, newTokenVersion={N}` para auditoria.
 
 ### Clientes — `/api/v1/clients`
 
@@ -312,6 +364,19 @@ Query string: `?prune=false` (padrão). Quando `prune=true`, rotas do sistema qu
 | `DELETE` | `/api/v1/clients/{id}/phones/{phoneId}` | Sim | `perm:Clients.Update` |
 
 Regras de negócio principais: `type` imutável (`PF`/`PJ`), validação de CPF/CNPJ por tipo, unicidade global de CPF/CNPJ, máximo de 3 emails extras, 3 celulares e 3 telefones por cliente, bloqueio para remoção de email extra que esteja sendo usado como username.
+
+**`GET /api/v1/clients`** suporta filtro/busca/paginação via query string:
+
+| Param | Default | Notas |
+|-------|---------|-------|
+| `q` | `""` | Busca case-insensitive (ILIKE) com matching parcial em `FullName`, `CorporateName`, `Cpf` e `Cnpj` (OR). Caracteres `%`, `_` e `\` são escapados (literais). |
+| `type` | _ausente_ | `PF` ou `PJ`. Demais valores retornam **400**. |
+| `active` | _ausente_ | `true` retorna apenas ativos (`DeletedAt IS NULL`); `false` retorna apenas soft-deletados. Mutuamente excludente com `includeDeleted` (combinar retorna **400**). |
+| `page` | `1` | 1-based. `<= 0` retorna **400**. |
+| `pageSize` | `20` | Máximo `100`. `<= 0` ou `> 100` retornam **400**. |
+| `includeDeleted` | `false` | Quando `true`, inclui clientes soft-deletados (`DeletedAt != null`). Mutuamente excludente com `active`. |
+
+Resposta paginada: `{ data, page, pageSize, total }`. `total` reflete o total após filtros, antes de `Skip/Take`. Ordenação determinística por `CreatedAt` descendente, com `Id` como desempate. Página além do total retorna **200** com `data: []`. A listagem da página corrente faz no máximo **5 queries** ao banco (1 count + 1 page + 3 batch IN para `userIds`, emails extras e telefones), independente do tamanho da página — `GET /api/v1/clients/{id}` mantém a hidratação tradicional (4 queries para um cliente).
 
 ### Tipos de token — `/api/v1/tokens/types`
 
@@ -350,6 +415,29 @@ Regras de negócio principais: `type` imutável (`PF`/`PJ`), validação de CPF/
 | `POST` | `/api/v1/roles/{id}/permissions` | Sim | `perm:Roles.Update` |
 | `DELETE` | `/api/v1/roles/{id}/permissions/{permissionId}` | Sim | `perm:Roles.Update` |
 
+Corpo de criação/atualização: `systemId` (obrigatório, sistema deve existir e estar ativo), `name`, `code`, `description` (opcional, máx. 500). `systemId` é **imutável** após criação — tentativa de alterá-lo no `PUT` retorna 400. `code` é único **por sistema** (mesmo `code` pode coexistir em sistemas diferentes); conflito retorna 409 com mensagem "Já existe um role com este Code neste sistema."
+
+Listagem `GET /api/v1/roles` com paginação server-side (envelope `PagedResponse<RoleResponse>` — `{ data, page, pageSize, total }`):
+
+| Param | Default | Notas |
+|-------|---------|-------|
+| `systemId` | _ausente_ | UUID do sistema. Quando ausente, lista todas as roles (cenário admin). `Guid.Empty` retorna 400. |
+| `q` | `""` | ILIKE em `Code`/`Name` (caracteres `%`/`_`/`\` escapados). |
+| `page` | `1` | 1-based. `<= 0` retorna 400. |
+| `pageSize` | `20` | Máximo `100`; valores fora do intervalo retornam 400. |
+| `includeDeleted` | `false` | Quando `true`, inclui registros *soft-deleted*. |
+
+Ordenação determinística por `Code ASC, Id ASC`.
+
+`RoleResponse` (devolvido por `GET /api/v1/roles`, `GET /api/v1/roles/{id}`, criação e atualização) inclui dois contadores denormalizados, calculados em uma única ida ao banco via subselects EF Core (sem N+1):
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| `permissionsCount` | `int` | Total de `RolePermissions` ativas (`DeletedAt IS NULL`) cuja `Permission` referenciada também esteja ativa. Vínculos cuja `Permission` foi soft-deletada não contam. |
+| `usersCount` | `int` | Total de `UserRoles` ativas cujo `User` referenciado também esteja ativo. Usuários soft-deletados não contam. |
+
+Quando `includeDeleted=true`, roles soft-deletadas continuam expondo as contagens calculadas com **vínculos ativos** — o filtro global de soft-delete é mantido nas subqueries para que vínculos ou entidades alvo soft-deletadas fiquem fora da soma. Roles sem vínculos retornam `0/0`.
+
 ### Permissões — `/api/v1/permissions`
 
 | Método | Endpoint | Auth | Permissão |
@@ -361,7 +449,32 @@ Regras de negócio principais: `type` imutável (`PF`/`PJ`), validação de CPF/
 | `DELETE` | `/api/v1/permissions/{id}` | Sim | `perm:Permissions.Delete` |
 | `POST` | `/api/v1/permissions/{id}/restore` | Sim | `perm:Permissions.Restore` |
 
-Corpo: `routeId`, `permissionTypeId`, `description` (opcional). Restauração exige referências ativas coerentes com as regras do controller.
+Corpo de **Create/Update**: `routeId`, `permissionTypeId`, `description` (opcional). Restauração exige referências ativas coerentes com as regras do controller.
+
+`PermissionResponse` retorna, além de `id`/`routeId`/`permissionTypeId`/`description`/timestamps, **sete campos denormalizados via Join (somente leitura)** para evitar N+1 nos clientes:
+
+| Campo | Origem |
+|-------|--------|
+| `routeCode` | `Routes.Code` |
+| `routeName` | `Routes.Name` |
+| `systemId` | `Routes.SystemId` |
+| `systemCode` | `Systems.Code` |
+| `systemName` | `Systems.Name` |
+| `permissionTypeCode` | `PermissionTypes.Code` |
+| `permissionTypeName` | `PermissionTypes.Name` |
+
+`GET /permissions` aceita filtros e devolve `PagedResponse<PermissionResponse>`:
+
+| Param | Default | Notas |
+|-------|---------|-------|
+| `systemId` | _ausente_ | Filtra via `Routes.SystemId`. `Guid.Empty` → 400. |
+| `routeId` | _ausente_ | Filtra por rota específica. `Guid.Empty` → 400. |
+| `permissionTypeId` | _ausente_ | Filtra por tipo. `Guid.Empty` → 400. |
+| `q` | `""` | `ILIKE` em `RouteCode`, `RouteName` e `Description` (caracteres `%`/`_`/`\\` escapados). |
+| `page` / `pageSize` | `1` / `20` | `pageSize` máximo `100`; valores fora do intervalo → 400. |
+| `includeDeleted` | `false` | Inclui permissões soft-deletadas e permissões cuja rota/tipo foram soft-deletados; mantém `routeCode`/`systemCode`/`permissionTypeCode` denormalizados via `IgnoreQueryFilters`. |
+
+Ordenação determinística: `systemCode` ASC, `routeCode` ASC, `permissionTypeCode` ASC, `id` (desempate). `GET /permissions/{id}` também devolve os sete campos denormalizados.
 
 ---
 

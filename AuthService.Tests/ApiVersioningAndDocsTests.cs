@@ -88,8 +88,11 @@ public class ApiVersioningAndDocsTests : IAsyncLifetime
             "/api/v1/roles",
             "/api/v1/roles/{id}",
             "/api/v1/roles/{id}/restore",
+            "/api/v1/roles/{roleId}/permissions",
+            "/api/v1/roles/{roleId}/permissions/{permissionId}",
             "/api/v1/systems",
             "/api/v1/systems/routes",
+            "/api/v1/systems/routes/sync",
             "/api/v1/systems/routes/{id}",
             "/api/v1/systems/routes/{id}/restore",
             "/api/v1/systems/{id}",
@@ -99,8 +102,14 @@ public class ApiVersioningAndDocsTests : IAsyncLifetime
             "/api/v1/tokens/types/{id}/restore",
             "/api/v1/users",
             "/api/v1/users/{id}",
+            "/api/v1/users/{id}/effective-permissions",
+            "/api/v1/users/{id}/force-logout",
             "/api/v1/users/{id}/password",
-            "/api/v1/users/{id}/restore"
+            "/api/v1/users/{id}/restore",
+            "/api/v1/users/{userId}/permissions",
+            "/api/v1/users/{userId}/permissions/{permissionId}",
+            "/api/v1/users/{userId}/roles",
+            "/api/v1/users/{userId}/roles/{roleId}"
         };
 
         Assert.Equal(expected.OrderBy(p => p, StringComparer.Ordinal), paths);

@@ -71,6 +71,7 @@ builder.Services.AddSwaggerGen(options =>
         In = ParameterLocation.Header,
         Description = "JWT no header Authorization (Bearer {token})."
     });
+    options.CustomSchemaIds(type => type.FullName?.Replace("+", "."));
     options.DocumentFilter<V1PathPrefixDocumentFilter>();
     options.OperationFilter<ContractExamplesOperationFilter>();
 });
@@ -104,6 +105,7 @@ if (!app.Environment.IsEnvironment("Testing"))
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.MigrateAsync();
         await SystemSeeder.EnsureSystemsAsync(db);
+        await SystemTokenTypeSeeder.EnsureSystemTokenTypesAsync(db);
         await AuthenticatorRoutesSeeder.EnsureRoutesAsync(db);
         await PermissionTypeSeeder.EnsurePermissionTypesAsync(db);
         await AuthenticatorPermissionsSeeder.EnsurePermissionsAsync(db);

@@ -149,6 +149,8 @@ public static class AuthenticatorRoutesSeeder
             "Remove (soft-delete) um usuário."),
         ("AUTH_V1_USERS_RESTORE", "POST /api/v1/users/{id}/restore",
             "Restaura um usuário previamente removido."),
+        ("AUTH_V1_USERS_FORCE_LOGOUT", "POST /api/v1/users/{id}/force-logout",
+            "Invalida todas as sessões ativas do usuário-alvo (admin) via incremento do TokenVersion."),
         ("AUTH_V1_USERS_PERMISSIONS_ASSIGN", "POST /api/v1/users/{id}/permissions",
             "Vincula uma permissão diretamente ao usuário."),
         ("AUTH_V1_USERS_PERMISSIONS_REMOVE", "DELETE /api/v1/users/{id}/permissions/{permissionId}",
@@ -170,6 +172,15 @@ public static class AuthenticatorRoutesSeeder
             throw new InvalidOperationException(
                 $"Sistema '{SystemCode}' não encontrado. Execute o SystemSeeder antes do AuthenticatorRoutesSeeder.");
 
+        var defaultTokenTypeId = await db.SystemTokenTypes.AsNoTracking()
+            .Where(t => t.Code == SystemTokenTypeSeeder.DefaultCode)
+            .Select(t => (Guid?)t.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (defaultTokenTypeId is null || defaultTokenTypeId == Guid.Empty)
+            throw new InvalidOperationException(
+                $"SystemTokenType '{SystemTokenTypeSeeder.DefaultCode}' não encontrado. Execute o SystemTokenTypeSeeder antes do AuthenticatorRoutesSeeder.");
+
         var utc = DateTime.UtcNow;
 
         foreach (var (code, name, description) in Routes)
@@ -185,6 +196,7 @@ public static class AuthenticatorRoutesSeeder
                     Code = code,
                     Name = name,
                     Description = description,
+                    SystemTokenTypeId = defaultTokenTypeId.Value,
                     CreatedAt = utc,
                     UpdatedAt = utc,
                     DeletedAt = null
@@ -195,6 +207,7 @@ public static class AuthenticatorRoutesSeeder
             existing.SystemId = systemId.Value;
             existing.Name = name;
             existing.Description = description;
+            existing.SystemTokenTypeId = defaultTokenTypeId.Value;
             if (existing.DeletedAt is not null)
                 existing.DeletedAt = null;
             existing.UpdatedAt = utc;

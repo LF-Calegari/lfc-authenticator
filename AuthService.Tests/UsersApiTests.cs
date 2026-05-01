@@ -1,6 +1,8 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AuthService.Controllers.Auth;
 using AuthService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -162,17 +164,14 @@ public class UsersApiTests : IAsyncLifetime
         Assert.NotNull(toDelete);
         await _client.DeleteAsync($"/api/v1/users/{toDelete.Id}");
 
-        var listResp = await _client.GetAsync("/api/v1/users");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<UserDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        Assert.All(list, u => Assert.Null(u.DeletedAt));
-        Assert.Contains(list, u => u.Email == "ativo@example.com");
-        Assert.DoesNotContain(list, u => u.Email == "outro@example.com");
+        var listPage = await GetUsersPageAsync("/api/v1/users?pageSize=100");
+        Assert.All(listPage.Data, u => Assert.Null(u.DeletedAt));
+        Assert.Contains(listPage.Data, u => u.Email == "ativo@example.com");
+        Assert.DoesNotContain(listPage.Data, u => u.Email == "outro@example.com");
     }
 
     [Fact]
-    public async Task GetById_Active_ReturnsOk_Deleted_Returns404()
+    public async Task GetById_Active_ReturnsFullUserResponse_Deleted_Returns404()
     {
         var create = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("S", "g1@example.com"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
@@ -180,18 +179,183 @@ public class UsersApiTests : IAsyncLifetime
 
         var getOk = await _client.GetAsync($"/api/v1/users/{dto.Id}");
         Assert.Equal(HttpStatusCode.OK, getOk.StatusCode);
-        using (var payload = JsonDocument.Parse(await getOk.Content.ReadAsStringAsync()))
-        {
-            var root = payload.RootElement;
-            Assert.Equal(3, root.EnumerateObject().Count());
-            Assert.Equal(dto.Id, root.GetProperty("id").GetGuid());
-            Assert.Equal("S", root.GetProperty("name").GetString());
-            Assert.Equal("g1@example.com", root.GetProperty("email").GetString());
-        }
+        var detail = await getOk.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(detail);
+        Assert.Equal(dto.Id, detail.Id);
+        Assert.Equal("S", detail.Name);
+        Assert.Equal("g1@example.com", detail.Email);
+        Assert.True(detail.Active);
+        Assert.NotNull(detail.Roles);
+        Assert.NotNull(detail.Permissions);
+        Assert.Empty(detail.Roles);
+        Assert.Empty(detail.Permissions);
 
         await _client.DeleteAsync($"/api/v1/users/{dto.Id}");
         var get404 = await _client.GetAsync($"/api/v1/users/{dto.Id}");
         Assert.Equal(HttpStatusCode.NotFound, get404.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetById_ReturnsOnlyActiveRoleAndPermissionLinks()
+    {
+        // Cria usuário e permissões/roles, vincula, deleta um vínculo direto + um vínculo de role
+        // e valida que GetById expõe apenas vínculos ativos.
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("LinksUser", "links.user@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var (activePermissionId, deletedPermissionId, activeRoleId, deletedRoleId) =
+            await SeedUserLinksAsync(user.Id);
+
+        var resp = await _client.GetAsync($"/api/v1/users/{user.Id}");
+        resp.EnsureSuccessStatusCode();
+        var detail = await resp.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(detail);
+
+        Assert.Single(detail.Permissions);
+        Assert.Equal(activePermissionId, detail.Permissions[0].PermissionId);
+        Assert.DoesNotContain(detail.Permissions, p => p.PermissionId == deletedPermissionId);
+
+        Assert.Single(detail.Roles);
+        Assert.Equal(activeRoleId, detail.Roles[0].RoleId);
+        Assert.DoesNotContain(detail.Roles, r => r.RoleId == deletedRoleId);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_NoLinks_ReturnsEmpty()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("EmptyEff", "empty.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var resp = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions");
+        resp.EnsureSuccessStatusCode();
+        var rows = await resp.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(rows);
+        Assert.Empty(rows);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_DirectAndRole_MergesSourcesIntoSingleItem()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Combined", "combined.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var (sharedPermissionId, role) = await SeedUserSharedPermissionAsync(user.Id);
+
+        var resp = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions");
+        resp.EnsureSuccessStatusCode();
+        var rows = await resp.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(rows);
+
+        var item = Assert.Single(rows, r => r.PermissionId == sharedPermissionId);
+        Assert.Equal(2, item.Sources.Count);
+        Assert.Contains(item.Sources, s => s.Kind == "direct" && s.RoleId is null);
+        Assert.Contains(item.Sources, s => s.Kind == "role" && s.RoleId == role.Id && s.RoleCode == role.Code);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_DeletedRole_DoesNotSurfacePermissionsFromRole()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("DelRole", "del.role.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var permissionId = await SeedDeletedRoleWithPermissionAsync(user.Id);
+
+        var resp = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions");
+        resp.EnsureSuccessStatusCode();
+        var rows = await resp.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(rows);
+        Assert.DoesNotContain(rows, r => r.PermissionId == permissionId);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_FilterBySystemId_ReturnsOnlyMatchingRows()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("FilterSys", "filter.sys.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var (permissionId, expectedSystemId) = await SeedDirectPermissionAsync(user.Id);
+
+        // Sistema válido (autenticator é o seedado, mas permissão criada via fluxo controlado garante
+        // que `expectedSystemId` esteja entre os sistemas presentes).
+        var ok = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions?systemId={expectedSystemId}");
+        ok.EnsureSuccessStatusCode();
+        var matching = await ok.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(matching);
+        Assert.Contains(matching, p => p.PermissionId == permissionId);
+        Assert.All(matching, p => Assert.Equal(expectedSystemId, p.SystemId));
+
+        // SystemId desconhecido → array vazio (sem matches).
+        var emptyResp = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions?systemId={Guid.NewGuid()}");
+        emptyResp.EnsureSuccessStatusCode();
+        var empty = await emptyResp.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(empty);
+        Assert.Empty(empty);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_GuidEmptySystemId_ReturnsBadRequest()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("EmptyGuid", "empty.guid.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var resp = await _client.GetAsync(
+            $"/api/v1/users/{user.Id}/effective-permissions?systemId={Guid.Empty}");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_UnknownOrDeletedUser_Returns404()
+    {
+        var unknown = await _client.GetAsync(
+            $"/api/v1/users/{Guid.NewGuid()}/effective-permissions");
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("DelUser", "del.user.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+        await _client.DeleteAsync($"/api/v1/users/{user.Id}");
+
+        var deleted = await _client.GetAsync(
+            $"/api/v1/users/{user.Id}/effective-permissions");
+        Assert.Equal(HttpStatusCode.NotFound, deleted.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_OrderedDeterministically()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Ordered", "ordered.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        await SeedMultiPermissionsAsync(user.Id);
+
+        var resp = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions");
+        resp.EnsureSuccessStatusCode();
+        var rows = await resp.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+
+        var ordered = rows
+            .OrderBy(r => r.SystemCode, StringComparer.Ordinal)
+            .ThenBy(r => r.RouteCode, StringComparer.Ordinal)
+            .ThenBy(r => r.PermissionTypeCode, StringComparer.Ordinal)
+            .Select(r => r.PermissionId)
+            .ToList();
+        Assert.Equal(ordered, rows.Select(r => r.PermissionId).ToList());
     }
 
     [Fact]
@@ -335,11 +499,8 @@ public class UsersApiTests : IAsyncLifetime
         Assert.NotNull(restored);
         Assert.Null(restored.DeletedAt);
 
-        var listResp = await _client.GetAsync("/api/v1/users");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<UserDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        Assert.Contains(list, u => u.Id == dto.Id);
+        var listPage = await GetUsersPageAsync("/api/v1/users?pageSize=100");
+        Assert.Contains(listPage.Data, u => u.Id == dto.Id);
     }
 
     [Fact]
@@ -402,11 +563,8 @@ public class UsersApiTests : IAsyncLifetime
     public async Task GetAll_ReturnsEmptyRolesAndPermissions_OnEachUser()
     {
         await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("Lista", "list.empty@example.com"), TestApiClient.JsonOptions);
-        var listResp = await _client.GetAsync("/api/v1/users");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<UserDetailDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        var row = list.First(u => u.Email == "list.empty@example.com");
+        var page = await GetUsersDetailPageAsync("/api/v1/users?pageSize=100");
+        var row = page.Data.First(u => u.Email == "list.empty@example.com");
         Assert.Empty(row.Roles);
         Assert.Empty(row.Permissions);
     }
@@ -417,6 +575,809 @@ public class UsersApiTests : IAsyncLifetime
         var response = await _client.GetAsync($"/api/v1/users/{Guid.NewGuid()}");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
+
+    [Fact]
+    public async Task ForceLogout_HappyPath_OldTokenStartsToFailWith401_AndIncrementsTokenVersion()
+    {
+        // Cria target e faz login para obter um token "antigo".
+        await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Force Target", "force.target@example.com"), TestApiClient.JsonOptions);
+
+        var systemId = await TestApiClient.GetSystemIdAsync(_factory, TestApiClient.DefaultSystemCode);
+        var anon = _factory.CreateApiClient();
+        var login = await anon.PostAsJsonAsync("/api/v1/auth/login",
+            new { email = "force.target@example.com", password = "SenhaSegura1!", systemId },
+            TestApiClient.JsonOptions);
+        login.EnsureSuccessStatusCode();
+        var loginDto = await login.Content.ReadFromJsonAsync<LoginDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(loginDto);
+        var oldToken = loginDto.Token;
+
+        // Resolve o id do target para enviar à API.
+        Guid targetId;
+        int beforeTokenVersion;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.Users.AsNoTracking().FirstAsync(u => u.Email == "force.target@example.com");
+            targetId = row.Id;
+            beforeTokenVersion = row.TokenVersion;
+        }
+
+        var force = await _client.PostAsync($"/api/v1/users/{targetId}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.OK, force.StatusCode);
+
+        using var payload = JsonDocument.Parse(await force.Content.ReadAsStringAsync());
+        var root = payload.RootElement;
+        Assert.Equal("Sessões do usuário invalidadas com sucesso.", root.GetProperty("message").GetString());
+        Assert.Equal(targetId, root.GetProperty("userId").GetGuid());
+        Assert.Equal(beforeTokenVersion + 1, root.GetProperty("newTokenVersion").GetInt32());
+
+        // Persistência: TokenVersion incrementado.
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.Users.AsNoTracking().FirstAsync(u => u.Id == targetId);
+            Assert.Equal(beforeTokenVersion + 1, row.TokenVersion);
+        }
+
+        // Token antigo deve falhar com 401 ao chamar endpoint protegido (claim tv não bate mais).
+        using var verifyReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/verify-token");
+        verifyReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", oldToken);
+        verifyReq.Headers.Add(AuthController.SystemIdHeader, systemId.ToString("D"));
+        verifyReq.Headers.Add(AuthController.RouteCodeHeader, "AUTH_V1_USERS_LIST");
+        var verifyRes = await anon.SendAsync(verifyReq);
+        Assert.Equal(HttpStatusCode.Unauthorized, verifyRes.StatusCode);
+    }
+
+    [Fact]
+    public async Task ForceLogout_Idempotent_EachCallIncrementsTokenVersion()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Force Idem", "force.idem@example.com"), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+
+        var first = await _client.PostAsync($"/api/v1/users/{dto.Id}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var second = await _client.PostAsync($"/api/v1/users/{dto.Id}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await db.Users.AsNoTracking().FirstAsync(u => u.Id == dto.Id);
+        Assert.Equal(2, row.TokenVersion);
+    }
+
+    [Fact]
+    public async Task ForceLogout_SelfTarget_ReturnsBadRequest()
+    {
+        // Resolve o id do caller atual (root) consultando o banco.
+        Guid callerId;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.Users.AsNoTracking().FirstAsync(u => u.Email == RootUserSeeder.RootEmail);
+            callerId = row.Id;
+        }
+
+        var force = await _client.PostAsync($"/api/v1/users/{callerId}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.BadRequest, force.StatusCode);
+
+        using var payload = JsonDocument.Parse(await force.Content.ReadAsStringAsync());
+        var message = payload.RootElement.GetProperty("message").GetString();
+        Assert.Contains("/auth/logout", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ForceLogout_TargetNotFound_Returns404()
+    {
+        var force = await _client.PostAsync($"/api/v1/users/{Guid.NewGuid()}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.NotFound, force.StatusCode);
+    }
+
+    [Fact]
+    public async Task ForceLogout_TargetSoftDeleted_Returns404()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Force Deleted", "force.deleted@example.com"), TestApiClient.JsonOptions);
+        var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+
+        var del = await _client.DeleteAsync($"/api/v1/users/{dto.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, del.StatusCode);
+
+        var force = await _client.PostAsync($"/api/v1/users/{dto.Id}/force-logout", content: null);
+        Assert.Equal(HttpStatusCode.NotFound, force.StatusCode);
+    }
+
+    [Fact]
+    public async Task ForceLogout_CallerWithoutPermission_Returns403()
+    {
+        // Cria usuário-target.
+        var createTarget = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Target Privilege", "force.target.priv@example.com"), TestApiClient.JsonOptions);
+        var target = await createTarget.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(target);
+
+        // Cria caller sem nenhuma role/permissão (user comum) e faz login com ele.
+        await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Caller No Perm", "caller.noperm@example.com"), TestApiClient.JsonOptions);
+
+        var systemId = await TestApiClient.GetSystemIdAsync(_factory, TestApiClient.DefaultSystemCode);
+        var anon = _factory.CreateApiClient();
+        var login = await anon.PostAsJsonAsync("/api/v1/auth/login",
+            new { email = "caller.noperm@example.com", password = "SenhaSegura1!", systemId },
+            TestApiClient.JsonOptions);
+        login.EnsureSuccessStatusCode();
+        var loginDto = await login.Content.ReadFromJsonAsync<LoginDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(loginDto);
+
+        using var req = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/users/{target.Id}/force-logout");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginDto.Token);
+        req.Headers.Add(AuthController.SystemIdHeader, systemId.ToString("D"));
+        var response = await anon.SendAsync(req);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_NoFilters_UsesDefaultEnvelope()
+    {
+        var page = await GetUsersPageAsync("/api/v1/users");
+        Assert.Equal(1, page.Page);
+        Assert.Equal(20, page.PageSize);
+        Assert.True(page.Total >= page.Data.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPagination_ReturnsCorrectSubset()
+    {
+        for (var i = 0; i < 5; i++)
+        {
+            await _client.PostAsJsonAsync("/api/v1/users",
+                UserCreateBody($"Pag User {i:D2}", $"pag.user.{i:D2}@example.com"),
+                TestApiClient.JsonOptions);
+        }
+
+        var first = await GetUsersPageAsync("/api/v1/users?q=Pag%20User&page=1&pageSize=2");
+        var second = await GetUsersPageAsync("/api/v1/users?q=Pag%20User&page=2&pageSize=2");
+        var third = await GetUsersPageAsync("/api/v1/users?q=Pag%20User&page=3&pageSize=2");
+
+        Assert.Equal(2, first.Data.Count);
+        Assert.Equal(2, second.Data.Count);
+        Assert.Single(third.Data);
+        Assert.Equal(5, first.Total);
+        Assert.Equal(5, second.Total);
+        Assert.Equal(5, third.Total);
+
+        var ids = first.Data.Concat(second.Data).Concat(third.Data).Select(u => u.Id).ToList();
+        Assert.Equal(ids.Count, ids.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_PartialMatchOnName()
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Aparecida Silva Q", "aparecida.q@example.com"),
+            TestApiClient.JsonOptions);
+        resp.EnsureSuccessStatusCode();
+
+        var page = await GetUsersPageAsync("/api/v1/users?q=Aparecida&pageSize=100");
+        Assert.Contains(page.Data, u => u.Email == "aparecida.q@example.com");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_PartialMatchOnEmail()
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Email Match", "email.match.unique@example.com"),
+            TestApiClient.JsonOptions);
+        resp.EnsureSuccessStatusCode();
+
+        var page = await GetUsersPageAsync("/api/v1/users?q=email.match.unique&pageSize=100");
+        Assert.Contains(page.Data, u => u.Email == "email.match.unique@example.com");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_IsCaseInsensitive()
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Roberto Oliveira Q", "roberto.q@example.com"),
+            TestApiClient.JsonOptions);
+        resp.EnsureSuccessStatusCode();
+
+        var lower = await GetUsersPageAsync("/api/v1/users?q=roberto&pageSize=100");
+        var upper = await GetUsersPageAsync("/api/v1/users?q=ROBERTO&pageSize=100");
+        var mixed = await GetUsersPageAsync("/api/v1/users?q=RoBeRtO&pageSize=100");
+
+        Assert.Contains(lower.Data, u => u.Email == "roberto.q@example.com");
+        Assert.Contains(upper.Data, u => u.Email == "roberto.q@example.com");
+        Assert.Contains(mixed.Data, u => u.Email == "roberto.q@example.com");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_EscapesUnderscoreLiteral()
+    {
+        // Sem o escape, "_" viraria wildcard ILIKE e casaria qualquer caractere unico no lugar.
+        var resp1 = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Foo_Lit_BarUser", "foo.litbar1@example.com"),
+            TestApiClient.JsonOptions);
+        resp1.EnsureSuccessStatusCode();
+        var resp2 = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("FooXLitXBarUser", "foo.litbar2@example.com"),
+            TestApiClient.JsonOptions);
+        resp2.EnsureSuccessStatusCode();
+
+        var page = await GetUsersPageAsync("/api/v1/users?q=_Lit_&pageSize=100");
+        Assert.Contains(page.Data, u => u.Name == "Foo_Lit_BarUser");
+        Assert.DoesNotContain(page.Data, u => u.Name == "FooXLitXBarUser");
+    }
+
+    [Fact]
+    public async Task GetAll_WithClientIdFilter_ReturnsOnlyMatching()
+    {
+        // Cria dois usuários, cada um vinculado ao seu próprio cliente auto-gerado pelo POST /users.
+        var aResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ClientFilter A", "client.filter.a@example.com"),
+            TestApiClient.JsonOptions);
+        aResp.EnsureSuccessStatusCode();
+        var aDto = await aResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(aDto);
+        Assert.NotNull(aDto.ClientId);
+
+        var bResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ClientFilter B", "client.filter.b@example.com"),
+            TestApiClient.JsonOptions);
+        bResp.EnsureSuccessStatusCode();
+        var bDto = await bResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(bDto);
+        Assert.NotNull(bDto.ClientId);
+
+        var page = await GetUsersPageAsync($"/api/v1/users?clientId={aDto.ClientId}&pageSize=100");
+        Assert.All(page.Data, u => Assert.Equal(aDto.ClientId, u.ClientId));
+        Assert.Contains(page.Data, u => u.Id == aDto.Id);
+        Assert.DoesNotContain(page.Data, u => u.Id == bDto.Id);
+    }
+
+    [Fact]
+    public async Task GetAll_WithClientIdEmpty_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync($"/api/v1/users?clientId={Guid.Empty}");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithClientIdNonExistent_ReturnsEmpty()
+    {
+        var page = await GetUsersPageAsync($"/api/v1/users?clientId={Guid.NewGuid()}&pageSize=100");
+        Assert.Empty(page.Data);
+        Assert.Equal(0, page.Total);
+    }
+
+    [Fact]
+    public async Task GetAll_WithActiveTrue_ReturnsOnlyActive()
+    {
+        var activeResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ActiveTrue Stay", "active.true.stay@example.com"),
+            TestApiClient.JsonOptions);
+        activeResp.EnsureSuccessStatusCode();
+        var activeDto = await activeResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(activeDto);
+
+        var deletedResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ActiveTrue Gone", "active.true.gone@example.com"),
+            TestApiClient.JsonOptions);
+        deletedResp.EnsureSuccessStatusCode();
+        var deletedDto = await deletedResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(deletedDto);
+        await _client.DeleteAsync($"/api/v1/users/{deletedDto.Id}");
+
+        var page = await GetUsersPageAsync("/api/v1/users?active=true&pageSize=100");
+        Assert.Contains(page.Data, u => u.Id == activeDto.Id);
+        Assert.DoesNotContain(page.Data, u => u.Id == deletedDto.Id);
+    }
+
+    [Fact]
+    public async Task GetAll_WithActiveFalse_ReturnsOnlySoftDeleted()
+    {
+        var activeResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ActiveFalse Stay", "active.false.stay@example.com"),
+            TestApiClient.JsonOptions);
+        activeResp.EnsureSuccessStatusCode();
+        var activeDto = await activeResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(activeDto);
+
+        var deletedResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("ActiveFalse Gone", "active.false.gone@example.com"),
+            TestApiClient.JsonOptions);
+        deletedResp.EnsureSuccessStatusCode();
+        var deletedDto = await deletedResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(deletedDto);
+        await _client.DeleteAsync($"/api/v1/users/{deletedDto.Id}");
+
+        var page = await GetUsersPageAsync("/api/v1/users?active=false&pageSize=100");
+        Assert.Contains(page.Data, u => u.Id == deletedDto.Id);
+        Assert.DoesNotContain(page.Data, u => u.Id == activeDto.Id);
+    }
+
+    [Fact]
+    public async Task GetAll_WithIncludeDeletedTrue_ReturnsActiveAndSoftDeleted()
+    {
+        var activeResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Incl Active", "incl.active.user@example.com"),
+            TestApiClient.JsonOptions);
+        activeResp.EnsureSuccessStatusCode();
+        var activeDto = await activeResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(activeDto);
+
+        var deletedResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Incl Deleted", "incl.deleted.user@example.com"),
+            TestApiClient.JsonOptions);
+        deletedResp.EnsureSuccessStatusCode();
+        var deletedDto = await deletedResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(deletedDto);
+        await _client.DeleteAsync($"/api/v1/users/{deletedDto.Id}");
+
+        var page = await GetUsersPageAsync("/api/v1/users?includeDeleted=true&pageSize=100");
+        Assert.Contains(page.Data, u => u.Id == activeDto.Id && u.DeletedAt == null);
+        Assert.Contains(page.Data, u => u.Id == deletedDto.Id && u.DeletedAt != null);
+    }
+
+    [Fact]
+    public async Task GetAll_WithActiveAndIncludeDeleted_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/users?active=true&includeDeleted=true");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeAboveLimit_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/users?pageSize=101");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeZero_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/users?pageSize=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageZero_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/users?page=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_PageBeyondTotal_ReturnsEmptyDataAnd200()
+    {
+        await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Beyond Unico", "beyond.unico@example.com"),
+            TestApiClient.JsonOptions);
+
+        var resp = await _client.GetAsync("/api/v1/users?q=beyond.unico&page=99&pageSize=10");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var page = await resp.Content.ReadFromJsonAsync<PagedUsersDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        Assert.Empty(page.Data);
+        Assert.Equal(1, page.Total);
+    }
+
+    [Fact]
+    public async Task GetAll_OrderedByCreatedAt_Descending()
+    {
+        var first = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Order User AAA", "order.user.aaa@example.com"),
+            TestApiClient.JsonOptions);
+        first.EnsureSuccessStatusCode();
+        var firstDto = await first.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(firstDto);
+
+        await Task.Delay(20);
+
+        var second = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Order User BBB", "order.user.bbb@example.com"),
+            TestApiClient.JsonOptions);
+        second.EnsureSuccessStatusCode();
+        var secondDto = await second.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(secondDto);
+
+        var page = await GetUsersPageAsync("/api/v1/users?q=Order%20User&pageSize=100");
+        var ordered = page.Data
+            .Where(u => u.Name.StartsWith("Order User", StringComparison.Ordinal))
+            .Select(u => u.Id)
+            .ToList();
+        Assert.Equal(secondDto.Id, ordered[0]);
+        Assert.Equal(firstDto.Id, ordered[1]);
+    }
+
+    [Fact]
+    public async Task GetAll_TotalReflectsFilters_BeforePagination()
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            await _client.PostAsJsonAsync("/api/v1/users",
+                UserCreateBody($"FiltroTot {i}", $"filtrotot.{i}@example.com"),
+                TestApiClient.JsonOptions);
+        }
+        await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Outro Nome U", "outro.nome.u@example.com"),
+            TestApiClient.JsonOptions);
+
+        var page = await GetUsersPageAsync("/api/v1/users?q=FiltroTot&page=1&pageSize=2");
+        Assert.Equal(3, page.Total);
+        Assert.Equal(2, page.Data.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_CombinedFilters_ApplyTogether()
+    {
+        var aResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Combo Maria User", "combo.maria.user@example.com"),
+            TestApiClient.JsonOptions);
+        aResp.EnsureSuccessStatusCode();
+        var aDto = await aResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(aDto);
+        Assert.NotNull(aDto.ClientId);
+
+        await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Combo Maria Outro", "combo.maria.outro@example.com"),
+            TestApiClient.JsonOptions);
+
+        var page = await GetUsersPageAsync(
+            $"/api/v1/users?q=Combo%20Maria&clientId={aDto.ClientId}&active=true&pageSize=100");
+        Assert.All(page.Data, u => Assert.Equal(aDto.ClientId, u.ClientId));
+        Assert.Contains(page.Data, u => u.Id == aDto.Id);
+        Assert.DoesNotContain(page.Data, u => u.Email == "combo.maria.outro@example.com");
+    }
+
+    [Fact]
+    public async Task GetAll_WithIdsPresent_PreservesMinimalProjectionContract()
+    {
+        // Mesmo passando page/pageSize e demais filtros, o caminho `?ids=` deve permanecer
+        // retornando o array minimal na ordem solicitada (sem envelope paginado).
+        var aResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("IdsKeep One", "ids.keep.one@example.com"),
+            TestApiClient.JsonOptions);
+        aResp.EnsureSuccessStatusCode();
+        var aDto = await aResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(aDto);
+
+        var bResp = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("IdsKeep Two", "ids.keep.two@example.com"),
+            TestApiClient.JsonOptions);
+        bResp.EnsureSuccessStatusCode();
+        var bDto = await bResp.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(bDto);
+
+        var resp = await _client.GetAsync(
+            $"/api/v1/users?ids={bDto.Id},{aDto.Id}&page=1&pageSize=20&q=ignored");
+        resp.EnsureSuccessStatusCode();
+        using var payload = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        Assert.Equal(JsonValueKind.Array, payload.RootElement.ValueKind);
+        var rows = payload.RootElement.EnumerateArray().ToList();
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(bDto.Id, rows[0].GetProperty("id").GetGuid());
+        Assert.Equal(aDto.Id, rows[1].GetProperty("id").GetGuid());
+        Assert.Equal(3, rows[0].EnumerateObject().Count());
+    }
+
+    private async Task<PagedUsersDto> GetUsersPageAsync(string url)
+    {
+        var resp = await _client.GetAsync(url);
+        resp.EnsureSuccessStatusCode();
+        var page = await resp.Content.ReadFromJsonAsync<PagedUsersDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        return page;
+    }
+
+    /// <summary>
+    /// Cria 2 vínculos diretos (Permission e UserPermission) e 2 vínculos via role (Role e UserRole),
+    /// soft-deletando um link de cada categoria, e devolve os ids dos vínculos ativos e deletados
+    /// para validar a projeção de <c>GetById</c> (que filtra apenas links com link e entidade ativos).
+    /// </summary>
+    private async Task<(Guid activePermissionId, Guid deletedPermissionId, Guid activeRoleId, Guid deletedRoleId)>
+        SeedUserLinksAsync(Guid userId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var system = await db.Systems.AsNoTracking().FirstAsync();
+        var route = await db.Routes.AsNoTracking().Where(r => r.SystemId == system.Id).FirstAsync();
+        var type = await db.PermissionTypes.AsNoTracking().FirstAsync();
+
+        var p1 = new Models.AppPermission
+        {
+            RouteId = route.Id,
+            PermissionTypeId = type.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var p2 = new Models.AppPermission
+        {
+            RouteId = route.Id,
+            PermissionTypeId = type.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.Permissions.AddRange(p1, p2);
+
+        var role1 = new Models.AppRole
+        {
+            SystemId = system.Id,
+            Code = $"role_active_{Guid.NewGuid():N}",
+            Name = "Role Ativa",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var role2 = new Models.AppRole
+        {
+            SystemId = system.Id,
+            Code = $"role_deleted_{Guid.NewGuid():N}",
+            Name = "Role Inativa",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.Roles.AddRange(role1, role2);
+        await db.SaveChangesAsync();
+
+        var nowUtc = DateTime.UtcNow;
+        db.UserPermissions.AddRange(
+            new Models.AppUserPermission
+            {
+                UserId = userId,
+                PermissionId = p1.Id,
+                CreatedAt = nowUtc,
+                UpdatedAt = nowUtc
+            },
+            new Models.AppUserPermission
+            {
+                UserId = userId,
+                PermissionId = p2.Id,
+                CreatedAt = nowUtc,
+                UpdatedAt = nowUtc,
+                DeletedAt = nowUtc
+            });
+
+        db.UserRoles.AddRange(
+            new Models.AppUserRole
+            {
+                UserId = userId,
+                RoleId = role1.Id,
+                CreatedAt = nowUtc,
+                UpdatedAt = nowUtc
+            },
+            new Models.AppUserRole
+            {
+                UserId = userId,
+                RoleId = role2.Id,
+                CreatedAt = nowUtc,
+                UpdatedAt = nowUtc,
+                DeletedAt = nowUtc
+            });
+        await db.SaveChangesAsync();
+
+        return (p1.Id, p2.Id, role1.Id, role2.Id);
+    }
+
+    /// <summary>
+    /// Cria uma única <c>Permission</c> e vincula simultaneamente como <c>UserPermissions</c> direto
+    /// e via uma <c>Role</c> em <c>RolePermissions</c> + <c>UserRoles</c>. Usado para validar que
+    /// <c>GetEffectivePermissions</c> consolida em um único item com 2 sources.
+    /// </summary>
+    private async Task<(Guid permissionId, SeededRole role)> SeedUserSharedPermissionAsync(Guid userId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var system = await db.Systems.AsNoTracking().FirstAsync();
+        var route = await db.Routes.AsNoTracking().Where(r => r.SystemId == system.Id).FirstAsync();
+        var type = await db.PermissionTypes.AsNoTracking().FirstAsync();
+
+        var permission = new Models.AppPermission
+        {
+            RouteId = route.Id,
+            PermissionTypeId = type.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var role = new Models.AppRole
+        {
+            SystemId = system.Id,
+            Code = $"role_shared_{Guid.NewGuid():N}",
+            Name = "Role Shared",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.Permissions.Add(permission);
+        db.Roles.Add(role);
+        await db.SaveChangesAsync();
+
+        var nowUtc = DateTime.UtcNow;
+        db.UserPermissions.Add(new Models.AppUserPermission
+        {
+            UserId = userId,
+            PermissionId = permission.Id,
+            CreatedAt = nowUtc,
+            UpdatedAt = nowUtc
+        });
+        db.UserRoles.Add(new Models.AppUserRole
+        {
+            UserId = userId,
+            RoleId = role.Id,
+            CreatedAt = nowUtc,
+            UpdatedAt = nowUtc
+        });
+        db.RolePermissions.Add(new Models.AppRolePermission
+        {
+            RoleId = role.Id,
+            PermissionId = permission.Id,
+            CreatedAt = nowUtc,
+            UpdatedAt = nowUtc
+        });
+        await db.SaveChangesAsync();
+
+        return (permission.Id, new SeededRole(role.Id, role.Code, role.Name));
+    }
+
+    /// <summary>
+    /// Cria uma <c>Role</c> com <c>Permission</c> vinculada e a soft-deleta. Vincula a role ao
+    /// usuário e devolve o id da permissão para validar que o endpoint não devolve permissões de
+    /// roles soft-deletadas (filtro global em Roles esconde a entidade alvo do join).
+    /// </summary>
+    private async Task<Guid> SeedDeletedRoleWithPermissionAsync(Guid userId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var system = await db.Systems.AsNoTracking().FirstAsync();
+        var route = await db.Routes.AsNoTracking().Where(r => r.SystemId == system.Id).FirstAsync();
+        var type = await db.PermissionTypes.AsNoTracking().FirstAsync();
+
+        var permission = new Models.AppPermission
+        {
+            RouteId = route.Id,
+            PermissionTypeId = type.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var role = new Models.AppRole
+        {
+            SystemId = system.Id,
+            Code = $"role_deleted_{Guid.NewGuid():N}",
+            Name = "Role Deletada",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+            DeletedAt = DateTime.UtcNow
+        };
+        db.Permissions.Add(permission);
+        db.Roles.Add(role);
+        await db.SaveChangesAsync();
+
+        var nowUtc = DateTime.UtcNow;
+        db.UserRoles.Add(new Models.AppUserRole
+        {
+            UserId = userId,
+            RoleId = role.Id,
+            CreatedAt = nowUtc,
+            UpdatedAt = nowUtc
+        });
+        db.RolePermissions.Add(new Models.AppRolePermission
+        {
+            RoleId = role.Id,
+            PermissionId = permission.Id,
+            CreatedAt = nowUtc,
+            UpdatedAt = nowUtc
+        });
+        await db.SaveChangesAsync();
+
+        return permission.Id;
+    }
+
+    /// <summary>Cria uma <c>Permission</c> e vincula direto ao usuário, devolvendo o systemId associado.</summary>
+    private async Task<(Guid permissionId, Guid systemId)> SeedDirectPermissionAsync(Guid userId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var system = await db.Systems.AsNoTracking().FirstAsync();
+        var route = await db.Routes.AsNoTracking().Where(r => r.SystemId == system.Id).FirstAsync();
+        var type = await db.PermissionTypes.AsNoTracking().FirstAsync();
+
+        var permission = new Models.AppPermission
+        {
+            RouteId = route.Id,
+            PermissionTypeId = type.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.Permissions.Add(permission);
+        await db.SaveChangesAsync();
+
+        db.UserPermissions.Add(new Models.AppUserPermission
+        {
+            UserId = userId,
+            PermissionId = permission.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        return (permission.Id, system.Id);
+    }
+
+    /// <summary>
+    /// Cria múltiplas permissões em rotas distintas para o usuário, garantindo cenário de ordenação
+    /// não trivial (codes diferentes em SystemCode/RouteCode/PermissionTypeCode).
+    /// </summary>
+    private async Task SeedMultiPermissionsAsync(Guid userId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var system = await db.Systems.AsNoTracking().FirstAsync();
+        var routes = await db.Routes.AsNoTracking().Where(r => r.SystemId == system.Id).Take(2).ToListAsync();
+        var types = await db.PermissionTypes.AsNoTracking().Take(2).ToListAsync();
+        Assert.True(routes.Count >= 1);
+        Assert.True(types.Count >= 1);
+
+        var permissions = new List<Models.AppPermission>();
+        for (var ri = 0; ri < routes.Count; ri++)
+        {
+            for (var ti = 0; ti < types.Count; ti++)
+            {
+                permissions.Add(new Models.AppPermission
+                {
+                    RouteId = routes[ri].Id,
+                    PermissionTypeId = types[ti].Id,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+        }
+        db.Permissions.AddRange(permissions);
+        await db.SaveChangesAsync();
+
+        foreach (var permission in permissions)
+        {
+            db.UserPermissions.Add(new Models.AppUserPermission
+            {
+                UserId = userId,
+                PermissionId = permission.Id,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<PagedUsersDetailDto> GetUsersDetailPageAsync(string url)
+    {
+        var resp = await _client.GetAsync(url);
+        resp.EnsureSuccessStatusCode();
+        var page = await resp.Content.ReadFromJsonAsync<PagedUsersDetailDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        return page;
+    }
+
+    private sealed record PagedUsersDto(
+        List<UserDto> Data,
+        int Page,
+        int PageSize,
+        int Total);
+
+    private sealed record PagedUsersDetailDto(
+        List<UserDetailDto> Data,
+        int Page,
+        int PageSize,
+        int Total);
+
+    private sealed record LoginDto(string Token);
 
     private sealed record UserDto(
         Guid Id,
@@ -433,6 +1394,7 @@ public class UsersApiTests : IAsyncLifetime
         Guid Id,
         string Name,
         string Email,
+        Guid? ClientId,
         int Identity,
         bool Active,
         DateTime CreatedAt,
@@ -442,7 +1404,7 @@ public class UsersApiTests : IAsyncLifetime
         List<UserPermissionLinkDto> Permissions);
 
     private sealed record UserRoleLinkDto(
-        int Id,
+        Guid Id,
         Guid UserId,
         Guid RoleId,
         DateTime CreatedAt,
@@ -456,6 +1418,25 @@ public class UsersApiTests : IAsyncLifetime
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt);
+
+    private sealed record EffectivePermissionDto(
+        Guid PermissionId,
+        string RouteCode,
+        string RouteName,
+        string PermissionTypeCode,
+        string PermissionTypeName,
+        Guid SystemId,
+        string SystemCode,
+        string SystemName,
+        List<EffectiveSourceDto> Sources);
+
+    private sealed record EffectiveSourceDto(
+        string Kind,
+        Guid? RoleId,
+        string? RoleCode,
+        string? RoleName);
+
+    private sealed record SeededRole(Guid Id, string Code, string Name);
 
     private sealed record ClientIdDto(Guid Id);
 

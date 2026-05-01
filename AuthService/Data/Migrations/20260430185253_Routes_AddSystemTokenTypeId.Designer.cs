@@ -3,6 +3,7 @@ using System;
 using AuthService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AuthService.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260430185253_Routes_AddSystemTokenTypeId")]
+    partial class Routes_AddSystemTokenTypeId
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -114,17 +117,10 @@ namespace AuthService.Data.Migrations
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("Description")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
-
-                    b.Property<Guid>("SystemId")
-                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -133,9 +129,7 @@ namespace AuthService.Data.Migrations
 
                     b.HasIndex(new[] { "DeletedAt" }, "IX_Roles_DeletedAt");
 
-                    b.HasIndex(new[] { "SystemId" }, "IX_Roles_SystemId");
-
-                    b.HasIndex(new[] { "SystemId", "Code" }, "UX_Roles_SystemId_Code")
+                    b.HasIndex(new[] { "Code" }, "UX_Roles_Code")
                         .IsUnique();
 
                     b.ToTable("Roles");
@@ -545,15 +539,6 @@ namespace AuthService.Data.Migrations
                     b.HasOne("AuthService.Models.AppRoute", null)
                         .WithMany()
                         .HasForeignKey("RouteId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("AuthService.Models.AppRole", b =>
-                {
-                    b.HasOne("AuthService.Models.AppSystem", null)
-                        .WithMany()
-                        .HasForeignKey("SystemId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
