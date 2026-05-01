@@ -171,7 +171,7 @@ public class UsersApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GetById_Active_ReturnsOk_Deleted_Returns404()
+    public async Task GetById_Active_ReturnsFullUserResponse_Deleted_Returns404()
     {
         var create = await _client.PostAsJsonAsync("/api/v1/users", UserCreateBody("S", "g1@example.com"), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
@@ -179,18 +179,183 @@ public class UsersApiTests : IAsyncLifetime
 
         var getOk = await _client.GetAsync($"/api/v1/users/{dto.Id}");
         Assert.Equal(HttpStatusCode.OK, getOk.StatusCode);
-        using (var payload = JsonDocument.Parse(await getOk.Content.ReadAsStringAsync()))
-        {
-            var root = payload.RootElement;
-            Assert.Equal(3, root.EnumerateObject().Count());
-            Assert.Equal(dto.Id, root.GetProperty("id").GetGuid());
-            Assert.Equal("S", root.GetProperty("name").GetString());
-            Assert.Equal("g1@example.com", root.GetProperty("email").GetString());
-        }
+        var detail = await getOk.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(detail);
+        Assert.Equal(dto.Id, detail.Id);
+        Assert.Equal("S", detail.Name);
+        Assert.Equal("g1@example.com", detail.Email);
+        Assert.True(detail.Active);
+        Assert.NotNull(detail.Roles);
+        Assert.NotNull(detail.Permissions);
+        Assert.Empty(detail.Roles);
+        Assert.Empty(detail.Permissions);
 
         await _client.DeleteAsync($"/api/v1/users/{dto.Id}");
         var get404 = await _client.GetAsync($"/api/v1/users/{dto.Id}");
         Assert.Equal(HttpStatusCode.NotFound, get404.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetById_ReturnsOnlyActiveRoleAndPermissionLinks()
+    {
+        // Cria usuário e permissões/roles, vincula, deleta um vínculo direto + um vínculo de role
+        // e valida que GetById expõe apenas vínculos ativos.
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("LinksUser", "links.user@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var (activePermissionId, deletedPermissionId, activeRoleId, deletedRoleId) =
+            await SeedUserLinksAsync(user.Id);
+
+        var resp = await _client.GetAsync($"/api/v1/users/{user.Id}");
+        resp.EnsureSuccessStatusCode();
+        var detail = await resp.Content.ReadFromJsonAsync<UserDetailDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(detail);
+
+        Assert.Single(detail.Permissions);
+        Assert.Equal(activePermissionId, detail.Permissions[0].PermissionId);
+        Assert.DoesNotContain(detail.Permissions, p => p.PermissionId == deletedPermissionId);
+
+        Assert.Single(detail.Roles);
+        Assert.Equal(activeRoleId, detail.Roles[0].RoleId);
+        Assert.DoesNotContain(detail.Roles, r => r.RoleId == deletedRoleId);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_NoLinks_ReturnsEmpty()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("EmptyEff", "empty.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var resp = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions");
+        resp.EnsureSuccessStatusCode();
+        var rows = await resp.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(rows);
+        Assert.Empty(rows);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_DirectAndRole_MergesSourcesIntoSingleItem()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Combined", "combined.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var (sharedPermissionId, role) = await SeedUserSharedPermissionAsync(user.Id);
+
+        var resp = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions");
+        resp.EnsureSuccessStatusCode();
+        var rows = await resp.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(rows);
+
+        var item = Assert.Single(rows, r => r.PermissionId == sharedPermissionId);
+        Assert.Equal(2, item.Sources.Count);
+        Assert.Contains(item.Sources, s => s.Kind == "direct" && s.RoleId is null);
+        Assert.Contains(item.Sources, s => s.Kind == "role" && s.RoleId == role.Id && s.RoleCode == role.Code);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_DeletedRole_DoesNotSurfacePermissionsFromRole()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("DelRole", "del.role.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var permissionId = await SeedDeletedRoleWithPermissionAsync(user.Id);
+
+        var resp = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions");
+        resp.EnsureSuccessStatusCode();
+        var rows = await resp.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(rows);
+        Assert.DoesNotContain(rows, r => r.PermissionId == permissionId);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_FilterBySystemId_ReturnsOnlyMatchingRows()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("FilterSys", "filter.sys.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var (permissionId, expectedSystemId) = await SeedDirectPermissionAsync(user.Id);
+
+        // Sistema válido (autenticator é o seedado, mas permissão criada via fluxo controlado garante
+        // que `expectedSystemId` esteja entre os sistemas presentes).
+        var ok = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions?systemId={expectedSystemId}");
+        ok.EnsureSuccessStatusCode();
+        var matching = await ok.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(matching);
+        Assert.Contains(matching, p => p.PermissionId == permissionId);
+        Assert.All(matching, p => Assert.Equal(expectedSystemId, p.SystemId));
+
+        // SystemId desconhecido → array vazio (sem matches).
+        var emptyResp = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions?systemId={Guid.NewGuid()}");
+        emptyResp.EnsureSuccessStatusCode();
+        var empty = await emptyResp.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(empty);
+        Assert.Empty(empty);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_GuidEmptySystemId_ReturnsBadRequest()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("EmptyGuid", "empty.guid.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        var resp = await _client.GetAsync(
+            $"/api/v1/users/{user.Id}/effective-permissions?systemId={Guid.Empty}");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_UnknownOrDeletedUser_Returns404()
+    {
+        var unknown = await _client.GetAsync(
+            $"/api/v1/users/{Guid.NewGuid()}/effective-permissions");
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("DelUser", "del.user.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+        await _client.DeleteAsync($"/api/v1/users/{user.Id}");
+
+        var deleted = await _client.GetAsync(
+            $"/api/v1/users/{user.Id}/effective-permissions");
+        Assert.Equal(HttpStatusCode.NotFound, deleted.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetEffectivePermissions_OrderedDeterministically()
+    {
+        var userCreate = await _client.PostAsJsonAsync("/api/v1/users",
+            UserCreateBody("Ordered", "ordered.eff@example.com"), TestApiClient.JsonOptions);
+        var user = await userCreate.Content.ReadFromJsonAsync<UserDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(user);
+
+        await SeedMultiPermissionsAsync(user.Id);
+
+        var resp = await _client.GetAsync($"/api/v1/users/{user.Id}/effective-permissions");
+        resp.EnsureSuccessStatusCode();
+        var rows = await resp.Content.ReadFromJsonAsync<List<EffectivePermissionDto>>(TestApiClient.JsonOptions);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+
+        var ordered = rows
+            .OrderBy(r => r.SystemCode, StringComparer.Ordinal)
+            .ThenBy(r => r.RouteCode, StringComparer.Ordinal)
+            .ThenBy(r => r.PermissionTypeCode, StringComparer.Ordinal)
+            .Select(r => r.PermissionId)
+            .ToList();
+        Assert.Equal(ordered, rows.Select(r => r.PermissionId).ToList());
     }
 
     [Fact]
@@ -911,6 +1076,286 @@ public class UsersApiTests : IAsyncLifetime
         return page;
     }
 
+    /// <summary>
+    /// Cria 2 vínculos diretos (Permission e UserPermission) e 2 vínculos via role (Role e UserRole),
+    /// soft-deletando um link de cada categoria, e devolve os ids dos vínculos ativos e deletados
+    /// para validar a projeção de <c>GetById</c> (que filtra apenas links com link e entidade ativos).
+    /// </summary>
+    private async Task<(Guid activePermissionId, Guid deletedPermissionId, Guid activeRoleId, Guid deletedRoleId)>
+        SeedUserLinksAsync(Guid userId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var system = await db.Systems.AsNoTracking().FirstAsync();
+        var route = await db.Routes.AsNoTracking().Where(r => r.SystemId == system.Id).FirstAsync();
+        var type = await db.PermissionTypes.AsNoTracking().FirstAsync();
+
+        var p1 = new Models.AppPermission
+        {
+            RouteId = route.Id,
+            PermissionTypeId = type.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var p2 = new Models.AppPermission
+        {
+            RouteId = route.Id,
+            PermissionTypeId = type.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.Permissions.AddRange(p1, p2);
+
+        var role1 = new Models.AppRole
+        {
+            SystemId = system.Id,
+            Code = $"role_active_{Guid.NewGuid():N}",
+            Name = "Role Ativa",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var role2 = new Models.AppRole
+        {
+            SystemId = system.Id,
+            Code = $"role_deleted_{Guid.NewGuid():N}",
+            Name = "Role Inativa",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.Roles.AddRange(role1, role2);
+        await db.SaveChangesAsync();
+
+        var nowUtc = DateTime.UtcNow;
+        db.UserPermissions.AddRange(
+            new Models.AppUserPermission
+            {
+                UserId = userId,
+                PermissionId = p1.Id,
+                CreatedAt = nowUtc,
+                UpdatedAt = nowUtc
+            },
+            new Models.AppUserPermission
+            {
+                UserId = userId,
+                PermissionId = p2.Id,
+                CreatedAt = nowUtc,
+                UpdatedAt = nowUtc,
+                DeletedAt = nowUtc
+            });
+
+        db.UserRoles.AddRange(
+            new Models.AppUserRole
+            {
+                UserId = userId,
+                RoleId = role1.Id,
+                CreatedAt = nowUtc,
+                UpdatedAt = nowUtc
+            },
+            new Models.AppUserRole
+            {
+                UserId = userId,
+                RoleId = role2.Id,
+                CreatedAt = nowUtc,
+                UpdatedAt = nowUtc,
+                DeletedAt = nowUtc
+            });
+        await db.SaveChangesAsync();
+
+        return (p1.Id, p2.Id, role1.Id, role2.Id);
+    }
+
+    /// <summary>
+    /// Cria uma única <c>Permission</c> e vincula simultaneamente como <c>UserPermissions</c> direto
+    /// e via uma <c>Role</c> em <c>RolePermissions</c> + <c>UserRoles</c>. Usado para validar que
+    /// <c>GetEffectivePermissions</c> consolida em um único item com 2 sources.
+    /// </summary>
+    private async Task<(Guid permissionId, SeededRole role)> SeedUserSharedPermissionAsync(Guid userId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var system = await db.Systems.AsNoTracking().FirstAsync();
+        var route = await db.Routes.AsNoTracking().Where(r => r.SystemId == system.Id).FirstAsync();
+        var type = await db.PermissionTypes.AsNoTracking().FirstAsync();
+
+        var permission = new Models.AppPermission
+        {
+            RouteId = route.Id,
+            PermissionTypeId = type.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var role = new Models.AppRole
+        {
+            SystemId = system.Id,
+            Code = $"role_shared_{Guid.NewGuid():N}",
+            Name = "Role Shared",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.Permissions.Add(permission);
+        db.Roles.Add(role);
+        await db.SaveChangesAsync();
+
+        var nowUtc = DateTime.UtcNow;
+        db.UserPermissions.Add(new Models.AppUserPermission
+        {
+            UserId = userId,
+            PermissionId = permission.Id,
+            CreatedAt = nowUtc,
+            UpdatedAt = nowUtc
+        });
+        db.UserRoles.Add(new Models.AppUserRole
+        {
+            UserId = userId,
+            RoleId = role.Id,
+            CreatedAt = nowUtc,
+            UpdatedAt = nowUtc
+        });
+        db.RolePermissions.Add(new Models.AppRolePermission
+        {
+            RoleId = role.Id,
+            PermissionId = permission.Id,
+            CreatedAt = nowUtc,
+            UpdatedAt = nowUtc
+        });
+        await db.SaveChangesAsync();
+
+        return (permission.Id, new SeededRole(role.Id, role.Code, role.Name));
+    }
+
+    /// <summary>
+    /// Cria uma <c>Role</c> com <c>Permission</c> vinculada e a soft-deleta. Vincula a role ao
+    /// usuário e devolve o id da permissão para validar que o endpoint não devolve permissões de
+    /// roles soft-deletadas (filtro global em Roles esconde a entidade alvo do join).
+    /// </summary>
+    private async Task<Guid> SeedDeletedRoleWithPermissionAsync(Guid userId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var system = await db.Systems.AsNoTracking().FirstAsync();
+        var route = await db.Routes.AsNoTracking().Where(r => r.SystemId == system.Id).FirstAsync();
+        var type = await db.PermissionTypes.AsNoTracking().FirstAsync();
+
+        var permission = new Models.AppPermission
+        {
+            RouteId = route.Id,
+            PermissionTypeId = type.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var role = new Models.AppRole
+        {
+            SystemId = system.Id,
+            Code = $"role_deleted_{Guid.NewGuid():N}",
+            Name = "Role Deletada",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+            DeletedAt = DateTime.UtcNow
+        };
+        db.Permissions.Add(permission);
+        db.Roles.Add(role);
+        await db.SaveChangesAsync();
+
+        var nowUtc = DateTime.UtcNow;
+        db.UserRoles.Add(new Models.AppUserRole
+        {
+            UserId = userId,
+            RoleId = role.Id,
+            CreatedAt = nowUtc,
+            UpdatedAt = nowUtc
+        });
+        db.RolePermissions.Add(new Models.AppRolePermission
+        {
+            RoleId = role.Id,
+            PermissionId = permission.Id,
+            CreatedAt = nowUtc,
+            UpdatedAt = nowUtc
+        });
+        await db.SaveChangesAsync();
+
+        return permission.Id;
+    }
+
+    /// <summary>Cria uma <c>Permission</c> e vincula direto ao usuário, devolvendo o systemId associado.</summary>
+    private async Task<(Guid permissionId, Guid systemId)> SeedDirectPermissionAsync(Guid userId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var system = await db.Systems.AsNoTracking().FirstAsync();
+        var route = await db.Routes.AsNoTracking().Where(r => r.SystemId == system.Id).FirstAsync();
+        var type = await db.PermissionTypes.AsNoTracking().FirstAsync();
+
+        var permission = new Models.AppPermission
+        {
+            RouteId = route.Id,
+            PermissionTypeId = type.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.Permissions.Add(permission);
+        await db.SaveChangesAsync();
+
+        db.UserPermissions.Add(new Models.AppUserPermission
+        {
+            UserId = userId,
+            PermissionId = permission.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        return (permission.Id, system.Id);
+    }
+
+    /// <summary>
+    /// Cria múltiplas permissões em rotas distintas para o usuário, garantindo cenário de ordenação
+    /// não trivial (codes diferentes em SystemCode/RouteCode/PermissionTypeCode).
+    /// </summary>
+    private async Task SeedMultiPermissionsAsync(Guid userId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var system = await db.Systems.AsNoTracking().FirstAsync();
+        var routes = await db.Routes.AsNoTracking().Where(r => r.SystemId == system.Id).Take(2).ToListAsync();
+        var types = await db.PermissionTypes.AsNoTracking().Take(2).ToListAsync();
+        Assert.True(routes.Count >= 1);
+        Assert.True(types.Count >= 1);
+
+        var permissions = new List<Models.AppPermission>();
+        for (var ri = 0; ri < routes.Count; ri++)
+        {
+            for (var ti = 0; ti < types.Count; ti++)
+            {
+                permissions.Add(new Models.AppPermission
+                {
+                    RouteId = routes[ri].Id,
+                    PermissionTypeId = types[ti].Id,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+        }
+        db.Permissions.AddRange(permissions);
+        await db.SaveChangesAsync();
+
+        foreach (var permission in permissions)
+        {
+            db.UserPermissions.Add(new Models.AppUserPermission
+            {
+                UserId = userId,
+                PermissionId = permission.Id,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+        }
+        await db.SaveChangesAsync();
+    }
+
     private async Task<PagedUsersDetailDto> GetUsersDetailPageAsync(string url)
     {
         var resp = await _client.GetAsync(url);
@@ -949,6 +1394,7 @@ public class UsersApiTests : IAsyncLifetime
         Guid Id,
         string Name,
         string Email,
+        Guid? ClientId,
         int Identity,
         bool Active,
         DateTime CreatedAt,
@@ -958,7 +1404,7 @@ public class UsersApiTests : IAsyncLifetime
         List<UserPermissionLinkDto> Permissions);
 
     private sealed record UserRoleLinkDto(
-        int Id,
+        Guid Id,
         Guid UserId,
         Guid RoleId,
         DateTime CreatedAt,
@@ -972,6 +1418,25 @@ public class UsersApiTests : IAsyncLifetime
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt);
+
+    private sealed record EffectivePermissionDto(
+        Guid PermissionId,
+        string RouteCode,
+        string RouteName,
+        string PermissionTypeCode,
+        string PermissionTypeName,
+        Guid SystemId,
+        string SystemCode,
+        string SystemName,
+        List<EffectiveSourceDto> Sources);
+
+    private sealed record EffectiveSourceDto(
+        string Kind,
+        Guid? RoleId,
+        string? RoleCode,
+        string? RoleName);
+
+    private sealed record SeededRole(Guid Id, string Code, string Name);
 
     private sealed record ClientIdDto(Guid Id);
 
