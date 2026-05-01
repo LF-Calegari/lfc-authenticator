@@ -550,6 +550,8 @@ public class RolesApiTests : IAsyncLifetime
         string Name,
         string Code,
         string? Description,
+        int PermissionsCount,
+        int UsersCount,
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt);

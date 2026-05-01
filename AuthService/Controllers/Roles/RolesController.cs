@@ -52,13 +52,41 @@ public partial class RolesController : ControllerBase
         string Name,
         string Code,
         string? Description,
+        int PermissionsCount,
+        int UsersCount,
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt
     );
 
-    private static RoleResponse ToResponse(AppRole e) =>
-        new(e.Id, e.SystemId, e.Name, e.Code, e.Description, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
+    /// <summary>
+    /// Projeção compartilhada por <see cref="GetAll"/>, <see cref="GetById"/>, <see cref="Create"/>
+    /// e <see cref="UpdateById"/>. Materializa <c>PermissionsCount</c> e <c>UsersCount</c> como
+    /// subselects EF Core (traduzidos para subqueries SQL) — evita N+1 sem depender de propriedades
+    /// de navegação (o modelo não declara coleções) e respeita o contrato: contagens consideram
+    /// apenas vínculos ativos (<c>DeletedAt IS NULL</c>) cuja entidade-alvo (Permission/User) ainda
+    /// esteja ativa, mesmo quando a Role retornada está soft-deletada (<c>includeDeleted=true</c>).
+    /// Mantemos os subselects sem <c>IgnoreQueryFilters()</c> nos DbSets aninhados — o filtro
+    /// global <c>DeletedAt IS NULL</c> já garante que vínculos e entidades alvo soft-deletadas
+    /// fiquem fora da contagem; aplicar <c>IgnoreQueryFilters()</c> aqui propagaria o "ignore"
+    /// para a raiz e vazaria roles soft-deletadas no caminho default.
+    /// </summary>
+    private IQueryable<RoleResponse> ProjectRoleResponses(IQueryable<AppRole> source) =>
+        source.Select(r => new RoleResponse(
+            r.Id,
+            r.SystemId,
+            r.Name,
+            r.Code,
+            r.Description,
+            _db.RolePermissions.Count(rp =>
+                rp.RoleId == r.Id
+                && _db.Permissions.Any(p => p.Id == rp.PermissionId)),
+            _db.UserRoles.Count(ur =>
+                ur.RoleId == r.Id
+                && _db.Users.Any(u => u.Id == ur.UserId)),
+            r.CreatedAt,
+            r.UpdatedAt,
+            r.DeletedAt));
 
     private const string RoleNotFoundMessage = "Role não encontrado.";
 
@@ -131,7 +159,9 @@ public partial class RolesController : ControllerBase
         }
 
         LogRoleCreated(entity.Id, code);
-        return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
+        var created = await ProjectRoleResponses(_db.Roles.Where(r => r.Id == entity.Id))
+            .FirstAsync();
+        return CreatedAtAction(nameof(GetById), new { id = entity.Id }, created);
     }
 
     /// <summary>Tamanho de página default quando o cliente não envia <c>pageSize</c>.</summary>
@@ -170,21 +200,13 @@ public partial class RolesController : ControllerBase
 
         var total = await query.CountAsync();
 
-        var data = await query
+        var paged = query
             .OrderBy(r => r.Code)
             .ThenBy(r => r.Id)
             .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(r => new RoleResponse(
-                r.Id,
-                r.SystemId,
-                r.Name,
-                r.Code,
-                r.Description,
-                r.CreatedAt,
-                r.UpdatedAt,
-                r.DeletedAt))
-            .ToListAsync();
+            .Take(pageSize);
+
+        var data = await ProjectRoleResponses(paged).ToListAsync();
 
         return Ok(new PagedResponse<RoleResponse>(data, page, pageSize, total));
     }
@@ -193,10 +215,11 @@ public partial class RolesController : ControllerBase
     [Authorize(Policy = PermissionPolicies.RolesRead)]
     public async Task<IActionResult> GetById(Guid id)
     {
-        var entity = await _db.Roles.FirstOrDefaultAsync(r => r.Id == id);
-        if (entity is null)
+        var dto = await ProjectRoleResponses(_db.Roles.Where(r => r.Id == id))
+            .FirstOrDefaultAsync();
+        if (dto is null)
             return RoleNotFoundResult();
-        return Ok(ToResponse(entity));
+        return Ok(dto);
     }
 
     [HttpPut("{id:guid}")]
@@ -252,7 +275,9 @@ public partial class RolesController : ControllerBase
         }
 
         LogRoleUpdated(id);
-        return Ok(ToResponse(entity));
+        var updated = await ProjectRoleResponses(_db.Roles.Where(r => r.Id == entity.Id))
+            .FirstAsync();
+        return Ok(updated);
     }
 
     [HttpDelete("{id:guid}")]

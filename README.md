@@ -426,6 +426,15 @@ Listagem `GET /api/v1/roles` com paginação server-side (envelope `PagedRespons
 
 Ordenação determinística por `Code ASC, Id ASC`.
 
+`RoleResponse` (devolvido por `GET /api/v1/roles`, `GET /api/v1/roles/{id}`, criação e atualização) inclui dois contadores denormalizados, calculados em uma única ida ao banco via subselects EF Core (sem N+1):
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| `permissionsCount` | `int` | Total de `RolePermissions` ativas (`DeletedAt IS NULL`) cuja `Permission` referenciada também esteja ativa. Vínculos cuja `Permission` foi soft-deletada não contam. |
+| `usersCount` | `int` | Total de `UserRoles` ativas cujo `User` referenciado também esteja ativo. Usuários soft-deletados não contam. |
+
+Quando `includeDeleted=true`, roles soft-deletadas continuam expondo as contagens calculadas com **vínculos ativos** — o filtro global de soft-delete é mantido nas subqueries para que vínculos ou entidades alvo soft-deletadas fiquem fora da soma. Roles sem vínculos retornam `0/0`.
+
 ### Permissões — `/api/v1/permissions`
 
 | Método | Endpoint | Auth | Permissão |
