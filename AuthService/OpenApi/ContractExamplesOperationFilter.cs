@@ -53,6 +53,7 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             || TryApplySystemsListGet(operation, normalizedPath, method)
             || TryApplyRoutesListGet(operation, normalizedPath, method)
             || TryApplyRoutesDelete(operation, normalizedPath, method)
+            || TryApplyClientsListGet(operation, normalizedPath, method)
             || TryApplyUsersForceLogoutPost(operation, normalizedPath, method)
             || TryApplyRestorePost(operation, normalizedPath, method);
     }
@@ -283,6 +284,74 @@ public sealed class ContractExamplesOperationFilter : IOperationFilter
             "Parametros de paginacao/filtro invalidos (page <= 0, pageSize fora do intervalo permitido ou systemId = Guid.Empty).",
             new { message = "pageSize deve estar entre 1 e 100." });
         return true;
+    }
+
+    private static bool TryApplyClientsListGet(OpenApiOperation operation, string normalizedPath, string method)
+    {
+        if (normalizedPath != "/clients" || method != "GET")
+            return false;
+
+        EnsureClientsListQueryParameters(operation);
+
+        AddJsonResponse(operation, "200", "Pagina de clientes que casam com os filtros aplicados.", new
+        {
+            data = new[]
+            {
+                new
+                {
+                    id = EmptyGuidExample,
+                    type = "PF",
+                    cpf = "52998224725",
+                    fullName = "Cliente Exemplo",
+                    cnpj = (string?)null,
+                    corporateName = (string?)null,
+                    createdAt = ExampleTimestamp,
+                    updatedAt = ExampleTimestamp,
+                    deletedAt = (string?)null,
+                    userIds = Array.Empty<string>(),
+                    extraEmails = Array.Empty<object>(),
+                    mobilePhones = Array.Empty<object>(),
+                    landlinePhones = Array.Empty<object>()
+                }
+            },
+            page = 1,
+            pageSize = 20,
+            total = 1
+        });
+        AddErrorResponse(
+            operation,
+            "400",
+            "Parametros invalidos (page <= 0, pageSize fora do intervalo, type != PF/PJ ou active+includeDeleted simultaneos).",
+            new { message = "type deve ser PF ou PJ." });
+        return true;
+    }
+
+    private static void EnsureClientsListQueryParameters(OpenApiOperation operation)
+    {
+        EnsureQueryParameterDescription(
+            operation,
+            "q",
+            "Termo de busca case-insensitive em FullName, CorporateName, Cpf e Cnpj (ILIKE; %, _ e \\ sao tratados como literais).");
+        EnsureQueryParameterDescription(
+            operation,
+            "type",
+            "Filtra por tipo de cliente: PF ou PJ. Demais valores retornam 400.");
+        EnsureQueryParameterDescription(
+            operation,
+            "active",
+            "Quando true, retorna apenas clientes ativos (DeletedAt IS NULL). Quando false, apenas soft-deletados. Mutuamente excludente com includeDeleted.");
+        EnsureQueryParameterDescription(
+            operation,
+            "page",
+            "Numero da pagina (1-based, default 1). Valores <= 0 retornam 400.");
+        EnsureQueryParameterDescription(
+            operation,
+            "pageSize",
+            "Tamanho da pagina (default 20, maximo 100). Valores <= 0 ou > 100 retornam 400.");
+        EnsureQueryParameterDescription(
+            operation,
+            "includeDeleted",
+            "Quando true, inclui clientes soft-deleted (DeletedAt != null). Default false. Mutuamente excludente com active.");
     }
 
     private static void EnsureRoutesListQueryParameters(OpenApiOperation operation)
