@@ -72,12 +72,21 @@ public class PermissionsApiTests : IAsyncLifetime
     private static object PermUpdateBody(Guid routeId, Guid permissionTypeId, string? description = null) =>
         new { routeId, permissionTypeId, description };
 
+    private async Task<PagedPermissionsDto> GetPermissionsPageAsync(string url)
+    {
+        var resp = await _client.GetAsync(url);
+        resp.EnsureSuccessStatusCode();
+        var page = await resp.Content.ReadFromJsonAsync<PagedPermissionsDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        return page;
+    }
+
     [Fact]
     public async Task Create_Post_WithValidReferences_ReturnsCreated_UtcAndNullDeletedAt()
     {
-        var sysId = await CreateSystemAsync("PERM_SYS_1");
-        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_1");
-        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_1");
+        var sysId = await CreateSystemAsync("PERM_SYS_1", "Sistema 1");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_1", "Rota 1");
+        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_1", "Tipo 1");
 
         var response = await _client.PostAsJsonAsync("/api/v1/permissions",
             PermCreateBody(routeId, typeId, "Opcional"), TestApiClient.JsonOptions);
@@ -91,6 +100,15 @@ public class PermissionsApiTests : IAsyncLifetime
         Assert.Null(dto.DeletedAt);
         Assert.True(dto.CreatedAt > DateTime.MinValue);
         Assert.True(dto.UpdatedAt > DateTime.MinValue);
+
+        // Campos denormalizados via Join.
+        Assert.Equal("PERM_ROUTE_1", dto.RouteCode);
+        Assert.Equal("Rota 1", dto.RouteName);
+        Assert.Equal(sysId, dto.SystemId);
+        Assert.Equal("PERM_SYS_1", dto.SystemCode);
+        Assert.Equal("Sistema 1", dto.SystemName);
+        Assert.Equal("PERM_TYPE_1", dto.PermissionTypeCode);
+        Assert.Equal("Tipo 1", dto.PermissionTypeName);
     }
 
     [Fact]
@@ -168,40 +186,60 @@ public class PermissionsApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GetAll_ReturnsOnlyActivePermissions()
+    public async Task GetAll_ReturnsOnlyActivePermissions_AndPopulatesDenormalizedFields()
     {
-        var sysId = await CreateSystemAsync("PERM_SYS_GA");
-        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_GA");
-        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_GA");
+        var sysId = await CreateSystemAsync("PERM_SYS_GA", "Sistema GA");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_GA", "Rota GA");
+        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_GA", "Tipo GA");
         var firstRes = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId, null), TestApiClient.JsonOptions);
         var firstDto = await firstRes.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(firstDto);
 
-        var other = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId, "b"), TestApiClient.JsonOptions);
+        // Permissões duplicadas (route+type) precisam de tipos diferentes para coexistir; criamos um segundo tipo.
+        var typeId2 = await CreatePermissionTypeAsync("PERM_TYPE_GA2", "Tipo GA2");
+        var other = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId2, "b"), TestApiClient.JsonOptions);
         var toDelete = await other.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(toDelete);
         await _client.DeleteAsync($"/api/v1/permissions/{toDelete.Id}");
 
-        var listResp = await _client.GetAsync("/api/v1/permissions");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<PermissionDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        Assert.All(list, p => Assert.Null(p.DeletedAt));
-        Assert.Contains(list, p => p.Id == firstDto.Id);
-        Assert.DoesNotContain(list, p => p.Id == toDelete.Id);
+        var page = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sysId}&pageSize=100");
+        Assert.Equal(1, page.Page);
+        Assert.Equal(100, page.PageSize);
+        Assert.All(page.Data, p => Assert.Null(p.DeletedAt));
+        Assert.Contains(page.Data, p => p.Id == firstDto.Id);
+        Assert.DoesNotContain(page.Data, p => p.Id == toDelete.Id);
+
+        var item = page.Data.Single(p => p.Id == firstDto.Id);
+        Assert.Equal("PERM_ROUTE_GA", item.RouteCode);
+        Assert.Equal("Rota GA", item.RouteName);
+        Assert.Equal(sysId, item.SystemId);
+        Assert.Equal("PERM_SYS_GA", item.SystemCode);
+        Assert.Equal("Sistema GA", item.SystemName);
+        Assert.Equal("PERM_TYPE_GA", item.PermissionTypeCode);
+        Assert.Equal("Tipo GA", item.PermissionTypeName);
     }
 
     [Fact]
     public async Task GetById_Active_ReturnsOk_Deleted_Returns404()
     {
-        var sysId = await CreateSystemAsync("PERM_SYS_G1");
-        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_G1");
-        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_G1");
+        var sysId = await CreateSystemAsync("PERM_SYS_G1", "Sistema G1");
+        var routeId = await CreateRouteAsync(sysId, "PERM_ROUTE_G1", "Rota G1");
+        var typeId = await CreatePermissionTypeAsync("PERM_TYPE_G1", "Tipo G1");
         var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(routeId, typeId), TestApiClient.JsonOptions);
         var dto = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
         Assert.NotNull(dto);
 
-        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync($"/api/v1/permissions/{dto.Id}")).StatusCode);
+        var getOkResp = await _client.GetAsync($"/api/v1/permissions/{dto.Id}");
+        Assert.Equal(HttpStatusCode.OK, getOkResp.StatusCode);
+        var getOk = await getOkResp.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(getOk);
+        Assert.Equal("PERM_ROUTE_G1", getOk.RouteCode);
+        Assert.Equal("Rota G1", getOk.RouteName);
+        Assert.Equal(sysId, getOk.SystemId);
+        Assert.Equal("PERM_SYS_G1", getOk.SystemCode);
+        Assert.Equal("Sistema G1", getOk.SystemName);
+        Assert.Equal("PERM_TYPE_G1", getOk.PermissionTypeCode);
+        Assert.Equal("Tipo G1", getOk.PermissionTypeName);
 
         await _client.DeleteAsync($"/api/v1/permissions/{dto.Id}");
         Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/api/v1/permissions/{dto.Id}")).StatusCode);
@@ -220,6 +258,9 @@ public class PermissionsApiTests : IAsyncLifetime
         var putOk = await _client.PutAsJsonAsync($"/api/v1/permissions/{dto.Id}",
             PermUpdateBody(routeId, typeId, "b"), TestApiClient.JsonOptions);
         Assert.Equal(HttpStatusCode.OK, putOk.StatusCode);
+        var updated = await putOk.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(updated);
+        Assert.Equal("PERM_ROUTE_U1", updated.RouteCode);
 
         await _client.DeleteAsync($"/api/v1/permissions/{dto.Id}");
         var put404 = await _client.PutAsJsonAsync($"/api/v1/permissions/{dto.Id}",
@@ -333,11 +374,8 @@ public class PermissionsApiTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/api/v1/permissions/{dto.Id}")).StatusCode);
 
-        var listResp = await _client.GetAsync("/api/v1/permissions");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<PermissionDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        Assert.DoesNotContain(list, p => p.Id == dto.Id);
+        var page = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sysId}&pageSize=100");
+        Assert.DoesNotContain(page.Data, p => p.Id == dto.Id);
     }
 
     [Fact]
@@ -354,11 +392,8 @@ public class PermissionsApiTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/api/v1/permissions/{dto.Id}")).StatusCode);
 
-        var listResp = await _client.GetAsync("/api/v1/permissions");
-        listResp.EnsureSuccessStatusCode();
-        var list = await listResp.Content.ReadFromJsonAsync<List<PermissionDto>>(TestApiClient.JsonOptions);
-        Assert.NotNull(list);
-        Assert.DoesNotContain(list, p => p.Id == dto.Id);
+        var page = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sysId}&pageSize=100");
+        Assert.DoesNotContain(page.Data, p => p.Id == dto.Id);
     }
 
     [Fact]
@@ -408,14 +443,276 @@ public class PermissionsApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, patch.StatusCode);
     }
 
+    // --- Filtros, busca, paginação e includeDeleted (issue #165) ---
+
+    [Fact]
+    public async Task GetAll_FilterBySystemId_ReturnsOnlyMatching()
+    {
+        var sysA = await CreateSystemAsync("PERM_FS_A");
+        var sysB = await CreateSystemAsync("PERM_FS_B");
+        var rA = await CreateRouteAsync(sysA, "PERM_FS_A_ROUTE");
+        var rB = await CreateRouteAsync(sysB, "PERM_FS_B_ROUTE");
+        var t = await CreatePermissionTypeAsync("PERM_FS_T");
+
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rA, t), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rB, t), TestApiClient.JsonOptions);
+
+        var page = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sysA}&pageSize=100");
+        Assert.All(page.Data, p => Assert.Equal(sysA, p.SystemId));
+        Assert.Contains(page.Data, p => p.RouteCode == "PERM_FS_A_ROUTE");
+        Assert.DoesNotContain(page.Data, p => p.RouteCode == "PERM_FS_B_ROUTE");
+    }
+
+    [Fact]
+    public async Task GetAll_FilterBySystemId_Empty_Returns400()
+    {
+        var resp = await _client.GetAsync($"/api/v1/permissions?systemId={Guid.Empty}");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_FilterBySystemId_Unknown_ReturnsEmptyPage()
+    {
+        var page = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={Guid.NewGuid()}");
+        Assert.Empty(page.Data);
+        Assert.Equal(0, page.Total);
+    }
+
+    [Fact]
+    public async Task GetAll_FilterByRouteId_ReturnsOnlyMatching()
+    {
+        var sys = await CreateSystemAsync("PERM_FR_S");
+        var rA = await CreateRouteAsync(sys, "PERM_FR_RA");
+        var rB = await CreateRouteAsync(sys, "PERM_FR_RB");
+        var t = await CreatePermissionTypeAsync("PERM_FR_T");
+
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rA, t), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rB, t), TestApiClient.JsonOptions);
+
+        var page = await GetPermissionsPageAsync($"/api/v1/permissions?routeId={rA}&pageSize=100");
+        Assert.All(page.Data, p => Assert.Equal(rA, p.RouteId));
+    }
+
+    [Fact]
+    public async Task GetAll_FilterByPermissionTypeId_ReturnsOnlyMatching()
+    {
+        var sys = await CreateSystemAsync("PERM_FT_S");
+        var r = await CreateRouteAsync(sys, "PERM_FT_R");
+        var tA = await CreatePermissionTypeAsync("PERM_FT_TA");
+        var tB = await CreatePermissionTypeAsync("PERM_FT_TB");
+
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(r, tA), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(r, tB), TestApiClient.JsonOptions);
+
+        var page = await GetPermissionsPageAsync($"/api/v1/permissions?permissionTypeId={tA}&pageSize=100");
+        Assert.All(page.Data, p => Assert.Equal(tA, p.PermissionTypeId));
+    }
+
+    [Fact]
+    public async Task GetAll_FilterCombined_SystemId_AndPermissionTypeId()
+    {
+        var sysA = await CreateSystemAsync("PERM_CMB_A");
+        var sysB = await CreateSystemAsync("PERM_CMB_B");
+        var rA = await CreateRouteAsync(sysA, "PERM_CMB_A_R");
+        var rB = await CreateRouteAsync(sysB, "PERM_CMB_B_R");
+        var t1 = await CreatePermissionTypeAsync("PERM_CMB_T1");
+        var t2 = await CreatePermissionTypeAsync("PERM_CMB_T2");
+
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rA, t1), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rA, t2), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rB, t1), TestApiClient.JsonOptions);
+
+        var page = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sysA}&permissionTypeId={t1}&pageSize=100");
+        Assert.Single(page.Data);
+        Assert.Equal(sysA, page.Data[0].SystemId);
+        Assert.Equal(t1, page.Data[0].PermissionTypeId);
+    }
+
+    [Fact]
+    public async Task GetAll_QSearch_MatchesRouteCode_RouteName_AndDescription()
+    {
+        var sys = await CreateSystemAsync("PERM_Q_S");
+        var rA = await CreateRouteAsync(sys, "PERM_Q_USERS_LIST", "Listar usuarios");
+        var rB = await CreateRouteAsync(sys, "PERM_Q_REL", "Relatorios");
+        var t = await CreatePermissionTypeAsync("PERM_Q_T");
+
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rA, t, "DescA"), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rB, t, "matchabledesc"), TestApiClient.JsonOptions);
+
+        // Match por RouteCode
+        var byCode = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sys}&q=USERS_LIST&pageSize=100");
+        Assert.Contains(byCode.Data, p => p.RouteCode == "PERM_Q_USERS_LIST");
+
+        // Match por RouteName (case-insensitive)
+        var byName = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sys}&q=relat&pageSize=100");
+        Assert.Contains(byName.Data, p => p.RouteCode == "PERM_Q_REL");
+
+        // Match por Description
+        var byDesc = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sys}&q=matchable&pageSize=100");
+        Assert.Single(byDesc.Data);
+        Assert.Equal("PERM_Q_REL", byDesc.Data[0].RouteCode);
+    }
+
+    [Fact]
+    public async Task GetAll_QSearch_EscapesWildcards()
+    {
+        var sys = await CreateSystemAsync("PERM_Q_ESC");
+        var literal = await CreateRouteAsync(sys, "PERM_LIT_ESC", "Rota com 100% literal");
+        var noisy = await CreateRouteAsync(sys, "PERM_NOISE_ESC", "Outra rota");
+        var t = await CreatePermissionTypeAsync("PERM_Q_ESC_T");
+
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(literal, t), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(noisy, t), TestApiClient.JsonOptions);
+
+        // q="100%" deve casar APENAS o literal (% escapado, não wildcard).
+        var page = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sys}&q=100%25&pageSize=100");
+        Assert.Single(page.Data);
+        Assert.Equal("PERM_LIT_ESC", page.Data[0].RouteCode);
+    }
+
+    [Fact]
+    public async Task GetAll_Pagination_SecondPage_RespectsSkipTake()
+    {
+        var sys = await CreateSystemAsync("PERM_PG_S");
+        var route = await CreateRouteAsync(sys, "PERM_PG_R");
+        var types = new List<Guid>();
+        for (int i = 0; i < 5; i++)
+            types.Add(await CreatePermissionTypeAsync($"PERM_PG_T{i}"));
+
+        foreach (var t in types)
+            await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(route, t), TestApiClient.JsonOptions);
+
+        var first = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sys}&page=1&pageSize=2");
+        var second = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sys}&page=2&pageSize=2");
+        var third = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sys}&page=3&pageSize=2");
+
+        Assert.Equal(2, first.Data.Count);
+        Assert.Equal(2, second.Data.Count);
+        Assert.Single(third.Data);
+        Assert.Equal(5, first.Total);
+        Assert.Equal(5, second.Total);
+        Assert.Equal(5, third.Total);
+
+        var ids = first.Data.Concat(second.Data).Concat(third.Data).Select(p => p.Id).ToList();
+        Assert.Equal(5, ids.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task GetAll_PageSize_TooLarge_Returns400()
+    {
+        var resp = await _client.GetAsync("/api/v1/permissions?pageSize=101");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_PageSize_Zero_Returns400()
+    {
+        var resp = await _client.GetAsync("/api/v1/permissions?pageSize=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_Page_Zero_Returns400()
+    {
+        var resp = await _client.GetAsync("/api/v1/permissions?page=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_IncludeDeletedTrue_ShowsPermissionsWithSoftDeletedRoute()
+    {
+        var sys = await CreateSystemAsync("PERM_INC_S", "Sistema INC");
+        var route = await CreateRouteAsync(sys, "PERM_INC_R", "Rota INC");
+        var type = await CreatePermissionTypeAsync("PERM_INC_T", "Tipo INC");
+
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(route, type), TestApiClient.JsonOptions);
+        var perm = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(perm);
+
+        // Soft-deleta a permissão para liberar a rota; depois soft-deleta a rota.
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/api/v1/permissions/{perm.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/api/v1/systems/routes/{route}")).StatusCode);
+
+        // Default (includeDeleted=false): permissão some.
+        var hidden = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sys}&pageSize=100");
+        Assert.DoesNotContain(hidden.Data, p => p.Id == perm.Id);
+
+        // Com includeDeleted=true: permissão aparece com a rota soft-deletada e os campos denormalizados ainda preenchidos.
+        var visible = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sys}&includeDeleted=true&pageSize=100");
+        var item = Assert.Single(visible.Data, p => p.Id == perm.Id);
+        Assert.NotNull(item.DeletedAt);
+        Assert.Equal("PERM_INC_R", item.RouteCode);
+        Assert.Equal("Rota INC", item.RouteName);
+        Assert.Equal(sys, item.SystemId);
+        Assert.Equal("PERM_INC_S", item.SystemCode);
+        Assert.Equal("Sistema INC", item.SystemName);
+        Assert.Equal("PERM_INC_T", item.PermissionTypeCode);
+    }
+
+    [Fact]
+    public async Task GetAll_IncludeDeletedTrue_FiltersBySystemId_OfDeletedRoute()
+    {
+        var sys = await CreateSystemAsync("PERM_INCSYS_S");
+        var route = await CreateRouteAsync(sys, "PERM_INCSYS_R");
+        var type = await CreatePermissionTypeAsync("PERM_INCSYS_T");
+
+        var create = await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(route, type), TestApiClient.JsonOptions);
+        var perm = await create.Content.ReadFromJsonAsync<PermissionDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(perm);
+        await _client.DeleteAsync($"/api/v1/permissions/{perm.Id}");
+        await _client.DeleteAsync($"/api/v1/systems/routes/{route}");
+
+        // includeDeleted=true + systemId precisa achar a permissão mesmo com a rota soft-deletada.
+        var page = await GetPermissionsPageAsync($"/api/v1/permissions?systemId={sys}&includeDeleted=true&pageSize=100");
+        Assert.Contains(page.Data, p => p.Id == perm.Id);
+    }
+
+    [Fact]
+    public async Task GetAll_DefaultOrdering_IsBySystemCode_RouteCode_PermissionTypeCode()
+    {
+        var sysA = await CreateSystemAsync("PERM_ORD_A_SYS");
+        var sysZ = await CreateSystemAsync("PERM_ORD_Z_SYS");
+        var rA1 = await CreateRouteAsync(sysA, "PERM_ORD_A_R1");
+        var rA2 = await CreateRouteAsync(sysA, "PERM_ORD_A_R2");
+        var rZ = await CreateRouteAsync(sysZ, "PERM_ORD_Z_R");
+        var t = await CreatePermissionTypeAsync("PERM_ORD_T");
+
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rZ, t), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rA2, t), TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/permissions", PermCreateBody(rA1, t), TestApiClient.JsonOptions);
+
+        var page = await GetPermissionsPageAsync("/api/v1/permissions?pageSize=100");
+        // Filtramos para os codes que criamos para evitar interferência do seed.
+        var ours = page.Data.Where(p => p.SystemCode.StartsWith("PERM_ORD_", StringComparison.Ordinal)).ToList();
+        Assert.Equal(3, ours.Count);
+        Assert.Equal("PERM_ORD_A_SYS", ours[0].SystemCode);
+        Assert.Equal("PERM_ORD_A_R1", ours[0].RouteCode);
+        Assert.Equal("PERM_ORD_A_SYS", ours[1].SystemCode);
+        Assert.Equal("PERM_ORD_A_R2", ours[1].RouteCode);
+        Assert.Equal("PERM_ORD_Z_SYS", ours[2].SystemCode);
+    }
+
     private sealed record RefDto(Guid Id);
 
     private sealed record PermissionDto(
         Guid Id,
         Guid RouteId,
+        string RouteCode,
+        string RouteName,
+        Guid SystemId,
+        string SystemCode,
+        string SystemName,
         Guid PermissionTypeId,
+        string PermissionTypeCode,
+        string PermissionTypeName,
         string? Description,
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt);
+
+    private sealed record PagedPermissionsDto(
+        List<PermissionDto> Data,
+        int Page,
+        int PageSize,
+        int Total);
 }

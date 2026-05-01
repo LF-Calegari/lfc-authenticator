@@ -446,7 +446,32 @@ Quando `includeDeleted=true`, roles soft-deletadas continuam expondo as contagen
 | `DELETE` | `/api/v1/permissions/{id}` | Sim | `perm:Permissions.Delete` |
 | `POST` | `/api/v1/permissions/{id}/restore` | Sim | `perm:Permissions.Restore` |
 
-Corpo: `routeId`, `permissionTypeId`, `description` (opcional). Restauração exige referências ativas coerentes com as regras do controller.
+Corpo de **Create/Update**: `routeId`, `permissionTypeId`, `description` (opcional). Restauração exige referências ativas coerentes com as regras do controller.
+
+`PermissionResponse` retorna, além de `id`/`routeId`/`permissionTypeId`/`description`/timestamps, **sete campos denormalizados via Join (somente leitura)** para evitar N+1 nos clientes:
+
+| Campo | Origem |
+|-------|--------|
+| `routeCode` | `Routes.Code` |
+| `routeName` | `Routes.Name` |
+| `systemId` | `Routes.SystemId` |
+| `systemCode` | `Systems.Code` |
+| `systemName` | `Systems.Name` |
+| `permissionTypeCode` | `PermissionTypes.Code` |
+| `permissionTypeName` | `PermissionTypes.Name` |
+
+`GET /permissions` aceita filtros e devolve `PagedResponse<PermissionResponse>`:
+
+| Param | Default | Notas |
+|-------|---------|-------|
+| `systemId` | _ausente_ | Filtra via `Routes.SystemId`. `Guid.Empty` → 400. |
+| `routeId` | _ausente_ | Filtra por rota específica. `Guid.Empty` → 400. |
+| `permissionTypeId` | _ausente_ | Filtra por tipo. `Guid.Empty` → 400. |
+| `q` | `""` | `ILIKE` em `RouteCode`, `RouteName` e `Description` (caracteres `%`/`_`/`\\` escapados). |
+| `page` / `pageSize` | `1` / `20` | `pageSize` máximo `100`; valores fora do intervalo → 400. |
+| `includeDeleted` | `false` | Inclui permissões soft-deletadas e permissões cuja rota/tipo foram soft-deletados; mantém `routeCode`/`systemCode`/`permissionTypeCode` denormalizados via `IgnoreQueryFilters`. |
+
+Ordenação determinística: `systemCode` ASC, `routeCode` ASC, `permissionTypeCode` ASC, `id` (desempate). `GET /permissions/{id}` também devolve os sete campos denormalizados.
 
 ---
 
