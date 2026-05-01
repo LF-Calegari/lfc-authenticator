@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.RegularExpressions;
 using AuthService.Auth;
+using AuthService.Controllers.Common;
 using AuthService.Data;
 using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -128,20 +129,188 @@ public class ClientsController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, await BuildResponseAsync(entity));
     }
 
+    /// <summary>Tamanho de página default quando o cliente não envia <c>pageSize</c>.</summary>
+    public const int DefaultPageSize = 20;
+
+    /// <summary>Limite superior para <c>pageSize</c>; valores acima retornam 400.</summary>
+    public const int MaxPageSize = 100;
+
     [HttpGet]
     [Authorize(Policy = PermissionPolicies.ClientsRead)]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        [FromQuery] string? q = null,
+        [FromQuery] string? type = null,
+        [FromQuery] bool? active = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = DefaultPageSize,
+        [FromQuery] bool includeDeleted = false)
     {
-        var clients = await _db.Clients
+        if (page <= 0)
+            ModelState.AddModelError(nameof(page), "page deve ser maior ou igual a 1.");
+
+        if (pageSize <= 0 || pageSize > MaxPageSize)
+            ModelState.AddModelError(nameof(pageSize), $"pageSize deve estar entre 1 e {MaxPageSize}.");
+
+        string? normalizedType = null;
+        if (type is not null)
+        {
+            normalizedType = type.Trim().ToUpperInvariant();
+            if (normalizedType != "PF" && normalizedType != "PJ")
+                ModelState.AddModelError(nameof(type), "type deve ser PF ou PJ.");
+        }
+
+        if (active.HasValue && includeDeleted)
+        {
+            ModelState.AddModelError(
+                nameof(includeDeleted),
+                "active e includeDeleted são mutuamente excludentes.");
+        }
+
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        // includeDeleted=true: admin enxerga inclusive soft-deletados (DeletedAt != null).
+        // active=false: filtra apenas soft-deletados — incompativel com o query filter global de soft-delete,
+        // entao precisa de IgnoreQueryFilters. active=true: apenas ativos (default ja faz isso). Quando
+        // nada e informado, mantemos o query filter global agindo (cliente nao ve nem o IgnoreQueryFilters
+        // local, evitando vazar deletados em outros joins).
+        IQueryable<Client> query = (includeDeleted || active == false)
+            ? _db.Clients.IgnoreQueryFilters()
+            : _db.Clients;
+
+        if (active.HasValue)
+        {
+            query = active.Value
+                ? query.Where(c => c.DeletedAt == null)
+                : query.Where(c => c.DeletedAt != null);
+        }
+
+        if (normalizedType is not null)
+            query = query.Where(c => c.Type == normalizedType);
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var pattern = $"%{EscapeLikePattern(q.Trim())}%";
+            query = query.Where(c =>
+                (c.FullName != null && EF.Functions.ILike(c.FullName, pattern, "\\"))
+                || (c.CorporateName != null && EF.Functions.ILike(c.CorporateName, pattern, "\\"))
+                || (c.Cpf != null && EF.Functions.ILike(c.Cpf, pattern, "\\"))
+                || (c.Cnpj != null && EF.Functions.ILike(c.Cnpj, pattern, "\\")));
+        }
+
+        // Query 1: COUNT pre-paginação (refletindo todos os filtros aplicados acima).
+        var total = await query.CountAsync();
+
+        // Query 2: página corrente, ordenada determinísticamente (CreatedAt DESC com Id como desempate
+        // estável para evitar duplicação/saltos entre páginas em ties de timestamp).
+        var pageClients = await query
+            .OrderByDescending(c => c.CreatedAt)
+            .ThenBy(c => c.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .AsNoTracking()
-            .OrderBy(c => c.CreatedAt)
             .ToListAsync();
 
-        var result = new List<ClientResponse>(clients.Count);
-        foreach (var client in clients)
-            result.Add(await BuildResponseAsync(client));
+        var data = await BuildResponsesBatchAsync(pageClients);
 
-        return Ok(result);
+        return Ok(new PagedResponse<ClientResponse>(data, page, pageSize, total));
+    }
+
+    /// <summary>
+    /// Escapa caracteres curinga (<c>%</c>, <c>_</c>) e o caractere de escape (<c>\</c>) na entrada do usuário
+    /// para evitar que sejam interpretados como wildcards no <c>ILIKE</c>. Mantém o termo como busca literal parcial.
+    /// </summary>
+    private static string EscapeLikePattern(string value)
+    {
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("%", "\\%")
+            .Replace("_", "\\_");
+    }
+
+    /// <summary>
+    /// Hidrata <see cref="ClientResponse"/> para uma página corrente em batch (3 queries IN), evitando o
+    /// N+1 do <see cref="BuildResponseAsync"/> (4 queries por cliente). A listagem total fica em
+    /// 5 queries (1 count + 1 page + 3 batch IN para users/emails/phones), independente do tamanho da página.
+    /// </summary>
+    private async Task<List<ClientResponse>> BuildResponsesBatchAsync(IReadOnlyList<Client> clients)
+    {
+        if (clients.Count == 0)
+            return new List<ClientResponse>(0);
+
+        var clientIds = clients.Select(c => c.Id).ToList();
+
+        // Query 3: UserIds por cliente (Users tem soft-delete; mantemos query filter global ativo,
+        // que esconde soft-deleted — alinhado ao comportamento atual de BuildResponseAsync).
+        var userRows = await _db.Users.AsNoTracking()
+            .Where(u => u.ClientId != null && clientIds.Contains(u.ClientId.Value))
+            .OrderBy(u => u.CreatedAt)
+            .Select(u => new { u.Id, ClientId = u.ClientId!.Value })
+            .ToListAsync();
+        var userIdsByClient = userRows
+            .GroupBy(r => r.ClientId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<Guid>)g.Select(x => x.Id).ToList());
+
+        // Query 4: emails extras por cliente.
+        var emailRows = await _db.ClientEmails.AsNoTracking()
+            .Where(e => clientIds.Contains(e.ClientId))
+            .OrderBy(e => e.CreatedAt)
+            .Select(e => new { e.ClientId, e.Id, e.Email, e.CreatedAt })
+            .ToListAsync();
+        var emailsByClient = emailRows
+            .GroupBy(r => r.ClientId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<ClientEmailResponse>)g
+                    .Select(x => new ClientEmailResponse(x.Id, x.Email, x.CreatedAt))
+                    .ToList());
+
+        // Query 5: telefones por cliente (mobile + landline juntos; particionados em memória).
+        var phoneRows = await _db.ClientPhones.AsNoTracking()
+            .Where(p => clientIds.Contains(p.ClientId))
+            .OrderBy(p => p.CreatedAt)
+            .Select(p => new { p.ClientId, p.Type, p.Id, p.Number, p.CreatedAt })
+            .ToListAsync();
+        var mobilesByClient = phoneRows
+            .Where(r => r.Type == "mobile")
+            .GroupBy(r => r.ClientId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<ClientPhoneResponse>)g
+                    .Select(x => new ClientPhoneResponse(x.Id, x.Number, x.CreatedAt))
+                    .ToList());
+        var landlinesByClient = phoneRows
+            .Where(r => r.Type == "phone")
+            .GroupBy(r => r.ClientId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<ClientPhoneResponse>)g
+                    .Select(x => new ClientPhoneResponse(x.Id, x.Number, x.CreatedAt))
+                    .ToList());
+
+        var emptyGuids = (IReadOnlyList<Guid>)Array.Empty<Guid>();
+        var emptyEmails = (IReadOnlyList<ClientEmailResponse>)Array.Empty<ClientEmailResponse>();
+        var emptyPhones = (IReadOnlyList<ClientPhoneResponse>)Array.Empty<ClientPhoneResponse>();
+
+        var result = new List<ClientResponse>(clients.Count);
+        foreach (var c in clients)
+        {
+            result.Add(new ClientResponse(
+                c.Id,
+                c.Type,
+                c.Cpf,
+                c.FullName,
+                c.Cnpj,
+                c.CorporateName,
+                c.CreatedAt,
+                c.UpdatedAt,
+                c.DeletedAt,
+                userIdsByClient.GetValueOrDefault(c.Id, emptyGuids),
+                emailsByClient.GetValueOrDefault(c.Id, emptyEmails),
+                mobilesByClient.GetValueOrDefault(c.Id, emptyPhones),
+                landlinesByClient.GetValueOrDefault(c.Id, emptyPhones)));
+        }
+        return result;
     }
 
     [HttpGet("{id:guid}")]

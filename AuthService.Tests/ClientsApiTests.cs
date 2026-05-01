@@ -431,13 +431,468 @@ public class ClientsApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, getRestored.StatusCode);
     }
 
+    [Fact]
+    public async Task GetAll_NoFilters_UsesDefaultEnvelope()
+    {
+        var page = await GetClientsPageAsync("/api/v1/clients");
+        Assert.Equal(1, page.Page);
+        Assert.Equal(20, page.PageSize);
+        Assert.True(page.Total >= page.Data.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPagination_ReturnsCorrectSubset()
+    {
+        for (var i = 0; i < 5; i++)
+        {
+            await _client.PostAsJsonAsync("/api/v1/clients", new
+            {
+                type = "PF",
+                cpf = GenerateCpf(800000100 + i),
+                fullName = $"Pag Cliente {i:D2}"
+            }, TestApiClient.JsonOptions);
+        }
+
+        var first = await GetClientsPageAsync("/api/v1/clients?q=Pag%20Cliente&page=1&pageSize=2");
+        var second = await GetClientsPageAsync("/api/v1/clients?q=Pag%20Cliente&page=2&pageSize=2");
+        var third = await GetClientsPageAsync("/api/v1/clients?q=Pag%20Cliente&page=3&pageSize=2");
+
+        Assert.Equal(2, first.Data.Count);
+        Assert.Equal(2, second.Data.Count);
+        Assert.Single(third.Data);
+        Assert.Equal(5, first.Total);
+        Assert.Equal(5, second.Total);
+        Assert.Equal(5, third.Total);
+
+        var ids = first.Data.Concat(second.Data).Concat(third.Data).Select(c => c.Id).ToList();
+        Assert.Equal(ids.Count, ids.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_PartialMatchOnFullName()
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000200),
+            fullName = "Maria Aparecida Silva"
+        }, TestApiClient.JsonOptions);
+        resp.EnsureSuccessStatusCode();
+
+        var page = await GetClientsPageAsync("/api/v1/clients?q=Aparecida&pageSize=100");
+        Assert.Contains(page.Data, c => c.FullName == "Maria Aparecida Silva");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_PartialMatchOnCorporateName()
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PJ",
+            cnpj = GenerateCnpj(80100200),
+            corporateName = "Fabrica Souza Tecnologia LTDA"
+        }, TestApiClient.JsonOptions);
+        resp.EnsureSuccessStatusCode();
+
+        var page = await GetClientsPageAsync("/api/v1/clients?q=Souza&pageSize=100");
+        Assert.Contains(page.Data, c => c.CorporateName == "Fabrica Souza Tecnologia LTDA");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_PartialMatchOnCpf()
+    {
+        var cpf = GenerateCpf(800000201);
+        var resp = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf,
+            fullName = "Cliente CPF Filtro"
+        }, TestApiClient.JsonOptions);
+        resp.EnsureSuccessStatusCode();
+
+        var page = await GetClientsPageAsync($"/api/v1/clients?q={cpf[..6]}&pageSize=100");
+        Assert.Contains(page.Data, c => c.Cpf == cpf);
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_PartialMatchOnCnpj()
+    {
+        var cnpj = GenerateCnpj(80100201);
+        var resp = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PJ",
+            cnpj,
+            corporateName = "Empresa CNPJ Filtro LTDA"
+        }, TestApiClient.JsonOptions);
+        resp.EnsureSuccessStatusCode();
+
+        var page = await GetClientsPageAsync($"/api/v1/clients?q={cnpj[..6]}&pageSize=100");
+        Assert.Contains(page.Data, c => c.Cnpj == cnpj);
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_IsCaseInsensitive()
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000202),
+            fullName = "Roberto Oliveira"
+        }, TestApiClient.JsonOptions);
+        resp.EnsureSuccessStatusCode();
+
+        var lower = await GetClientsPageAsync("/api/v1/clients?q=roberto&pageSize=100");
+        var upper = await GetClientsPageAsync("/api/v1/clients?q=ROBERTO&pageSize=100");
+        var mixed = await GetClientsPageAsync("/api/v1/clients?q=RoBeRtO&pageSize=100");
+
+        Assert.Contains(lower.Data, c => c.FullName == "Roberto Oliveira");
+        Assert.Contains(upper.Data, c => c.FullName == "Roberto Oliveira");
+        Assert.Contains(mixed.Data, c => c.FullName == "Roberto Oliveira");
+    }
+
+    [Fact]
+    public async Task GetAll_WithSearchQ_EscapesUnderscoreLiteral()
+    {
+        // Sem o escape, "_" viraria wildcard ILIKE e casaria qualquer caractere unico no lugar.
+        var resp1 = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000203),
+            fullName = "Foo_Lit_Bar"
+        }, TestApiClient.JsonOptions);
+        resp1.EnsureSuccessStatusCode();
+        var resp2 = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000204),
+            fullName = "FooXLitXBar"
+        }, TestApiClient.JsonOptions);
+        resp2.EnsureSuccessStatusCode();
+
+        var page = await GetClientsPageAsync("/api/v1/clients?q=_Lit_&pageSize=100");
+        Assert.Contains(page.Data, c => c.FullName == "Foo_Lit_Bar");
+        Assert.DoesNotContain(page.Data, c => c.FullName == "FooXLitXBar");
+    }
+
+    [Fact]
+    public async Task GetAll_WithTypePf_FiltersOnlyPfClients()
+    {
+        await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000300),
+            fullName = "Cliente TypeFilter PF"
+        }, TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PJ",
+            cnpj = GenerateCnpj(80100300),
+            corporateName = "Empresa TypeFilter PJ LTDA"
+        }, TestApiClient.JsonOptions);
+
+        var page = await GetClientsPageAsync("/api/v1/clients?type=PF&pageSize=100");
+        Assert.All(page.Data, c => Assert.Equal("PF", c.Type));
+    }
+
+    [Fact]
+    public async Task GetAll_WithTypePj_FiltersOnlyPjClients()
+    {
+        await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000301),
+            fullName = "Cliente TypeFilter PF2"
+        }, TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PJ",
+            cnpj = GenerateCnpj(80100301),
+            corporateName = "Empresa TypeFilter PJ2 LTDA"
+        }, TestApiClient.JsonOptions);
+
+        var page = await GetClientsPageAsync("/api/v1/clients?type=PJ&pageSize=100");
+        Assert.All(page.Data, c => Assert.Equal("PJ", c.Type));
+    }
+
+    [Fact]
+    public async Task GetAll_WithTypeInvalid_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/clients?type=XX");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithActiveTrue_ReturnsOnlyActive()
+    {
+        var activeResp = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000400),
+            fullName = "Active Cliente"
+        }, TestApiClient.JsonOptions);
+        activeResp.EnsureSuccessStatusCode();
+        var activeDto = await activeResp.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(activeDto);
+
+        var deletedCreate = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000401),
+            fullName = "Soft Deleted Cliente"
+        }, TestApiClient.JsonOptions);
+        deletedCreate.EnsureSuccessStatusCode();
+        var deletedDto = await deletedCreate.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(deletedDto);
+        await _client.DeleteAsync($"/api/v1/clients/{deletedDto.Id}");
+
+        var page = await GetClientsPageAsync("/api/v1/clients?active=true&pageSize=100");
+        Assert.Contains(page.Data, c => c.Id == activeDto.Id);
+        Assert.DoesNotContain(page.Data, c => c.Id == deletedDto.Id);
+    }
+
+    [Fact]
+    public async Task GetAll_WithActiveFalse_ReturnsOnlySoftDeleted()
+    {
+        var activeResp = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000500),
+            fullName = "Stay Active Cliente"
+        }, TestApiClient.JsonOptions);
+        activeResp.EnsureSuccessStatusCode();
+        var activeDto = await activeResp.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(activeDto);
+
+        var deletedCreate = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000501),
+            fullName = "Will Be Soft Deleted"
+        }, TestApiClient.JsonOptions);
+        deletedCreate.EnsureSuccessStatusCode();
+        var deletedDto = await deletedCreate.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(deletedDto);
+        await _client.DeleteAsync($"/api/v1/clients/{deletedDto.Id}");
+
+        var page = await GetClientsPageAsync("/api/v1/clients?active=false&pageSize=100");
+        Assert.Contains(page.Data, c => c.Id == deletedDto.Id);
+        Assert.DoesNotContain(page.Data, c => c.Id == activeDto.Id);
+    }
+
+    [Fact]
+    public async Task GetAll_WithIncludeDeletedTrue_ReturnsActiveAndSoftDeleted()
+    {
+        var activeResp = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000600),
+            fullName = "Visible Active Cliente"
+        }, TestApiClient.JsonOptions);
+        activeResp.EnsureSuccessStatusCode();
+        var activeDto = await activeResp.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(activeDto);
+
+        var deletedCreate = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000601),
+            fullName = "Visible Deleted Cliente"
+        }, TestApiClient.JsonOptions);
+        deletedCreate.EnsureSuccessStatusCode();
+        var deletedDto = await deletedCreate.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(deletedDto);
+        await _client.DeleteAsync($"/api/v1/clients/{deletedDto.Id}");
+
+        var page = await GetClientsPageAsync("/api/v1/clients?includeDeleted=true&pageSize=100");
+        Assert.Contains(page.Data, c => c.Id == activeDto.Id && c.DeletedAt == null);
+        Assert.Contains(page.Data, c => c.Id == deletedDto.Id && c.DeletedAt != null);
+    }
+
+    [Fact]
+    public async Task GetAll_WithActiveAndIncludeDeleted_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/clients?active=true&includeDeleted=true");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeAboveLimit_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/clients?pageSize=101");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageSizeZero_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/clients?pageSize=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_WithPageZero_ReturnsBadRequest()
+    {
+        var resp = await _client.GetAsync("/api/v1/clients?page=0");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAll_PageBeyondTotal_ReturnsEmptyDataAnd200()
+    {
+        await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000700),
+            fullName = "Beyond Cliente Unico"
+        }, TestApiClient.JsonOptions);
+
+        var resp = await _client.GetAsync("/api/v1/clients?q=Beyond%20Cliente%20Unico&page=99&pageSize=10");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var page = await resp.Content.ReadFromJsonAsync<PagedClientsDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        Assert.Empty(page.Data);
+        Assert.Equal(1, page.Total);
+    }
+
+    [Fact]
+    public async Task GetAll_OrderedByCreatedAt_Descending()
+    {
+        var first = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000800),
+            fullName = "Order Cliente AAA"
+        }, TestApiClient.JsonOptions);
+        first.EnsureSuccessStatusCode();
+        var firstDto = await first.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(firstDto);
+
+        await Task.Delay(20);
+
+        var second = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000801),
+            fullName = "Order Cliente BBB"
+        }, TestApiClient.JsonOptions);
+        second.EnsureSuccessStatusCode();
+        var secondDto = await second.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(secondDto);
+
+        var page = await GetClientsPageAsync("/api/v1/clients?q=Order%20Cliente&pageSize=100");
+        var ordered = page.Data
+            .Where(c => c.FullName != null && c.FullName.StartsWith("Order Cliente", StringComparison.Ordinal))
+            .Select(c => c.Id)
+            .ToList();
+        Assert.Equal(secondDto.Id, ordered[0]);
+        Assert.Equal(firstDto.Id, ordered[1]);
+    }
+
+    [Fact]
+    public async Task GetAll_HydratesUserIdsEmailsMobilesAndPhones_FromBatchLookup()
+    {
+        var create = await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800000900),
+            fullName = "Hidratacao Cliente"
+        }, TestApiClient.JsonOptions);
+        create.EnsureSuccessStatusCode();
+        var dto = await create.Content.ReadFromJsonAsync<ClientDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(dto);
+
+        await _client.PostAsJsonAsync($"/api/v1/clients/{dto.Id}/emails",
+            new { email = "hidratacao1@example.com" }, TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync($"/api/v1/clients/{dto.Id}/mobiles",
+            new { number = "+5518999990001" }, TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync($"/api/v1/clients/{dto.Id}/phones",
+            new { number = "+5518333330001" }, TestApiClient.JsonOptions);
+
+        var page = await GetClientsPageAsync($"/api/v1/clients?q=Hidratacao%20Cliente&pageSize=100");
+        var entry = Assert.Single(page.Data, c => c.Id == dto.Id);
+        Assert.Single(entry.ExtraEmails);
+        Assert.Equal("hidratacao1@example.com", entry.ExtraEmails[0].Email);
+        Assert.Single(entry.MobilePhones);
+        Assert.Equal("+5518999990001", entry.MobilePhones[0].Number);
+        Assert.Single(entry.LandlinePhones);
+        Assert.Equal("+5518333330001", entry.LandlinePhones[0].Number);
+    }
+
+    [Fact]
+    public async Task GetAll_TotalReflectsFilters_BeforePagination()
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            await _client.PostAsJsonAsync("/api/v1/clients", new
+            {
+                type = "PF",
+                cpf = GenerateCpf(800001000 + i),
+                fullName = $"FiltroTot Cliente {i}"
+            }, TestApiClient.JsonOptions);
+        }
+        await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800001050),
+            fullName = "Outro Nome"
+        }, TestApiClient.JsonOptions);
+
+        var page = await GetClientsPageAsync("/api/v1/clients?q=FiltroTot&page=1&pageSize=2");
+        Assert.Equal(3, page.Total);
+        Assert.Equal(2, page.Data.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_CombinedFilters_ApplyTogether()
+    {
+        await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PF",
+            cpf = GenerateCpf(800001100),
+            fullName = "Combo Maria"
+        }, TestApiClient.JsonOptions);
+        await _client.PostAsJsonAsync("/api/v1/clients", new
+        {
+            type = "PJ",
+            cnpj = GenerateCnpj(80101100),
+            corporateName = "Combo Maria LTDA"
+        }, TestApiClient.JsonOptions);
+
+        var page = await GetClientsPageAsync("/api/v1/clients?q=Combo%20Maria&type=PF&pageSize=100");
+        Assert.All(page.Data, c => Assert.Equal("PF", c.Type));
+        Assert.Contains(page.Data, c => c.FullName == "Combo Maria");
+        Assert.DoesNotContain(page.Data, c => c.CorporateName == "Combo Maria LTDA");
+    }
+
+    private async Task<PagedClientsDto> GetClientsPageAsync(string url)
+    {
+        var resp = await _client.GetAsync(url);
+        resp.EnsureSuccessStatusCode();
+        var page = await resp.Content.ReadFromJsonAsync<PagedClientsDto>(TestApiClient.JsonOptions);
+        Assert.NotNull(page);
+        return page;
+    }
+
+    private sealed record PagedClientsDto(
+        List<ClientDto> Data,
+        int Page,
+        int PageSize,
+        int Total);
+
     private sealed record ClientDto(
         Guid Id,
         string Type,
         string? Cpf,
         string? FullName,
         string? Cnpj,
-        string? CorporateName);
+        string? CorporateName,
+        DateTime CreatedAt,
+        DateTime UpdatedAt,
+        DateTime? DeletedAt,
+        List<Guid> UserIds,
+        List<ClientEmailDto> ExtraEmails,
+        List<ClientPhoneDto> MobilePhones,
+        List<ClientPhoneDto> LandlinePhones);
     private sealed record ClientEmailDto(Guid Id, string Email, DateTime CreatedAt);
     private sealed record ClientPhoneDto(Guid Id, string Number, DateTime CreatedAt);
 

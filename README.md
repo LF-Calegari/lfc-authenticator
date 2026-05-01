@@ -346,6 +346,19 @@ A operação é idempotente em re-execução: cada chamada incrementa o contador
 
 Regras de negócio principais: `type` imutável (`PF`/`PJ`), validação de CPF/CNPJ por tipo, unicidade global de CPF/CNPJ, máximo de 3 emails extras, 3 celulares e 3 telefones por cliente, bloqueio para remoção de email extra que esteja sendo usado como username.
 
+**`GET /api/v1/clients`** suporta filtro/busca/paginação via query string:
+
+| Param | Default | Notas |
+|-------|---------|-------|
+| `q` | `""` | Busca case-insensitive (ILIKE) com matching parcial em `FullName`, `CorporateName`, `Cpf` e `Cnpj` (OR). Caracteres `%`, `_` e `\` são escapados (literais). |
+| `type` | _ausente_ | `PF` ou `PJ`. Demais valores retornam **400**. |
+| `active` | _ausente_ | `true` retorna apenas ativos (`DeletedAt IS NULL`); `false` retorna apenas soft-deletados. Mutuamente excludente com `includeDeleted` (combinar retorna **400**). |
+| `page` | `1` | 1-based. `<= 0` retorna **400**. |
+| `pageSize` | `20` | Máximo `100`. `<= 0` ou `> 100` retornam **400**. |
+| `includeDeleted` | `false` | Quando `true`, inclui clientes soft-deletados (`DeletedAt != null`). Mutuamente excludente com `active`. |
+
+Resposta paginada: `{ data, page, pageSize, total }`. `total` reflete o total após filtros, antes de `Skip/Take`. Ordenação determinística por `CreatedAt` descendente, com `Id` como desempate. Página além do total retorna **200** com `data: []`. A listagem da página corrente faz no máximo **5 queries** ao banco (1 count + 1 page + 3 batch IN para `userIds`, emails extras e telefones), independente do tamanho da página — `GET /api/v1/clients/{id}` mantém a hidratação tradicional (4 queries para um cliente).
+
 ### Tipos de token — `/api/v1/tokens/types`
 
 | Método | Endpoint | Auth | Permissão |
