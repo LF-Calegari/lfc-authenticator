@@ -1,7 +1,9 @@
 using AuthService.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -61,7 +63,24 @@ public class WebAppFactory : WebApplicationFactory<Program>
                 ["Auth:Jwt:ExpirationMinutes"] = "60"
             });
         });
+
+        var interceptors = AdditionalDbInterceptors;
+        if (interceptors.Count > 0)
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddDbContext<AppDbContext>(options =>
+                    options.UseNpgsql(_appConnectionString)
+                        .AddInterceptors(interceptors));
+            });
+        }
     }
+
+    /// <summary>
+    /// Hook para subclasses registrarem <see cref="IInterceptor"/>s no <see cref="AppDbContext"/> de teste
+    /// (ex.: contadores de comandos SQL). Lista vazia por padrão — o factory base não muda comportamento.
+    /// </summary>
+    protected virtual IReadOnlyList<IInterceptor> AdditionalDbInterceptors { get; } = Array.Empty<IInterceptor>();
 
     protected override IHost CreateHost(IHostBuilder builder)
     {
