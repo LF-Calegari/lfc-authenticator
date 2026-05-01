@@ -412,6 +412,20 @@ Resposta paginada: `{ data, page, pageSize, total }`. `total` reflete o total ap
 | `POST` | `/api/v1/roles/{id}/permissions` | Sim | `perm:Roles.Update` |
 | `DELETE` | `/api/v1/roles/{id}/permissions/{permissionId}` | Sim | `perm:Roles.Update` |
 
+Corpo de criação/atualização: `systemId` (obrigatório, sistema deve existir e estar ativo), `name`, `code`, `description` (opcional, máx. 500). `systemId` é **imutável** após criação — tentativa de alterá-lo no `PUT` retorna 400. `code` é único **por sistema** (mesmo `code` pode coexistir em sistemas diferentes); conflito retorna 409 com mensagem "Já existe um role com este Code neste sistema."
+
+Listagem `GET /api/v1/roles` com paginação server-side (envelope `PagedResponse<RoleResponse>` — `{ data, page, pageSize, total }`):
+
+| Param | Default | Notas |
+|-------|---------|-------|
+| `systemId` | _ausente_ | UUID do sistema. Quando ausente, lista todas as roles (cenário admin). `Guid.Empty` retorna 400. |
+| `q` | `""` | ILIKE em `Code`/`Name` (caracteres `%`/`_`/`\` escapados). |
+| `page` | `1` | 1-based. `<= 0` retorna 400. |
+| `pageSize` | `20` | Máximo `100`; valores fora do intervalo retornam 400. |
+| `includeDeleted` | `false` | Quando `true`, inclui registros *soft-deleted*. |
+
+Ordenação determinística por `Code ASC, Id ASC`.
+
 ### Permissões — `/api/v1/permissions`
 
 | Método | Endpoint | Auth | Permissão |

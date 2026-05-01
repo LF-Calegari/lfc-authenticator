@@ -11,6 +11,7 @@ public static class RootUserSeeder
     public const string RootName = "Root";
     public const string RootRoleCode = "root";
     public const string RootRoleName = "Root";
+    private const string AuthenticatorSystemCode = "authenticator";
 
     private const string PasswordEnvVar = "DEFAULT_SYSTEM_USER_PASSWORD";
 
@@ -20,8 +21,9 @@ public static class RootUserSeeder
         var email = RootEmail.Trim().ToLowerInvariant();
         var password = ResolvePassword();
 
+        var systemId = await ResolveAuthenticatorSystemIdAsync(db, cancellationToken);
         var client = await EnsureClientAsync(db, email, utc, cancellationToken);
-        var role = await EnsureRoleAsync(db, utc, cancellationToken);
+        var role = await EnsureRoleAsync(db, systemId, utc, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
 
         var user = await EnsureUserAsync(db, email, password, client.Id, utc, cancellationToken);
@@ -29,6 +31,22 @@ public static class RootUserSeeder
 
         await EnsureUserRoleAsync(db, user.Id, role.Id, utc, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static async Task<Guid> ResolveAuthenticatorSystemIdAsync(
+        AppDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var systemId = await db.Systems.AsNoTracking()
+            .Where(s => s.Code == AuthenticatorSystemCode)
+            .Select(s => (Guid?)s.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (systemId is null || systemId == Guid.Empty)
+            throw new InvalidOperationException(
+                $"Sistema '{AuthenticatorSystemCode}' não encontrado. Execute o SystemSeeder antes do RootUserSeeder.");
+
+        return systemId.Value;
     }
 
     private static string ResolvePassword()
@@ -80,11 +98,12 @@ public static class RootUserSeeder
 
     private static async Task<AppRole> EnsureRoleAsync(
         AppDbContext db,
+        Guid systemId,
         DateTime utc,
         CancellationToken cancellationToken)
     {
         var existing = await db.Roles.IgnoreQueryFilters()
-            .FirstOrDefaultAsync(r => r.Code == RootRoleCode, cancellationToken);
+            .FirstOrDefaultAsync(r => r.SystemId == systemId && r.Code == RootRoleCode, cancellationToken);
 
         if (existing is not null)
         {
@@ -97,6 +116,7 @@ public static class RootUserSeeder
 
         var role = new AppRole
         {
+            SystemId = systemId,
             Name = RootRoleName,
             Code = RootRoleCode,
             CreatedAt = utc,

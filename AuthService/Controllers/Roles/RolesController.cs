@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using AuthService.Auth;
+using AuthService.Controllers.Common;
 using AuthService.Data;
 using AuthService.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -25,6 +26,9 @@ public partial class RolesController : ControllerBase
 
     public class CreateRoleRequest
     {
+        [Required(ErrorMessage = "SystemId é obrigatório.")]
+        public Guid? SystemId { get; set; }
+
         [Required(ErrorMessage = "Name é obrigatório.")]
         [MaxLength(80, ErrorMessage = "Name deve ter no máximo 80 caracteres.")]
         public string Name { get; set; } = string.Empty;
@@ -32,10 +36,16 @@ public partial class RolesController : ControllerBase
         [Required(ErrorMessage = "Code é obrigatório.")]
         [MaxLength(50, ErrorMessage = "Code deve ter no máximo 50 caracteres.")]
         public string Code { get; set; } = string.Empty;
+
+        [MaxLength(500, ErrorMessage = "Description deve ter no máximo 500 caracteres.")]
+        public string? Description { get; set; }
     }
 
     public class UpdateRoleRequest
     {
+        [Required(ErrorMessage = "SystemId é obrigatório.")]
+        public Guid? SystemId { get; set; }
+
         [Required(ErrorMessage = "Name é obrigatório.")]
         [MaxLength(80, ErrorMessage = "Name deve ter no máximo 80 caracteres.")]
         public string Name { get; set; } = string.Empty;
@@ -43,24 +53,30 @@ public partial class RolesController : ControllerBase
         [Required(ErrorMessage = "Code é obrigatório.")]
         [MaxLength(50, ErrorMessage = "Code deve ter no máximo 50 caracteres.")]
         public string Code { get; set; } = string.Empty;
+
+        [MaxLength(500, ErrorMessage = "Description deve ter no máximo 500 caracteres.")]
+        public string? Description { get; set; }
     }
 
     public record RoleResponse(
         Guid Id,
+        Guid SystemId,
         string Name,
         string Code,
+        string? Description,
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime? DeletedAt
     );
 
     private static RoleResponse ToResponse(AppRole e) =>
-        new(e.Id, e.Name, e.Code, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
+        new(e.Id, e.SystemId, e.Name, e.Code, e.Description, e.CreatedAt, e.UpdatedAt, e.DeletedAt);
 
     private static void ValidateNormalizedFields(
         ModelStateDictionary modelState,
         string name,
-        string code)
+        string code,
+        string? descriptionOrNull)
     {
         if (string.IsNullOrWhiteSpace(name))
             modelState.AddModelError(nameof(CreateRoleRequest.Name), "Name é obrigatório e não pode ser apenas espaços.");
@@ -73,10 +89,22 @@ public partial class RolesController : ControllerBase
 
         if (code.Length > 50)
             modelState.AddModelError(nameof(CreateRoleRequest.Code), "Code deve ter no máximo 50 caracteres.");
+
+        if (descriptionOrNull is { Length: > 500 })
+            modelState.AddModelError(nameof(CreateRoleRequest.Description), "Description deve ter no máximo 500 caracteres.");
     }
 
     private static ConflictObjectResult UniqueConflictResult() =>
-        new(new { message = "Já existe um role com este Code." });
+        new(new { message = "Já existe um role com este Code neste sistema." });
+
+    private async Task<bool> SystemExistsAndActiveAsync(Guid systemId) =>
+        systemId != Guid.Empty && await _db.Systems.AnyAsync(s => s.Id == systemId);
+
+    private ActionResult InvalidSystemIdResult()
+    {
+        ModelState.AddModelError(nameof(CreateRoleRequest.SystemId), "SystemId inválido ou sistema inativo.");
+        return ValidationProblem(ModelState);
+    }
 
     [HttpPost]
     [Authorize(Policy = PermissionPolicies.RolesCreate)]
@@ -85,24 +113,32 @@ public partial class RolesController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
+        var systemId = request.SystemId!.Value;
+
+        if (!await SystemExistsAndActiveAsync(systemId))
+            return InvalidSystemIdResult();
+
         var name = request.Name.Trim();
         var code = request.Code.Trim();
+        var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
 
-        ValidateNormalizedFields(ModelState, name, code);
+        ValidateNormalizedFields(ModelState, name, code, description);
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        if (await _db.Roles.IgnoreQueryFilters().AnyAsync(r => r.Code == code))
+        if (await _db.Roles.IgnoreQueryFilters().AnyAsync(r => r.SystemId == systemId && r.Code == code))
         {
-            _logger.LogWarning("Conflito ao criar role: já existe Code {Code}.", code);
+            _logger.LogWarning("Conflito ao criar role: já existe Code {Code} no sistema {SystemId}.", code, systemId);
             return UniqueConflictResult();
         }
 
         var now = DateTime.UtcNow;
         var entity = new AppRole
         {
+            SystemId = systemId,
             Name = name,
             Code = code,
+            Description = description,
             CreatedAt = now,
             UpdatedAt = now,
             DeletedAt = null
@@ -115,29 +151,90 @@ public partial class RolesController : ControllerBase
         }
         catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
         {
-            _logger.LogWarning(ex, "Conflito de unicidade ao criar role com Code {Code}.", code);
+            _logger.LogWarning(ex, "Conflito de unicidade ao criar role com Code {Code} no sistema {SystemId}.", code, systemId);
             return UniqueConflictResult();
+        }
+        catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
+        {
+            return InvalidSystemIdResult();
         }
 
         LogRoleCreated(entity.Id, code);
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToResponse(entity));
     }
 
+    /// <summary>Tamanho de página default quando o cliente não envia <c>pageSize</c>.</summary>
+    public const int DefaultPageSize = 20;
+
+    /// <summary>Limite superior para <c>pageSize</c>; valores acima retornam 400.</summary>
+    public const int MaxPageSize = 100;
+
     [HttpGet]
     [Authorize(Policy = PermissionPolicies.RolesRead)]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        [FromQuery] Guid? systemId = null,
+        [FromQuery] string? q = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = DefaultPageSize,
+        [FromQuery] bool includeDeleted = false)
     {
-        var list = await _db.Roles
-            .OrderBy(r => r.CreatedAt)
+        if (page <= 0)
+            ModelState.AddModelError(nameof(page), "page deve ser maior ou igual a 1.");
+
+        if (pageSize <= 0 || pageSize > MaxPageSize)
+            ModelState.AddModelError(nameof(pageSize), $"pageSize deve estar entre 1 e {MaxPageSize}.");
+
+        if (systemId.HasValue && systemId.Value == Guid.Empty)
+            ModelState.AddModelError(nameof(systemId), "systemId inválido.");
+
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        IQueryable<AppRole> query = includeDeleted
+            ? _db.Roles.IgnoreQueryFilters()
+            : _db.Roles;
+
+        if (systemId.HasValue)
+            query = query.Where(r => r.SystemId == systemId.Value);
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var pattern = $"%{EscapeLikePattern(q.Trim())}%";
+            query = query.Where(r =>
+                EF.Functions.ILike(r.Code, pattern, "\\") || EF.Functions.ILike(r.Name, pattern, "\\"));
+        }
+
+        var total = await query.CountAsync();
+
+        var data = await query
+            .OrderBy(r => r.Code)
+            .ThenBy(r => r.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(r => new RoleResponse(
                 r.Id,
+                r.SystemId,
                 r.Name,
                 r.Code,
+                r.Description,
                 r.CreatedAt,
                 r.UpdatedAt,
                 r.DeletedAt))
             .ToListAsync();
-        return Ok(list);
+
+        return Ok(new PagedResponse<RoleResponse>(data, page, pageSize, total));
+    }
+
+    /// <summary>
+    /// Escapa caracteres curinga (<c>%</c>, <c>_</c>) e o caractere de escape (<c>\</c>) na entrada do usuário
+    /// para evitar que sejam interpretados como wildcards no <c>ILIKE</c>. Mantém o termo como busca literal parcial.
+    /// </summary>
+    private static string EscapeLikePattern(string value)
+    {
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("%", "\\%")
+            .Replace("_", "\\_");
     }
 
     [HttpGet("{id:guid}")]
@@ -157,25 +254,39 @@ public partial class RolesController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        var name = request.Name.Trim();
-        var code = request.Code.Trim();
-
-        ValidateNormalizedFields(ModelState, name, code);
-        if (!ModelState.IsValid)
-            return ValidationProblem(ModelState);
-
         var entity = await _db.Roles.FirstOrDefaultAsync(r => r.Id == id);
         if (entity is null)
             return NotFound(new { message = "Role não encontrado." });
 
-        if (await _db.Roles.IgnoreQueryFilters().AnyAsync(r => r.Id != id && r.Code == code))
+        var systemId = request.SystemId!.Value;
+
+        // SystemId é imutável após criação. Tentativa de mudar retorna 400.
+        if (systemId != entity.SystemId)
         {
-            _logger.LogWarning("Conflito ao atualizar role {RoleId}: Code {Code} já em uso.", id, code);
-            return new ConflictObjectResult(new { message = "Já existe outro role com este Code." });
+            ModelState.AddModelError(nameof(UpdateRoleRequest.SystemId),
+                "SystemId é imutável após a criação do role.");
+            return ValidationProblem(ModelState);
+        }
+
+        var name = request.Name.Trim();
+        var code = request.Code.Trim();
+        var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+
+        ValidateNormalizedFields(ModelState, name, code, description);
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        if (await _db.Roles.IgnoreQueryFilters()
+            .AnyAsync(r => r.Id != id && r.SystemId == entity.SystemId && r.Code == code))
+        {
+            _logger.LogWarning("Conflito ao atualizar role {RoleId}: Code {Code} já em uso no sistema {SystemId}.",
+                id, code, entity.SystemId);
+            return new ConflictObjectResult(new { message = "Já existe outro role com este Code neste sistema." });
         }
 
         entity.Name = name;
         entity.Code = code;
+        entity.Description = description;
         entity.UpdatedAt = DateTime.UtcNow;
 
         try
@@ -185,7 +296,7 @@ public partial class RolesController : ControllerBase
         catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
         {
             _logger.LogWarning(ex, "Conflito de unicidade ao atualizar role {RoleId} para Code {Code}.", id, code);
-            return new ConflictObjectResult(new { message = "Já existe outro role com este Code." });
+            return new ConflictObjectResult(new { message = "Já existe outro role com este Code neste sistema." });
         }
 
         LogRoleUpdated(id);
