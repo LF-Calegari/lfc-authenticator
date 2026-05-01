@@ -8,6 +8,8 @@ namespace AuthService.Data.Migrations
     /// <inheritdoc />
     public partial class AddRoleSystemIdAndDescription : Migration
     {
+        private static readonly string[] SystemIdCodeColumns = ["SystemId", "Code"];
+
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
@@ -62,7 +64,7 @@ namespace AuthService.Data.Migrations
             migrationBuilder.CreateIndex(
                 name: "UX_Roles_SystemId_Code",
                 table: "Roles",
-                columns: new[] { "SystemId", "Code" },
+                columns: SystemIdCodeColumns,
                 unique: true);
 
             // 8) FK com onDelete: Restrict (não permitir apagar Sistema referenciado por roles).

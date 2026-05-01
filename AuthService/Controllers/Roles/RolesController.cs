@@ -24,7 +24,8 @@ public partial class RolesController : ControllerBase
         _logger = logger;
     }
 
-    public class CreateRoleRequest
+    /// <summary>Payload base com os campos compartilhados entre Create e Update de roles.</summary>
+    public abstract class RoleRequestBase
     {
         [Required(ErrorMessage = "SystemId é obrigatório.")]
         public Guid? SystemId { get; set; }
@@ -41,22 +42,9 @@ public partial class RolesController : ControllerBase
         public string? Description { get; set; }
     }
 
-    public class UpdateRoleRequest
-    {
-        [Required(ErrorMessage = "SystemId é obrigatório.")]
-        public Guid? SystemId { get; set; }
+    public sealed class CreateRoleRequest : RoleRequestBase { }
 
-        [Required(ErrorMessage = "Name é obrigatório.")]
-        [MaxLength(80, ErrorMessage = "Name deve ter no máximo 80 caracteres.")]
-        public string Name { get; set; } = string.Empty;
-
-        [Required(ErrorMessage = "Code é obrigatório.")]
-        [MaxLength(50, ErrorMessage = "Code deve ter no máximo 50 caracteres.")]
-        public string Code { get; set; } = string.Empty;
-
-        [MaxLength(500, ErrorMessage = "Description deve ter no máximo 500 caracteres.")]
-        public string? Description { get; set; }
-    }
+    public sealed class UpdateRoleRequest : RoleRequestBase { }
 
     public record RoleResponse(
         Guid Id,
@@ -94,8 +82,13 @@ public partial class RolesController : ControllerBase
             modelState.AddModelError(nameof(CreateRoleRequest.Description), "Description deve ter no máximo 500 caracteres.");
     }
 
+    private const string RoleNotFoundMessage = "Role não encontrado.";
+
     private static ConflictObjectResult UniqueConflictResult() =>
         new(new { message = "Já existe um role com este Code neste sistema." });
+
+    private static NotFoundObjectResult RoleNotFoundResult() =>
+        new(new { message = RoleNotFoundMessage });
 
     private async Task<bool> SystemExistsAndActiveAsync(Guid systemId) =>
         systemId != Guid.Empty && await _db.Systems.AnyAsync(s => s.Id == systemId);
@@ -243,7 +236,7 @@ public partial class RolesController : ControllerBase
     {
         var entity = await _db.Roles.FirstOrDefaultAsync(r => r.Id == id);
         if (entity is null)
-            return NotFound(new { message = "Role não encontrado." });
+            return RoleNotFoundResult();
         return Ok(ToResponse(entity));
     }
 
@@ -256,7 +249,7 @@ public partial class RolesController : ControllerBase
 
         var entity = await _db.Roles.FirstOrDefaultAsync(r => r.Id == id);
         if (entity is null)
-            return NotFound(new { message = "Role não encontrado." });
+            return RoleNotFoundResult();
 
         var systemId = request.SystemId!.Value;
 
@@ -309,7 +302,7 @@ public partial class RolesController : ControllerBase
     {
         var entity = await _db.Roles.FirstOrDefaultAsync(r => r.Id == id);
         if (entity is null)
-            return NotFound(new { message = "Role não encontrado." });
+            return RoleNotFoundResult();
 
         entity.DeletedAt = DateTime.UtcNow;
         entity.UpdatedAt = DateTime.UtcNow;
@@ -363,7 +356,7 @@ public partial class RolesController : ControllerBase
 
         var roleExists = await _db.Roles.AnyAsync(r => r.Id == roleId);
         if (!roleExists)
-            return NotFound(new { message = "Role não encontrado." });
+            return RoleNotFoundResult();
 
         var permissionExists = await _db.Permissions.AnyAsync(p => p.Id == permissionId);
         if (!permissionExists)
