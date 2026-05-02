@@ -183,7 +183,9 @@ AuthService/
 
 - `GET /api/v1/health`
 - `POST /api/v1/auth/login`
-- Documentação Swagger (`/docs`, JSON em `/swagger/v1/swagger.json`)
+
+> A documentação Swagger (`/docs` e o documento OpenAPI em `/swagger/v1/swagger.json`) **passou
+> a exigir autenticação Bearer** a partir da issue #95. Sem token válido, ambos retornam `401`.
 
 ---
 
@@ -195,12 +197,25 @@ Todas as rotas listadas na referência abaixo são relativas ao prefixo **`/api/
 
 ## Documentação OpenAPI (Swagger)
 
-| Recurso | Caminho |
-|---------|---------|
-| Swagger UI | **`/docs`** |
-| OpenAPI JSON | **`/swagger/v1/swagger.json`** (paths já prefixados com `/api/v1` via filtro de documento) |
+| Recurso | Caminho | Acesso |
+|---------|---------|--------|
+| Swagger UI | **`/docs`** | Autenticado (Bearer JWT) |
+| OpenAPI JSON | **`/swagger/v1/swagger.json`** (paths já prefixados com `/api/v1` via filtro de documento) | Autenticado (Bearer JWT) |
 
-A UI está configurada para não exigir autenticação; para testar endpoints protegidos, use **Authorize** na Swagger UI e informe `Bearer <token>`.
+A documentação é protegida pelo mesmo esquema Bearer da API (issue #95). Acesso anônimo a
+`/docs` ou ao documento OpenAPI retorna `401 Unauthorized`.
+
+Como obter um token em ambiente local:
+
+1. Garanta `DEFAULT_SYSTEM_USER_PASSWORD` definido no `.env` (ver `.env.example`).
+2. Faça login em `POST /api/v1/auth/login` com `email`, `password` e `systemId` do sistema
+   `authenticator` (seedado automaticamente).
+3. Use o token retornado em `Authorization: Bearer <token>` ou cole-o no botão **Authorize**
+   da Swagger UI para navegar pelo contrato e exercitar endpoints protegidos.
+
+O documento OpenAPI exposto declara o `securityScheme` Bearer e marca todas as operações
+como dependentes desse esquema; rotas marcadas com `[AllowAnonymous]` (ex.: `auth/login`)
+permanecem acessíveis em runtime sem token.
 
 ---
 

@@ -1,10 +1,11 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Xunit;
 
 namespace AuthService.Tests;
 
-/// <summary>Valida prefixo global /api/v1 e documentação Swagger em /docs (issue #36).</summary>
+/// <summary>Valida prefixo global /api/v1 e documentação Swagger em /docs (issues #36 e #95).</summary>
 public class ApiVersioningAndDocsTests : IAsyncLifetime
 {
     private WebAppFactory _factory = null!;
@@ -48,9 +49,29 @@ public class ApiVersioningAndDocsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SwaggerJson_ContainsOnlyOfficialContractPaths()
+    public async Task SwaggerJson_RequiresAuthentication()
     {
+        // Issue #95: documento OpenAPI deve recusar acesso anônimo. A proteção é aplicada pela
+        // FallbackPolicy de autorização (esquema Bearer) configurada no Program.cs.
         var response = await _client.GetAsync("/swagger/v1/swagger.json");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SwaggerJson_WithInvalidBearer_ReturnsUnauthorized()
+    {
+        // Cliente novo para não herdar o header default; reforça que token inválido também é rejeitado.
+        using var anonClient = _factory.CreateApiClient();
+        anonClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "not-a-valid-jwt");
+        var response = await anonClient.GetAsync("/swagger/v1/swagger.json");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SwaggerJson_WithBearer_ContainsOnlyOfficialContractPaths()
+    {
+        using var authClient = await TestApiClient.CreateAuthenticatedAsync(_factory);
+        var response = await authClient.GetAsync("/swagger/v1/swagger.json");
         response.EnsureSuccessStatusCode();
         var json = await response.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(json);
@@ -116,9 +137,65 @@ public class ApiVersioningAndDocsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Docs_ReturnsSwaggerUi()
+    public async Task SwaggerJson_WithBearer_DeclaresBearerSecurityRequirement()
     {
+        // Issue #95: o documento OpenAPI deve refletir que a API é protegida por Bearer.
+        using var authClient = await TestApiClient.CreateAuthenticatedAsync(_factory);
+        var response = await authClient.GetAsync("/swagger/v1/swagger.json");
+        response.EnsureSuccessStatusCode();
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+
+        var schemes = doc.RootElement.GetProperty("components").GetProperty("securitySchemes");
+        Assert.True(schemes.TryGetProperty("Bearer", out var bearer), "Esquema Bearer deve estar declarado.");
+        Assert.Equal("http", bearer.GetProperty("type").GetString());
+        Assert.Equal("bearer", bearer.GetProperty("scheme").GetString());
+        Assert.Equal("JWT", bearer.GetProperty("bearerFormat").GetString());
+
+        // O contrato OpenAPI deve declarar que a API usa Bearer como SecurityRequirement.
+        // Aceitamos tanto "security" no nível do documento quanto por operação (depende da
+        // normalização do Swashbuckle 10.x). Pelo menos uma das duas formas deve estar presente.
+        var hasGlobalSecurity = doc.RootElement.TryGetProperty("security", out var globalSecurity)
+            && globalSecurity.GetArrayLength() > 0
+            && globalSecurity[0].TryGetProperty("Bearer", out _);
+
+        var hasAnyOperationSecurity = doc.RootElement.GetProperty("paths")
+            .EnumerateObject()
+            .SelectMany(path => path.Value.EnumerateObject())
+            .Any(op =>
+                op.Value.TryGetProperty("security", out var sec)
+                && sec.GetArrayLength() > 0
+                && sec[0].TryGetProperty("Bearer", out _));
+
+        Assert.True(
+            hasGlobalSecurity || hasAnyOperationSecurity,
+            "Documento OpenAPI deve declarar SecurityRequirement Bearer (no nível raiz ou por operação).");
+    }
+
+    [Fact]
+    public async Task Docs_RequiresAuthentication()
+    {
+        // Issue #95: UI do Swagger deve recusar acesso anônimo.
         var response = await _client.GetAsync("/docs/index.html");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DocsRoot_RequiresAuthentication()
+    {
+        // O Swashbuckle redireciona /docs para /docs/index.html. Sem auth, o middleware deve
+        // recusar antes mesmo do redirect.
+        var response = await _client.GetAsync(
+            "/docs",
+            HttpCompletionOption.ResponseHeadersRead);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Docs_WithBearer_ReturnsSwaggerUi()
+    {
+        using var authClient = await TestApiClient.CreateAuthenticatedAsync(_factory);
+        var response = await authClient.GetAsync("/docs/index.html");
         response.EnsureSuccessStatusCode();
         var html = await response.Content.ReadAsStringAsync();
         Assert.Contains("swagger", html, StringComparison.OrdinalIgnoreCase);

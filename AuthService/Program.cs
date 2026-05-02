@@ -62,7 +62,7 @@ builder.Services.AddSwaggerGen(options =>
         Version = "v1",
         Description = "Autenticação, autorização e cadastros correlatos. Rotas versionadas sob o prefixo /api/v1."
     });
-    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    var bearerScheme = new OpenApiSecurityScheme
     {
         Name = "Authorization",
         Type = SecuritySchemeType.Http,
@@ -70,6 +70,14 @@ builder.Services.AddSwaggerGen(options =>
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
         Description = "JWT no header Authorization (Bearer {token})."
+    };
+    options.AddSecurityDefinition("Bearer", bearerScheme);
+    // Marca todas as operações como exigindo Bearer no documento OpenAPI; a rota /api/v1/auth/login
+    // continua acessível sem autenticação por estar marcada com [AllowAnonymous] no controller — esse
+    // anonimato é controlado em runtime e não precisa ser refletido no contrato exposto pela UI.
+    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecuritySchemeReference("Bearer", document)] = new List<string>()
     });
     options.CustomSchemaIds(type => type.FullName?.Replace("+", "."));
     options.DocumentFilter<V1PathPrefixDocumentFilter>();
@@ -84,17 +92,23 @@ if (!app.Environment.IsEnvironment("Testing"))
     app.UseHttpsRedirection();
 }
 
-// Swagger antes de autenticação/autorização: documentação e OpenAPI JSON são anônimos.
+app.UseCors("CorsPolicy");
+app.UseAuthentication();
+app.UseAuthorization();
+
+// Documentação Swagger é exposta apenas a usuários autenticados (issue #95).
+// - O documento OpenAPI sob /swagger/{documentName}/swagger.json é registrado como endpoint
+//   roteado e já é coberto pela fallback policy do AuthorizationMiddleware (Bearer obrigatório).
+// - A UI servida pelo Swashbuckle em /docs é middleware terminal (não é endpoint), então é
+//   protegida pelo SwaggerAuthorizationMiddleware abaixo, que autentica via Bearer antes de
+//   delegar ao Swashbuckle.
+app.UseMiddleware<SwaggerAuthorizationMiddleware>();
 app.UseSwagger();
 app.UseSwaggerUI(options =>
 {
     options.RoutePrefix = "docs";
     options.SwaggerEndpoint("/swagger/v1/swagger.json", "Auth Service API v1");
 });
-
-app.UseCors("CorsPolicy");
-app.UseAuthentication();
-app.UseAuthorization();
 
 app.MapGroup("/api/v1").MapControllers();
 
