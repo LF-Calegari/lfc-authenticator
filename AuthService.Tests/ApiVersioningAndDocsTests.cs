@@ -175,9 +175,14 @@ public class ApiVersioningAndDocsTests : IAsyncLifetime
     [Fact]
     public async Task Docs_RequiresAuthentication()
     {
-        // Issue #95: UI do Swagger deve recusar acesso anônimo.
+        // Issue #95: UI do Swagger deve recusar acesso anônimo. O middleware emite
+        // WWW-Authenticate com esquema Bearer para indicar como autenticar.
         var response = await _client.GetAsync("/docs/index.html");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.True(
+            response.Headers.TryGetValues("WWW-Authenticate", out var values)
+                && values.Any(v => v.Contains("Bearer", StringComparison.OrdinalIgnoreCase)),
+            "Resposta 401 da UI deve declarar WWW-Authenticate com Bearer.");
     }
 
     [Fact]

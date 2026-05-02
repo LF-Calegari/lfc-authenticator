@@ -40,7 +40,7 @@ public sealed class SwaggerAuthorizationMiddleware
                 context.Connection.RemoteIpAddress);
 
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.Headers["WWW-Authenticate"] = $"{BearerAuthenticationDefaults.AuthenticationScheme} realm=\"docs\"";
+            context.Response.Headers.WWWAuthenticate = $"{BearerAuthenticationDefaults.AuthenticationScheme} realm=\"docs\"";
             return;
         }
 
