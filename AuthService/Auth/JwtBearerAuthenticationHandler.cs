@@ -21,6 +21,19 @@ public sealed class JwtBearerAuthenticationHandler(
     private readonly JwtOptions _jwt = jwtOptions.Value;
     private readonly IServiceProvider _services = services;
 
+    /// <summary>
+    /// Emite o header <c>WWW-Authenticate: Bearer</c> ao desafiar uma request não autenticada.
+    /// Sem isso, o ASP.NET Core retornaria apenas <c>401</c> sem indicar o esquema esperado, o que
+    /// reduz aderência ao RFC 7235 e dificulta integrações com clientes (incluindo a UI Swagger
+    /// protegida pela issue #95).
+    /// </summary>
+    protected override Task HandleChallengeAsync(AuthenticationProperties properties)
+    {
+        Response.StatusCode = StatusCodes.Status401Unauthorized;
+        Response.Headers.WWWAuthenticate = $"{Scheme.Name} realm=\"auth-service\"";
+        return Task.CompletedTask;
+    }
+
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         var tokenReadResult = TryReadBearerToken(out var token);
